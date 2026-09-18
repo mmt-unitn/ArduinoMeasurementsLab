@@ -27,3 +27,5 @@ renv/staging/
 .DS_Store
 
 **/*.quarto_ipynb
+
+/_*.local
