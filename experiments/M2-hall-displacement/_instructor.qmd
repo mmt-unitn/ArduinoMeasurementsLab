@@ -1,0 +1,120 @@
+### Session timing {#sec-m2-instructor-timing}
+
+Three hours, for a pair of students who have already completed S1 (and
+ideally M1, for the stiffness cross-check to mean anything):
+
+| Time | Activity | Watch for |
+|---|---|---|
+| 0:00–0:15 | Slides, and the ratiometric idea worked through once on paper | Treating "ratiometric" as a marketing word rather than @eq-m2-ratiometric |
+| 0:15–0:45 | The calibration sweep, 12 distances | Backlash: not re-zeroing the micrometer's direction between points |
+| 0:45–1:15 | Fitting @eq-m2-decay and choosing the working window | Picking a working point without looking at both curves of @sec-m2-window |
+| 1:15–1:35 | The supply-drift run | A supply that will not actually hold a controlled drift — see the extension note below |
+| 1:35–2:00 | On the beam: the cross-check masses | Using different masses from M1's own sweep |
+| 2:00–2:50 | Analysis template | See below |
+| 2:50–3:00 | Budget discussion, and the stiffness cross-check if M1 has also been run | — |
+
+If time is short, drop the supply-drift run (@sec-m2-step-drift) and hand
+out the shipped `supply-drift` reference run instead: the ratiometric-vs-
+absolute comparison is the lesson, and the shipped data makes it just as
+well as a bench run would.
+
+### Expected results {#sec-m2-instructor-expected}
+
+On the shipped synthetic data. [TODO (Paolo)]{.todo}: replace with values
+from the reference bench once the Hall sensor, the magnet and the
+micrometer stage exist and have been characterized; until then these
+describe the generator's design parameters (`tools/synth/params/m2.yaml`),
+not measurements.
+
+- Calibration curve: a clearly nonlinear $V(d)$, falling steeply below
+  about 5 mm and nearly flat above 15 mm, with the two-parameter fit's
+  residuals small and unstructured across the sweep.
+- Working window: a region in the middle of the sweep where the resolution
+  curve of @eq-m2-resolution and the curvature curve of @eq-m2-curvature
+  both sit at acceptable levels — narrower than the full sweep range, and
+  worth having students defend their chosen threshold, not just read off a
+  crossing point.
+- Supply drift: the raw Hall-output channel drifts by roughly the same
+  fractional amount as the supply; the ratiometric reading (output divided
+  by the measured supply) stays essentially flat over the same run.
+- Stiffness cross-check: $E_\mathrm{M1}/E_\mathrm{M2}$ close to 1 — the two
+  independent routes to Young's modulus should agree to within their
+  combined uncertainty, given both experiments' data come from the same
+  placeholder beam.
+
+### Common failures, in the order they happen {#sec-m2-instructor-failures}
+
+1. **The micrometer reading, not the intended step, is not recorded.**
+   Backlash means the two differ by a fixed amount depending on direction,
+   and a fit against the intended values instead of the actual readings
+   picks up a systematic offset that looks like a modelling error.
+2. **The working point is chosen by sensitivity alone**, ignoring
+   @eq-m2-curvature. A very close working point gives excellent resolution
+   and terrible linearity over any real excursion — let a group discover
+   this by checking their chosen point's curvature term against the beam's
+   actual displacement range.
+3. **The supply-drift run's displacement is not actually held fixed** — the
+   stage is bumped partway through. Then the "ratiometric correction removes
+   the effect" result is confounded with a real displacement change, and the
+   comparison proves nothing.
+4. **Different masses from M1's sweep.** The cross-check needs the *same*
+   forces measured two ways; different masses give two different
+   experiments a superficial resemblance to a cross-check.
+5. **$n$ is silently changed from 3** without re-deriving anything that
+   depended on it (the resolution and curvature formulas both use $n$
+   explicitly). If a group wants to let $n$ float, make sure the derived
+   quantities are recomputed with the fitted value, not left at the design
+   default.
+
+### Discussion questions and where they should land {#sec-m2-instructor-discussion}
+
+**"Why not just work as close to the magnet as possible for the best
+resolution?"** Because @eq-m2-curvature grows faster than
+@eq-m2-resolution improves, in the near field — send them back to plot both
+curves together and find where the trade actually turns over, rather than
+assert it.
+
+**"The ratiometric correction made the supply-drift plot flat. Does that
+mean supply voltage no longer matters at all?"** No — it matters to first
+order only through the *shared* factor $V_\mathrm{cc}$ in
+@eq-m2-supply-sens; anything that changes $A$ or $d_0$ (temperature, for
+instance) is not corrected by dividing by $V_\mathrm{cc}$, and that is
+exactly why the sensor's temperature coefficient stays in the budget as its
+own component rather than being assumed away.
+
+**"$E_\mathrm{M1}$ and $E_\mathrm{M2}$ disagree by a few percent. Is the
+model wrong?"** Probably not — [the beam rig's clamp
+discussion](../../hardware/beam-rig.qmd#sec-beam-clamp) says exactly what to
+suspect first: a non-rigid clamp affects strain and deflection differently,
+so a real disagreement here is data about the clamp, not a failure of
+Euler–Bernoulli theory.
+
+### Assessment rubric {#sec-m2-instructor-rubric}
+
+Out of 100, for the report:
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Sidecar completeness | 10 | Every run reconstructible from its metadata; both channels described |
+| Calibration fit | 20 | @eq-m2-decay fitted explicitly (not via a library call), residuals plotted and discussed |
+| Working-range choice | 20 | Both @eq-m2-resolution and @eq-m2-curvature shown as curves and the window justified from them, not asserted |
+| Ratiometric vs. absolute | 15 | Supply-drift run quantified both ways, with the apparent-displacement figure from @eq-m2-supply-error computed, not just described |
+| Stiffness cross-check | 15 | $E_\mathrm{M1}$, $E_\mathrm{M2}$ and their ratio computed and reported with uncertainty, not just "they roughly agree" |
+| Uncertainty budget | 20 | Correct sensitivity coefficients; the temperature coefficient correctly treated as an influence quantity, not measured directly |
+
+Deduct across the board for a working range chosen without reference to both
+criteria, and for treating "ratiometric" as a feature to mention rather than
+an effect to quantify.
+
+### If a group finishes early {#sec-m2-instructor-extension}
+
+- Let $n$ float as a third Gauss–Newton parameter and compare the fitted
+  value against the assumed $n = 3$; discuss what a fitted $n$ far from 3
+  would mean physically.
+- Repeat the supply-drift run with a larger deliberate drift and check that
+  the apparent-displacement figure of @eq-m2-supply-error scales linearly
+  with the drift, as the formula predicts.
+- If [M1](../M1-strain-load/index.qmd) has also been run, propagate the
+  full uncertainty of $E_\mathrm{M1}/E_\mathrm{M2}$ including the beam
+  geometry's own uncertainty (this handbook's budget does not, by design —
+  see @sec-m2-budget) and discuss how much it changes the conclusion.

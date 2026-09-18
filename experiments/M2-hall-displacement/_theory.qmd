@@ -1,0 +1,173 @@
+### A ratiometric sensor on a nonlinear field {#sec-m2-ratiometric}
+
+A linear Hall sensor's output is proportional to the local magnetic field
+$B$ and, critically, to its own supply voltage:
+$$
+V_\mathrm{out} = V_\mathrm{cc}\left(\frac{1}{2} + S\,B\right)
+$$ {#eq-m2-ratiometric}
+with $S$ the sensitivity in $\mathrm{T}^{-1}$. "Ratiometric" is the load-bearing
+word: the sensor does not report $B$ directly, it reports $B$ *relative to*
+whatever $V_\mathrm{cc}$ happens to be at the instant of the reading. That
+property is a liability if $V_\mathrm{cc}$ is read absolute — see
+@sec-m2-supply — and an asset if $V_\mathrm{cc}$ is logged alongside $B$ and
+divided out.
+
+A small permanent magnet's on-axis field falls off steeply with distance.
+Near the axis, far enough from the magnet that its finite size does not
+matter, the leading behaviour is a power law $B \propto d^{-n}$ (a dipole's
+far-field scaling gives $n = 3$); this template adopts that model — an
+empirical polynomial in $1/d$ is the usual alternative, and is worth trying
+as an extension, but the power law needs only two fitted parameters rather
+than a polynomial's several and ties directly to the physics of a small
+magnet. Combining @eq-m2-ratiometric with the decay law, and writing $A =
+S B_0$ for the sensitivity and the on-axis field at $d=0$ combined — they
+cannot be separated from a $V(d)$ curve alone —
+$$
+V_\mathrm{out}(d) = V_\mathrm{cc}\left(\frac{1}{2} +
+\frac{A}{\left(1+d/d_0\right)^{n}}\right)
+$$ {#eq-m2-decay}
+with $d_0$ a characteristic distance and $n$ the decay exponent. This
+template fixes $n = 3$ (the far-field dipole value) and fits only $A$ and
+$d_0$ — see @sec-m2-fit for why, and for what letting $n$ float would buy.
+
+::: {.content-hidden when-format="revealjs"}
+Nothing in @eq-m2-decay depends on the beam: it describes the sensor and the
+magnet alone, on a micrometer stage, independent of anything mechanical. The
+beam only enters in @sec-m2-crosscheck, where the sensor is repurposed to
+read a tip displacement against this same calibration curve.
+:::
+
+### Fitting the nonlinear curve, explicitly {#sec-m2-fit}
+
+Both analysis templates fit @eq-m2-decay to the calibration sweep by an
+explicit Gauss–Newton iteration on $(A, d_0)$ with $n$ held fixed, the same
+discipline [S3 uses for its sine fit](../S3-aliasing-filtering/handbook.qmd#sec-s3-fir):
+a library call — `scipy.optimize.curve_fit` in Python, `nls` in R — chooses
+its own convergence criterion and starting behaviour, and the two do not
+reliably converge to bit-identical parameters on the same data. Two
+parameters keep the iteration well-behaved; letting $n$ float as a third
+parameter is a natural extension once the two-parameter fit is understood,
+and the residuals below are exactly what tells you whether $n=3$ is earning
+its keep.
+
+Report the fit's residuals against displacement, not only their RMS: a
+systematic pattern in the residual (not scatter) is evidence the fixed
+exponent or the functional form itself is wrong, and no amount of averaging
+fixes a model that is the wrong shape.
+
+### Choosing the working range {#sec-m2-window}
+
+@eq-m2-decay is strongly nonlinear, so "the sensitivity" is not one number —
+it is a function of $d$,
+$$
+\left.\frac{dV}{dd}\right|_d = -\,\frac{n\,A\,V_\mathrm{cc}}{d_0}
+\left(1+\frac{d}{d_0}\right)^{-(n+1)}
+$$ {#eq-m2-sensitivity}
+large close to the magnet, small far from it. Two competing criteria pick
+the working point:
+
+**Resolution.** With a noise floor $\sigma_V$ (measured the way
+[S1 measures one](../S1-daq-static/handbook.qmd#sec-s1-enob), applied to
+this sensor's own readings), the displacement resolution at $d$ is
+$$
+\sigma_d(d) = \frac{\sigma_V}{\left|dV/dd\right|_d}
+$$ {#eq-m2-resolution}
+Move the working point closer to the magnet and $\sigma_d$ falls — better.
+
+**Curvature.** The sensitivity that makes @eq-m2-resolution favourable also
+means @eq-m2-decay curves fastest close to the magnet. A working point that
+moves through an excursion $\pm\Delta d$ is read correctly only to the
+extent that $V(d)$ is well approximated by its tangent line there; the
+leading error of that local linear approximation is
+$$
+e_\mathrm{lin}(d, \Delta d) = \frac{1}{2}\left|\frac{d^2V}{dd^2}\right|_d
+\Delta d^{2},
+\qquad
+\frac{d^2V}{dd^2} = \frac{n(n+1)\,A\,V_\mathrm{cc}}{d_0^{2}}
+\left(1+\frac{d}{d_0}\right)^{-(n+2)}
+$$ {#eq-m2-curvature}
+Move the working point closer to the magnet and $e_\mathrm{lin}$ grows —
+worse, for the same $\Delta d$.
+
+The usable window is where @eq-m2-resolution is small enough that the
+noise floor corresponds to an acceptable displacement resolution *and*
+@eq-m2-curvature is small enough, over the excursion the working point will
+actually see, that the fit's own residual is not exceeded by the
+linearization error alone. Both are curves against $d$, and the analysis
+template plots them together — the crossing, or the region where both sit
+below a stated tolerance, is the window.
+
+### Supply voltage: ratiometric versus absolute {#sec-m2-supply}
+
+Differentiate @eq-m2-ratiometric with $B$ (and so $A$, $d_0$) held fixed:
+$$
+\frac{\partial V_\mathrm{out}}{\partial V_\mathrm{cc}} = \frac{1}{2} +
+\frac{A}{(1+d/d_0)^n} = \frac{V_\mathrm{out}}{V_\mathrm{cc}}
+$$ {#eq-m2-supply-sens}
+A fractional supply drift $\delta = \Delta V_\mathrm{cc}/V_\mathrm{cc}$
+therefore produces a fractional output error of exactly $\delta$ — read
+**absolute**, a drifting supply is indistinguishable from a real
+displacement, of apparent size
+$$
+\Delta d_\mathrm{apparent} \approx \delta\,\frac{V_\mathrm{out}}
+{\left|dV/dd\right|}
+$$ {#eq-m2-supply-error}
+Read **ratiometric** — divide the measured $V_\mathrm{out}$ by the
+*measured* $V_\mathrm{cc}$ on the second channel, rather than assume the
+nominal supply — and @eq-m2-ratiometric shows the ratio
+$V_\mathrm{out}/V_\mathrm{cc} = 1/2 + A(1+d/d_0)^{-n}$ does not depend on
+$V_\mathrm{cc}$ at all: the same drift $\delta$ produces zero apparent
+displacement, to first order, because the numerator and the denominator
+drift together and cancel in the ratio.
+
+### On the beam: a stiffness cross-check {#sec-m2-crosscheck}
+
+[M1](../M1-strain-load/index.qmd) fits the beam-mounted quarter bridge's
+strain against a set of reference masses and recovers
+$d\varepsilon/dF$ at the gauge position. From [the beam
+rig](../../hardware/beam-rig.qmd#sec-beam-relations),
+$$
+\frac{d\varepsilon}{dF} = \frac{6(L-x_\mathrm{gauge})}{Ebh^{2}}
+\quad\Longrightarrow\quad
+E_\mathrm{M1} = \frac{6(L-x_\mathrm{gauge})}{bh^{2}\,(d\varepsilon/dF)}
+$$ {#eq-m2-e-from-m1}
+M2 instead measures the tip displacement directly under the *same*
+reference masses, as a Hall-sensor reading against the calibration curve of
+@eq-m2-decay, and fits $d\delta/dF$:
+$$
+\frac{d\delta}{dF} = \frac{L^{3}}{3EI}
+\quad\Longrightarrow\quad
+E_\mathrm{M2} = \frac{L^{3}}{3I\,(d\delta/dF)}, \qquad I = \frac{bh^{3}}{12}
+$$ {#eq-m2-e-from-m2}
+Both @eq-m2-e-from-m1 and @eq-m2-e-from-m2 need the beam's geometry
+($L,b,h,x_\mathrm{gauge}$) to turn a fitted slope into a Young's modulus —
+which is why this cross-check, unlike the rest of this handbook, cannot stay
+purely symbolic: the reference data is generated from placeholder values in
+`tools/synth/params/m1.yaml` and `params/m2.yaml`, and the analysis template
+uses those same placeholders, clearly disclosed by the synthetic-data
+banner, to compute $E_\mathrm{M1}$, $E_\mathrm{M2}$ and their ratio. The
+**ratio** $E_\mathrm{M1}/E_\mathrm{M2}$ is the result that matters: it
+should be close to 1 regardless of what the placeholder geometry turns out
+to be, because the same beam's own $E$ cancels out of it, and a departure
+from 1 is evidence about the clamp
+([hardware/beam-rig.qmd's discussion](../../hardware/beam-rig.qmd#sec-beam-clamp)),
+not about the placeholders.
+
+### Choosing the measurand for the budget {#sec-m2-budget-choice}
+
+M2's budget is built for the **measured tip displacement** $\hat\delta$,
+recovered by inverting the fitted calibration curve at a measured (and
+ratiometrically corrected) voltage ratio. It carries the micrometer stage's
+own reference uncertainty, the calibration fit's residual, [S1's effective
+quantization](../S1-daq-static/handbook.qmd#sec-s1-enob), and the supply
+correction's own residual uncertainty, and states the sensor's temperature
+coefficient as an influence quantity rather than measuring it directly —
+see @sec-m2-budget in the handbook.
+
+### Relation to S1 {#sec-m2-relation}
+
+@eq-m2-resolution turns S1's noise floor into a displacement resolution the
+same way [M1](../M1-strain-load/handbook.qmd#sec-m1-inamp) turns it into a
+required amplifier gain: neither experiment re-measures the converter, both
+read S1's numbers off the shelf and ask what they mean for a different
+physical quantity.

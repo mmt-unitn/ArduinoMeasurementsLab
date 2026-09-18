@@ -1,0 +1,51 @@
+experiment: M3
+run: tap-noaccel
+date: 2026-09-18
+operator: tools/synth (generated)
+synthetic: true
+board:
+  model: portenta-h7
+  serial: SYNTHETIC-0001
+  usbio_version: 0.4.0
+  adc_bits: 16
+  vref_mV: 3300
+host:
+  os: linux
+  os_version: '6.6'
+  machine: raspberry-pi-5
+  libusb_version: 1.0.27
+  hub: true
+driver_version: 0.4.0
+binding: python
+binding_version: 0.4.0
+acquisition:
+  pins:
+  - 15
+  requested_period_us: 250
+  achieved_rate_hz: 3996.817
+  duration_s: 4.002935
+stream_stats:
+  records: 16000
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+channels:
+- pin: 15
+  quantity: strain
+  unit: '1'
+  sensor: foil strain gauge bridge, root of the beam
+  conditioning:
+    gain: 1.0
+    offset: 0.0
+    filter: none
+  calibration_reference: see M1 (bridge sensitivity against reference masses)
+environment:
+  ambient_temperature_C: 23.0
+  notes: tap test, no accelerometer mounted -- true (unloaded) modal frequencies
+references: []
+generator:
+  tool: tools/synth
+  version: 0.1.0
+  note: Parameters are placeholders; see tools/synth/params/

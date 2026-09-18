@@ -1,0 +1,59 @@
+experiment: T2
+run: ramp-stirred-water
+date: 2026-09-18
+operator: tools/synth (generated)
+synthetic: true
+board:
+  model: portenta-h7
+  serial: SYNTHETIC-0001
+  usbio_version: 0.4.0
+  adc_bits: 16
+  vref_mV: 3300
+host:
+  os: linux
+  os_version: '6.6'
+  machine: raspberry-pi-5
+  libusb_version: 1.0.27
+  hub: true
+driver_version: 0.4.0
+binding: python
+binding_version: 0.4.0
+acquisition:
+  pins:
+  - 15
+  requested_period_us: 62500
+  achieved_rate_hz: 16.0
+  duration_s: 21.93752
+stream_stats:
+  records: 352
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+channels:
+- pin: 15
+  quantity: temperature
+  unit: degC
+  sensor: NTC thermistor, resistive divider
+  conditioning:
+    gain: 1.0
+    offset: 0.0
+    filter: none
+  medium: stirred-water
+  initial_temperature_c: 23.0
+  ramp_rate_c_per_s: 0.5
+  ramp_start_time_s: 2.0
+  excitation_v: 0.9
+  divider_r_fixed_ohm: 1000.0
+environment:
+  ambient_temperature_C: 23.0
+  notes: ramp test, stirred water, rate = 0.5 degC/s
+references:
+- instrument: reference thermometer
+  model: TODO (Paolo)
+  calibration: TODO (Paolo)
+generator:
+  tool: tools/synth
+  version: 0.1.0
+  note: Parameters are placeholders; see tools/synth/params/

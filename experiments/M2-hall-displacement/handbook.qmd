@@ -1,0 +1,289 @@
+---
+title: "M2 — Hall-effect displacement measurement"
+subtitle: "Laboratory handbook"
+description: "A ratiometric sensor, a nonlinear calibration curve, and a stiffness cross-check"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-m2-outcomes}
+
+By the end of this session you should be able to:
+
+1. Explain what "ratiometric" means for a sensor's output, and derive the
+   consequence for a drifting supply voltage.
+2. Fit a strongly nonlinear calibration curve explicitly, by an iterative
+   method you control, and read its residuals for what they say about the
+   model.
+3. Choose a sensor's working range from two competing, quantified criteria
+   — resolution and curvature — rather than by inspection.
+4. Quantify what a ratiometric correction buys against a drifting supply, in
+   the same units as the measurand.
+5. Combine an independent strain-based stiffness estimate and a
+   displacement-based one into a single cross-check, and interpret their
+   agreement or disagreement.
+6. Build a GUM uncertainty budget for a measured displacement, including an
+   influence quantity that is bounded rather than measured directly.
+
+## Prerequisites {#sec-m2-prerequisites}
+
+- [S1](../S1-daq-static/index.qmd), completed: this experiment uses its
+  noise floor and effective-quantization results directly.
+- [M1](../M1-strain-load/index.qmd) is not required but is the natural
+  companion: its reference data is what this experiment's stiffness
+  cross-check reads back.
+- [The beam rig](../../hardware/beam-rig.qmd), read once: this handbook
+  uses its symbols and equations without repeating the derivations.
+- Statistics: mean, standard deviation, a nonlinear least-squares fit by
+  iteration. No more.
+
+## Hardware and cost tier {#sec-m2-hardware}
+
+::: {.callout-note}
+## Tier 3 — a bench with a mechanical rig and a precision stage
+
+Everything below either was already on the bench for S1/M1 or is specific
+to the Hall sensor and the micrometer stage.
+:::
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Supported board with `UsbIo` | The instrument under test | See [Supported boards](../../setup/boards.qmd) |
+| Host computer | Acquisition | Any host; this experiment does not depend on host-timing effects |
+| [The cantilever beam rig](../../hardware/beam-rig.qmd) | The mechanical specimen | Dimensions not yet decided, see [the dimensions table](../../hardware/beam-rig.qmd#dimensions-to-be-decided) there |
+| A micrometer stage | The displacement reference | [TODO (Paolo)]{.todo}: part |
+| A ratiometric linear Hall sensor | The displacement transducer | [TODO (Paolo)]{.todo}: part |
+| A small permanent magnet | The field source | [TODO (Paolo)]{.todo}: part |
+| Reference masses | Known forces, matching [M1's](../M1-strain-load/index.qmd) set | Calibrated, with a stated uncertainty |
+| Digital multimeter | Verifying the sensor supply | Same DMM as S1 |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+## Theory {#sec-m2-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-m2-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-m2-recording}
+
+Seventeen runs, seventeen CSV files, seventeen sidecars, each carrying two
+channels (the Hall output and the supply-voltage sense) on two pins, as
+[S1's noise run](../S1-daq-static/handbook.qmd#sec-s1-recording) does. The
+format is specified in [Data format](../../data-format/index.qmd); the
+checklist in @sec-m2-step-sidecar is the version to work through at the
+bench.
+
+```{.yaml filename="data/cal-d0008.yaml"}
+experiment: M2
+run: cal-d0008
+date: 2026-09-18
+operator: "your name"
+synthetic: false
+
+board:
+  model: portenta-h7
+  serial: "from arduino-io list"
+  usbio_version: "from arduino-io info"
+  adc_bits: 16
+  vref_mV: 3300
+
+host:
+  os: linux
+  os_version: "from uname -a"
+  machine: "which bench"
+  hub: true
+
+driver_version: "0.4.0"
+binding: cli
+
+acquisition:
+  pins: [15, 16]
+  requested_period_us: 1000
+  achieved_rate_hz: 0.0      # from the stream summary
+  duration_s: 0.2
+
+stream_stats:                 # all six, from the summary line
+  records: 0
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+
+channels:
+  - pin: 15
+    quantity: displacement
+    unit: mm
+    sensor: "linear Hall sensor (ratiometric)"
+    calibration_reference: "micrometer stage reading"
+    reference_value: 8.0       # the micrometer's own reading
+    reference_u: 0.01          # from the micrometer's resolution/specification
+  - pin: 16
+    quantity: voltage
+    unit: V
+    sensor: "supply-voltage sense"
+    conditioning: {gain: 0.95, offset: 0.0, filter: none}
+    calibration_reference: "supply rail"
+    reference_value: 3.300
+    reference_u: 0.0
+
+environment:
+  ambient_temperature_C: 23.0
+  notes: ""
+
+references:
+  - instrument: "micrometer stage"
+    model: "the model you used"
+    calibration: "certificate or none"
+```
+
+::: {.callout-warning}
+## Both channels, every run
+
+A record with only the Hall channel cannot be corrected ratiometrically
+after the fact — the whole point of @sec-m2-supply is that the supply has to
+be measured *at the same instant* as the output. Stream both pins together,
+every time.
+:::
+
+## Analysis tasks {#sec-m2-tasks}
+
+Open one of the two templates —
+[Python](analysis-py.qmd) or [R](analysis-r.qmd) — point it at your files,
+and work through it. They contain the same sections and produce the same
+numbers.
+
+1. **Data quality.** Run `validate_meta()` on every sidecar, as in S1.
+2. **Calibration fit.** Fit @eq-m2-decay to the sweep by the explicit
+   Gauss–Newton method of @sec-m2-fit, and plot the residuals.
+3. **Working range.** Compute and plot @eq-m2-resolution and
+   @eq-m2-curvature against $d$, and choose a working point with a stated
+   criterion.
+4. **Ratiometric correction.** From the supply-drift run, compute the
+   apparent displacement both ways (@eq-m2-supply-error) and compare.
+5. **Stiffness cross-check.** Read M1's quarter-bridge sweep, fit
+   $E_\mathrm{M1}$ from @eq-m2-e-from-m1; fit $E_\mathrm{M2}$ from your own
+   cross-check run and @eq-m2-e-from-m2; report the ratio.
+6. **Budget.** Build the budget of @sec-m2-budget below.
+
+## Uncertainty budget {#sec-m2-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+M2's budget is built for the **measured tip displacement** $\hat\delta$ at
+the cross-check's largest reference force, recovered by inverting the
+fitted calibration curve at the ratiometrically corrected voltage ratio
+$r = V_\mathrm{out}/V_\mathrm{cc}$:
+$$
+\hat d = d_0\left[\left(\frac{A}{r - 1/2}\right)^{1/n} - 1\right],
+\qquad
+\hat\delta = d_\mathrm{baseline} - \hat d
+$$ {#eq-m2-recover}
+with sensitivity coefficients, writing $u = A/(r-1/2)$ for brevity,
+$$
+\frac{\partial \hat d}{\partial r} = -\frac{d_0}{n}\,\frac{A\,u^{1/n - 1}}
+{(r-1/2)^{2}},
+\qquad
+\frac{\partial \hat d}{\partial A} = \frac{d_0}{n}\,\frac{u^{1/n-1}}{r-1/2},
+\qquad
+\frac{\partial \hat d}{\partial d_0} = \frac{\hat d}{d_0}
+$$ {#eq-m2-sensitivity}
+Since $\hat\delta = d_\mathrm{baseline} - \hat d$ with $d_\mathrm{baseline}$
+a fixed reference, $\partial\hat\delta/\partial x = -\partial\hat d/\partial
+x$ for every input $x$ above — a sign flip that leaves every magnitude in
+@tbl-m2-components unchanged.
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| Repeatability of $r$ | A | — | $\sigma_r/\sqrt{n}$ from the operating point's own repeats | $\partial\hat d/\partial r$ |
+| Effective quantization | B | Rectangular | Half-width $q_\mathrm{eff}/2$, [S1's ENOB method](../S1-daq-static/handbook.qmd#eq-s1-enob), applied locally, referred to $r$ | $\partial\hat d/\partial r$ |
+| Calibration fit amplitude $A$ | B | — | Standard error of the Gauss–Newton fit | $\partial\hat d/\partial A$ |
+| Calibration fit distance $d_0$ | B | — | Standard error of the Gauss–Newton fit | $\partial\hat d/\partial d_0$ |
+| Micrometer reference | B | Rectangular | `reference_u` in the calibration-sweep sidecars | $1$ |
+| Sensor temperature coefficient | B | Rectangular | `hall.temperature_coefficient_per_k` $\times$ a stated bench $\Delta T$, as an influence quantity | $\partial\hat d/\partial A$ (via $A$) |
+
+: Components of the M2 budget {#tbl-m2-components}
+
+Report $u_c$ and $U = 2u_c$, the index $h_i$ of every component, and one
+sentence naming the dominant term.
+
+::: {.callout-important}
+## Two things this budget states rather than hides
+
+**Reading ratiometric removes the supply as a separate component.** Because
+$r = V_\mathrm{out}/V_\mathrm{cc}$ is used throughout rather than
+$V_\mathrm{out}$ alone, the supply's own tolerance does not appear as a row
+— @sec-m2-supply is precisely why. An **absolute** reading would need a
+supply-voltage row with sensitivity $\partial\hat d/\partial V_\mathrm{cc}$
+derived from @eq-m2-supply-sens, and comparing the two budgets side by side
+is a direct way to show what the ratiometric correction is worth in
+uncertainty terms, not only in the time-series plot of @sec-m2-supply.
+
+**The temperature coefficient is an influence quantity, not a measurement.**
+This experiment does not run a controlled-temperature calibration; the
+coefficient enters as a Type B bound from the sidecar's own placeholder,
+following the same "state it, do not measure it" treatment [S3 gives its
+own unmeasured
+terms](../S3-aliasing-filtering/handbook.qmd#sec-s3-budget).
+:::
+
+## Questions {#sec-m2-questions}
+
+1. Your chosen working point trades resolution against curvature. If the
+   beam's own working load were doubled — doubling the tip excursion the
+   sensor has to track — would you move the working point closer to the
+   magnet, farther, or leave it? Justify from @eq-m2-resolution and
+   @eq-m2-curvature.
+2. A colleague reads the Hall sensor's output directly, without dividing by
+   the measured supply, because "the supply is regulated, it shouldn't
+   drift." Using your own @eq-m2-supply-error figure, say what supply
+   tolerance this claim would need to be true for the error to be
+   negligible against your budget's $U$.
+3. Refit @eq-m2-decay with $n$ as a third free parameter instead of fixed at
+   3. Does the fitted $n$ change $A$ and $d_0$'s values substantially? Does
+   it change the working-range conclusion?
+4. $E_\mathrm{M1}$ and $E_\mathrm{M2}$ both depend on the same placeholder
+   beam dimensions. Explain why their *ratio* is nonetheless a meaningful
+   result even though neither individual value is trustworthy as an
+   absolute measurement of $E$.
+5. The budget of @tbl-m2-components carries the sensor's temperature
+   coefficient as an influence quantity rather than a measured Type A term.
+   Design the bench test that would let you measure it directly instead,
+   modelled on [M1's temperature-compensation
+   test](../M1-strain-load/handbook.qmd#sec-m1-step-temp).
+6. Your calibration sweep spans 2–20 mm. Using @eq-m2-curvature, explain why
+   a working point at the very edge of that range — say 20 mm — would still
+   be a poor choice even though the curve is nearly flat there.
+
+## Instructor notes {#sec-m2-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

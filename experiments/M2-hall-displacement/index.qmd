@@ -13,10 +13,102 @@ experiment:
   validated:
     usbio: "TODO (Paolo)"
     driver: "TODO (Paolo)"
+toc: true
 ---
 
-::: {.callout-note}
-## Experiment not written yet
-This folder is part of the AMLab scaffold. The overview, slides, handbook and
-the two analysis templates will be added.
+A ratiometric linear Hall sensor reports a magnetic field relative to its
+own supply voltage, and a small magnet's field falls off steeply — and
+nonlinearly — with distance. This experiment characterizes that nonlinear
+curve, uses it to pick a working range by an explicit criterion rather than
+a guess, shows exactly what the ratiometric property buys against a
+drifting supply, and then puts the sensor on [the cantilever
+beam](../../hardware/beam-rig.qmd) to measure tip displacement — a second,
+independent route to the beam's stiffness that
+[M1's](../M1-strain-load/index.qmd) strain measurement also reaches, so the
+two can be checked against each other.
+
+The beam's own dimensions are not decided (see [the beam
+rig](../../hardware/beam-rig.qmd#sec-beam-design)); every relation here is
+symbolic in the same way, and the numbers the analysis templates print come
+from placeholder values in `tools/synth/params/m2.yaml` — the same
+placeholders `tools/synth/params/m1.yaml` uses for the shared rig — clearly
+marked and disclosed by the synthetic-data banner on every page that uses
+them.
+
+## Materials {#sec-m2-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — 15 minutes, before the bench
+- [Handbook](handbook.qmd) — theory, procedure, tasks, questions
+  ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd) — Jupyter engine
+- [R template](analysis-r.qmd) — knitr engine
+
+Both ship with reference data and produce the same numbers.
+:::
+
+:::
+
+## What you measure {#sec-m2-index-measure}
+
+| Quantity | How | Where it is used later |
+|---|---|---|
+| Nonlinear calibration curve $V(d)$ | A magnet swept on a micrometer stage | Every displacement this experiment recovers |
+| Resolution and curvature against $d$ | Derived from the fitted curve and S1's noise floor | The working-range choice |
+| Ratiometric vs. absolute supply sensitivity | The same displacement held fixed, supply deliberately drifted | Quantifies what dividing by $V_\mathrm{cc}$ buys |
+| Tip displacement under known loads | The sensor on the beam, the same masses [M1](../M1-strain-load/index.qmd) uses | The stiffness cross-check with M1 |
+
+: What M2 produces {#tbl-m2-index-outputs}
+
+## Bench {#sec-m2-index-bench}
+
+**Tier 3.** [The cantilever beam rig](../../hardware/beam-rig.qmd), a
+micrometer stage, a ratiometric linear Hall sensor and a small magnet, and a
+way to log the sensor's supply voltage on a second channel.
+
+**Board.** Any supported board works; nothing here needs streaming timing
+quality beyond what [S1](../S1-daq-static/index.qmd) already characterizes.
+
+**Host.** Any — this experiment does not depend on host-timing effects the
+way S1/S2/S3 do.
+
+## Reference data {#sec-m2-index-data}
+
+Seventeen generated runs ship with the experiment, in `data/`:
+
+| File(s) | Contents |
+|---|---|
+| `cal-d0002` … `cal-d0020` (12 runs) | The magnet swept from 2 mm to 20 mm, sensor output and supply voltage together |
+| `supply-drift` | Displacement held fixed, supply voltage deliberately drifted |
+| `crosscheck-000` … `crosscheck-030` (4 runs) | The same small reference masses [M1](../M1-strain-load/index.qmd) uses, applied at the beam tip |
+
+: Reference data shipped with M2 {#tbl-m2-index-data}
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+It is produced by a seeded generator (`tools/synth/m2_hall_displacement.py`)
+whose parameters — including every beam dimension — are plausible
+placeholders, not measurements, marked `TODO (Paolo)` in
+`tools/synth/params/m2.yaml`. It exists so the analysis templates render,
+and are checked in continuous integration, with no bench attached. Every
+page that uses it says so.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+Three hours, tier 3, needs S1 as a prerequisite and is most rewarding paired
+with M1, whose reference data this experiment's stiffness cross-check reads
+back directly. Full notes, expected values, common failures and the rubric
+are in the [handbook](handbook.qmd#sec-m2-instructor).
 :::

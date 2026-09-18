@@ -1,0 +1,94 @@
+---
+title: "M2 — Hall-effect displacement measurement"
+subtitle: "A nonlinear curve, a working range chosen on purpose, and a cross-check with M1"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    incremental: false
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before the bench {.center}
+
+### What you are about to measure
+
+A ratiometric Hall sensor reports a field relative to its own supply, and a
+small magnet's field is a strongly nonlinear function of distance.
+
+By the end of the session you will know:
+
+- what "ratiometric" buys you, quantified against a drifting supply, not
+  just asserted;
+- how to fit that nonlinear curve explicitly, and use it to choose a working
+  range from two competing criteria, not a guess;
+- how the same sensor, on the beam, gives a second and independent estimate
+  of the beam's stiffness — checked against
+  [M1's](../M1-strain-load/index.qmd) strain-based one.
+
+### The rule of the session
+
+::: {.callout-important}
+## A working range is a choice, with a criterion
+
+"Close to the magnet" is not a design. Every working point in this session
+is chosen against two curves — resolution and curvature — plotted together,
+not picked because it looked reasonable.
+:::
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will build
+
+A micrometer stage carrying a small magnet, a fixed Hall sensor with its
+supply logged on a second channel, and — for the cross-check — the same
+sensor mounted at the beam tip.
+
+::: {.smaller}
+| Run(s) | What it shows |
+|---|---|
+| Calibration sweep, 12 distances | The nonlinear $V(d)$ curve |
+| Supply-drift, displacement fixed | Ratiometric vs. absolute reading |
+| Cross-check masses (same as M1) | Tip displacement under known loads |
+:::
+
+::: {.callout-warning}
+## What ruins the session
+
+Recording the **intended** micrometer step instead of its **actual**
+reading loses the backlash the fit needs to see. Bumping the stage during
+the supply-drift run confounds the one effect that run exists to isolate.
+:::
+
+### Then
+
+Open [the handbook](handbook.qmd) for the full procedure, and one of the two
+analysis templates — [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+They have the same sections and produce the same numbers. Both ship with
+reference data, so you can read the whole analysis before you wire anything.
+
+## What you should come away with {.center}
+
+### Three sentences you should be able to defend
+
+1. "Our calibration curve gave $A = \dots$, $d_0 = \dots$ mm (fixed
+   $n = 3$), with a residual of $\dots$ mm across the sweep."
+2. "We chose a working point at $d = \dots$ mm, where the resolution was
+   $\dots$ mm and the linearization error over our excursion was
+   $\dots$ mm — both inside our stated tolerance."
+3. "A $\dots\,\%$ supply drift produced $\dots$ mm of apparent displacement
+   read absolute, and $\dots$ mm read ratiometric."
+
+If you can say those three — and, having also run M1, a fourth about
+$E_\mathrm{M1}/E_\mathrm{M2}$ — with your own numbers in them, the session
+worked.

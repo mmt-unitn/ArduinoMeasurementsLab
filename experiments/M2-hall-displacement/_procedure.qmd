@@ -1,0 +1,104 @@
+::: {.callout-warning}
+## Before you connect anything
+
+**Pinch points on the micrometer stage.** A micrometer stage closes a gap
+between two hard surfaces under mechanical advantage, and fingers belong
+nowhere in that gap while the spindle is turning. Keep hands clear of the
+stage's moving faces, wind slowly, and never force the spindle past a hard
+stop — a stalled stage and a pinched finger are the same failure with
+different consequences.
+
+**Suspended masses, again.** The on-the-beam cross-check of
+@sec-m2-step-crosscheck hangs the same reference masses M1 uses. The same
+warning applies unchanged: never put a hand or an instrument under a
+suspended mass, load one mass at a time, and never exceed the beam's working
+load — see [M1's safety
+callout](../M1-strain-load/handbook.qmd#sec-m1-procedure) for why exceeding
+it invalidates every relation this experiment depends on, not just M1's.
+
+**The sensor supply.** Verify the Hall sensor's supply voltage with a DMM
+before powering it — a ratiometric sensor's output is only meaningful
+relative to the supply it actually received, and an out-of-spec supply can
+damage the part before it ever produces a reading worth analysing.
+:::
+
+### 1. Identify the board {#sec-m2-step-identify}
+
+```bash
+arduino-io list
+arduino-io info
+```
+
+As in [S1](../S1-daq-static/handbook.qmd#sec-s1-step-identify): write down
+`adc_bits`, `vref_mV` and whether `streaming` is available.
+
+### 2. Calibration sweep: the magnet on the micrometer stage {#sec-m2-step-sweep}
+
+With the Hall sensor fixed and the magnet mounted on the micrometer stage,
+sweep the distance from close (strong signal, strong curvature) to far
+(weak signal, nearly flat), recording both the sensor output and the supply
+voltage together:
+
+```bash
+arduino-io mode 15 analog && arduino-io mode 16 analog
+# d = 2 mm
+arduino-io stream 15,16 --hz 1000 --seconds 0.2 --csv data/cal-d0002.csv
+# ... repeat at each distance in the sweep, working outward
+```
+
+::: {.callout-important}
+## Record the micrometer reading, not a nominal step
+
+Write the micrometer's own reading into `channels[].reference_value`, not
+the distance you intended to move to — backlash and any zero offset in the
+stage mean the two are not the same number, and the whole calibration fit
+depends on knowing which one you have.
+:::
+
+### 3. Supply-voltage drift, displacement held fixed {#sec-m2-step-drift}
+
+Hold the stage at the working point chosen from @sec-m2-window (see the
+analysis template), and record a longer run while deliberately varying the
+supply voltage — a bench supply's coarse adjustment, or simply its own warm-
+up drift over a longer recording, whichever your bench can produce
+controllably:
+
+```bash
+arduino-io stream 15,16 --hz 500 --seconds 20 --csv data/supply-drift.csv
+```
+
+Nothing about the displacement changes during this run. Whatever the raw
+Hall-output channel shows changing is the supply, not the target — which is
+exactly the point @sec-m2-supply exists to make with real numbers.
+
+### 4. On the beam: the stiffness cross-check {#sec-m2-step-crosscheck}
+
+Mount the Hall sensor and its magnet at the beam tip, at the baseline gap
+chosen from the working-range analysis, and apply the same small set of
+reference masses [M1 uses](../M1-strain-load/handbook.qmd#sec-m1-step-bridges)
+for its quarter-bridge sweep:
+
+```bash
+arduino-io stream 15,16 --hz 1000 --seconds 0.2 --csv data/crosscheck-000.csv
+# ... repeat for each reference mass, same set M1 used
+```
+
+::: {.callout-important}
+## Use the same masses M1 used
+
+The stiffness cross-check of @sec-m2-crosscheck compares two independent
+measurements of the same loading. If M2's masses do not match M1's exactly,
+the comparison is between two different experiments, not a cross-check of
+one.
+:::
+
+### 5. Fill the sidecars {#sec-m2-step-sidecar}
+
+Beyond the fields [S1](../S1-daq-static/handbook.qmd#sec-s1-step-sidecar)
+already asks for:
+
+- [ ] `channels[].reference_value` / `.reference_u` — the micrometer reading
+      (calibration sweep) or the applied force in newtons (cross-check runs)
+- [ ] Both pins present in `acquisition.pins` and described in `channels[]`
+      — the Hall output and the supply-voltage sense, every run
+- [ ] `synthetic: false`

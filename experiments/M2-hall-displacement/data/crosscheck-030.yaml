@@ -1,0 +1,74 @@
+experiment: M2
+run: crosscheck-030
+date: 2026-09-18
+operator: tools/synth (generated)
+synthetic: true
+board:
+  model: portenta-h7
+  serial: SYNTHETIC-0001
+  usbio_version: 0.4.0
+  adc_bits: 16
+  vref_mV: 3300
+host:
+  os: linux
+  os_version: '6.6'
+  machine: raspberry-pi-5
+  libusb_version: 1.0.27
+  hub: true
+driver_version: 0.4.0
+binding: python
+binding_version: 0.4.0
+acquisition:
+  pins:
+  - 15
+  - 16
+  requested_period_us: 1000
+  achieved_rate_hz: 999.93
+  duration_s: 0.199014
+stream_stats:
+  records: 200
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+channels:
+- pin: 15
+  quantity: force
+  unit: N
+  sensor: linear Hall sensor (ratiometric), beam tip target
+  conditioning:
+    gain: 1.0
+    offset: 0.0
+    filter: none
+  calibration_reference: reference mass at the beam tip
+  reference_value: 0.29419949999999995
+  reference_u: 0.0004903325
+  sensor_temperature_coefficient_per_k: 0.0003
+  decay_exponent: 3
+  baseline_distance_mm: 8.0
+- pin: 16
+  quantity: voltage
+  unit: V
+  sensor: supply-voltage sense
+  conditioning:
+    gain: 0.95
+    offset: 0.0
+    filter: none
+  calibration_reference: supply rail
+  reference_value: 3.3
+  reference_u: 0.0
+environment:
+  ambient_temperature_C: 23.0
+  notes: beam tip, m = 30 g
+references:
+- instrument: micrometer stage
+  model: TODO (Paolo)
+  calibration: TODO (Paolo)
+- instrument: reference masses
+  model: TODO (Paolo)
+  calibration: TODO (Paolo)
+generator:
+  tool: tools/synth
+  version: 0.1.0
+  note: Parameters are placeholders; see tools/synth/params/
