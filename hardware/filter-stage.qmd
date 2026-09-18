@@ -1,9 +1,172 @@
 ---
 title: "Anti-alias filter stage"
 description: "RC and op-amp filters ahead of the ADC"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## Why analog, and why first {#sec-filt-why}
+
+Aliasing folds energy above the Nyquist frequency $f_s/2$ down into the band
+that is actually sampled [@oppenheim]. Once that folding has happened, no
+later processing — digital filtering, windowing, anything done to the
+samples after the fact — can separate the folded component from a real
+component that already sits at the same frequency: the information about
+where it came from was destroyed at the instant of sampling. The only place
+to remove that energy is before the sample is taken, in the analog domain.
+That is what this stage does, and it is why it sits ahead of the ADC — after
+the [conditioning board's](conditioning-board.qmd) gain, so it filters a
+signal already scaled into a useful range, but with nothing digital between
+it and the converter. [S3](../experiments/S3-aliasing-filtering/index.qmd)
+measures folding directly, predicted against observed; this page designs the
+stage that experiment characterizes.
+
+## First-order RC {#sec-filt-rc1}
+
+A single-pole low-pass, $H(s) = 1/(1+sRC)$, has corner frequency
+
+$$
+f_c = \frac{1}{2\pi RC}
+$$ {#eq-filt-fc}
+
+with magnitude and phase, at real frequency $f$,
+
+$$
+|H(f)| = \frac{1}{\sqrt{1+(f/f_c)^2}},
+\qquad
+\phi(f) = -\arctan\!\left(\frac{f}{f_c}\right)
+$$ {#eq-filt-mag-phase}
+
+Group delay — the delay a filter imposes on the envelope of a narrowband
+signal, and the quantity that matters for how a filter smears a *transient*
+rather than a sinusoid — follows from the phase:
+
+$$
+\tau_g(f) = -\frac{1}{2\pi}\frac{d\phi}{df} = \frac{RC}{1+(2\pi f RC)^2}
+$$ {#eq-filt-groupdelay}
+
+As $f\to 0$, $\tau_g \to RC = 1/(2\pi f_c)$: a filter with a low corner
+delays and rounds a fast transient by an amount comparable to its own time
+constant. This is exactly the effect [T2's plunge
+test](../experiments/T2-temperature-dynamic/index.qmd) has to separate from
+the sensor's own thermal time constant — a filter placed ahead of a
+step-response measurement adds its own first-order lag in series with the
+one being measured, and if the two time constants are not clearly separated,
+the fitted $\tau$ belongs to neither the sensor nor the filter alone.
+
+## Higher order {#sec-filt-order}
+
+A single RC section rolls off at $-20\,$dB/decade for $f \gg f_c$. Two ways
+to increase that slope: cascade more passive sections, or build an active
+multi-pole stage.
+
+**Cascading passive sections does not simply multiply the rolloff at the
+original corner.** If $N$ identical, buffered (non-interacting) first-order
+sections are cascaded, the combined magnitude is $|H(f)|^N$, and at $f=f_c$
+each section already contributes $1/\sqrt2$, so the cascade's own $-3\,$dB
+point is not $f_c$ but
+
+$$
+f_{c,N} = f_c\sqrt{2^{1/N}-1}
+$$ {#eq-filt-cascade-fc}
+
+which is *below* $f_c$: two sections at "the same $f_c$" reach $-3\,$dB at
+about $0.64\,f_c$, not at $f_c$. The asymptotic $-20N\,$dB/decade slope is
+only approached well above $f_c$. And if the sections are not buffered from
+each other, the second stage loads the first, so the transfer function is
+not even the product $|H(f)|^N$ — the poles shift from what the individual
+$R$s and $C$s alone would suggest, and the effective corner and rolloff have
+to be recomputed as one higher-order network, not assembled from independent
+one-stage numbers.
+
+**An active stage** — a Sallen–Key topology, one op-amp and four passive
+components implementing a full two-pole section — avoids the interaction
+problem by construction, since the op-amp's low output impedance decouples
+what would otherwise load the network, and gives control over the pole
+placement through a single parameter, the quality factor $Q$, in the
+standard second-order form
+
+$$
+H(s) = \frac{\omega_0^2}{s^2 + \dfrac{\omega_0}{Q}s + \omega_0^2},
+\qquad
+\omega_0 = \frac{1}{\sqrt{R_1R_2C_1C_2}},
+\qquad
+Q = \frac{\sqrt{R_1R_2C_1/C_2}}{R_1+R_2}
+$$ {#eq-filt-sk}
+
+for the unity-gain Sallen–Key low-pass built from $R_1, R_2, C_1, C_2$
+[@kester2005]. Unlike two cascaded passive sections, a single Sallen–Key
+stage reaches a genuine two-pole, $-40\,$dB/decade asymptotic slope with
+only one op-amp, and $Q$ can be set through the ratio of the four components
+to trade a maximally-flat passband (Butterworth, $Q=1/\sqrt2$) against a
+sharper knee with some peaking.
+
+## The design problem {#sec-filt-design}
+
+Given a sampling rate $f_s$ and a passband of interest up to
+$f_\max < f_s/2$, the first folding frequency is
+$f_\mathrm{fold} = f_s - f_\max$ — content at $f_\mathrm{fold}$ aliases down
+to $f_\max$ once sampled. Two requirements constrain the corner frequency
+$f_c$ of an $N$-th order stage with asymptotic slope $-20N\,$dB/decade:
+
+**Stopband.** The attenuation at $f_\mathrm{fold}$ must be at least $A$ dB:
+
+$$
+f_c \;\le\; f_\mathrm{fold}\cdot 10^{-A/(20N)}
+$$ {#eq-filt-stopband}
+
+**Passband droop.** The attenuation at $f_\max$ itself must not exceed some
+allowed droop $\delta$ dB:
+
+$$
+f_c \;\ge\; \frac{f_\max}{\sqrt{10^{\delta/10}-1}}
+$$ {#eq-filt-passband}
+
+@eq-filt-stopband pushes $f_c$ down; @eq-filt-passband pushes it up. A
+feasible design needs the two bounds to leave a non-empty interval for
+$f_c$, which is the real content of the trade-off: for fixed $A$ and
+$\delta$, a higher order $N$ relaxes @eq-filt-stopband — moves its bound
+upward — without touching @eq-filt-passband at all, since that bound depends
+only on $f_\max$ and the droop tolerated, never on $N$. That is why a
+tighter stopband requirement is answered with more poles rather than with a
+lower corner: a lower corner alone would also cost passband flatness that
+@eq-filt-passband is protecting.
+
+## Component selection {#sec-filt-parts}
+
+- **Capacitor dielectric.** Class-2 ceramics (X7R, Y5V and similar) have a
+  capacitance that depends strongly on temperature — typically several
+  hundred to over a thousand ppm/°C, and non-linear — and on applied DC bias,
+  where a Y5V part can lose a large fraction of its nominal capacitance at
+  its rated voltage. Since $f_c$ in @eq-filt-fc depends directly on $C$, a
+  filter built from class-2 parts has a corner that moves with the operating
+  point, not just with tolerance. Class-1 ceramics (C0G/NP0) and film
+  capacitors (polyester, polypropylene) have temperature and voltage
+  coefficients small enough to ignore at this level; prefer them for any $C$
+  whose value sets a corner frequency, a gain, or a timing.
+- **Resistor type.** Metal-film, not carbon-composition: lower tolerance and
+  roughly an order of magnitude lower temperature coefficient, for the same
+  reason argued for the divider's resistors on the [conditioning
+  board](conditioning-board.qmd#sec-cond-dividers).
+
+Specific values and part numbers: [TODO (Paolo)]{.todo}, once
+@eq-filt-stopband and @eq-filt-passband are solved for this bench's actual
+$f_s$ and $f_\max$.
+
+## This stage in an uncertainty budget {#sec-filt-budget}
+
+A filter with a nonzero corner relative to $f_\max$ attenuates the passband
+itself, per @eq-filt-mag-phase, by a known factor $|H(f_\max)|$ at the
+frequency of interest. That is a systematic effect, and once characterized —
+by measuring $|H(f)|$ against a known input, the way
+[S2](../experiments/S2-daq-dynamic/index.qmd) characterizes the board itself
+— it becomes a *correction*, not an error: divide the reading by
+$|H(f_\max)|$. What is left in the budget afterward is the uncertainty of
+that correction, driven by the tolerance and drift of $R$ and $C$ entering
+$f_c$, and it is carried the same way as the gain term of [the conditioning
+board](conditioning-board.qmd#sec-cond-budget): multiplicative, with
+sensitivity proportional to the reading.
+
+## References
+
+::: {#refs}
 :::

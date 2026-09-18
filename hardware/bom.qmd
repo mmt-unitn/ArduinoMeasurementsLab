@@ -1,9 +1,96 @@
 ---
 title: "Bill of materials"
 description: "Components and cost per tier"
+toc: true
 ---
 
 ::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## No prices are recorded yet
+
+Every cost cell on this page is [TODO (Paolo)]{.todo}. That is deliberate:
+guessing a number here would make the page look finished when the one thing
+it exists to deliver — what it actually costs to equip a bench, per tier —
+is exactly what is missing. Once prices are filled in, the totals are the
+point of the page; until then, the tables are a checklist of what to price.
 :::
+
+## What is shared, and what is per bench {#sec-bom-shared}
+
+Not everything on this list needs to be bought once per bench. A signal
+generator, a digital multimeter and a reference thermometer are each used
+for a session at a time, not continuously, and a lab equipping several
+benches can share a smaller pool of these across them — which is what
+actually sets the cost of equipping a room rather than a single bench. What
+does need to be per-bench is anything a student needs continuously through
+a session: the board itself, the conditioning and filter boards once built,
+and the beam rig if a session runs strain, displacement and vibration back
+to back.
+
+## Tier 1 {.tier-1}
+
+| Item | Qty / bench | Requirements it must meet | Cost |
+|---|:--:|---|--:|
+| Supported board | 1 | See [Supported boards](../setup/boards.qmd) | [TODO (Paolo)]{.todo} |
+| USB cable (+ hub if needed) | 1 | See [Supported boards](../setup/boards.qmd) for which boards need a hub | [TODO (Paolo)]{.todo} |
+| Voltage reference IC | 1 | An output the DMM can resolve well beyond the board's own LSB — see [Signal conditioning board](conditioning-board.qmd#sec-cond-why) | [TODO (Paolo)]{.todo} |
+| Digital multimeter | shared | Specified accuracy, better than the board by a stated margin — see [S1](../experiments/S1-daq-static/index.qmd) | [TODO (Paolo)]{.todo} |
+| Breadboard, resistors, wires | 1 set | — | [TODO (Paolo)]{.todo} |
+| **Tier 1 total** |  |  | [TODO (Paolo)]{.todo} |
+
+: Tier 1 — board, reference, meter {#tbl-bom-tier1}
+
+## Tier 2 {.tier-2}
+
+| Item | Qty / bench | Requirements it must meet | Cost |
+|---|:--:|---|--:|
+| Signal generator | shared | Amplitude and frequency range covering S2's and S3's test signals | [TODO (Paolo)]{.todo} |
+| Conditioning board — offset/scale stage | 1 | See [Signal conditioning board §offset-and-scale](conditioning-board.qmd#sec-cond-offset-scale) | [TODO (Paolo)]{.todo} |
+| Conditioning board — instrumentation amplifier | 1 | See [Signal conditioning board §in-amp](conditioning-board.qmd#sec-cond-inamp) | [TODO (Paolo)]{.todo} |
+| Conditioning board — buffer, precision resistors | 1 set | See [Signal conditioning board §buffer](conditioning-board.qmd#sec-cond-buffer) | [TODO (Paolo)]{.todo} |
+| Perfboard/enclosure for the conditioning stage | 1 | Solder-built, not breadboard — see [why](index.qmd#sec-hw-breadboard) | [TODO (Paolo)]{.todo} |
+| **Tier 2 total (adds to tier 1)** |  |  | [TODO (Paolo)]{.todo} |
+
+: Tier 2 — signal generator, conditioning board {#tbl-bom-tier2}
+
+## Tier 3 {.tier-3}
+
+| Item | Qty / bench | Requirements it must meet | Cost |
+|---|:--:|---|--:|
+| Filter stage components | 1 set | See [Anti-alias filter stage §component selection](filter-stage.qmd#sec-filt-parts) | [TODO (Paolo)]{.todo} |
+| Stirred water bath vessel + stirrer | shared or 1 | See [Thermal rig §bath](thermal-rig.qmd#sec-therm-bath) | [TODO (Paolo)]{.todo} |
+| Hotplate | shared or 1 | Mains-powered — see the safety note on [Thermal rig](thermal-rig.qmd) | [TODO (Paolo)]{.todo} |
+| Ice-bath vessel | 1 | See [Thermal rig §ice bath](thermal-rig.qmd#sec-therm-ice) | [TODO (Paolo)]{.todo} |
+| Reference thermometer | shared | Better than the sensors under test — see [Thermal rig §reference thermometer](thermal-rig.qmd#sec-therm-ref) | [TODO (Paolo)]{.todo} |
+| Temperature sensors under test (NTC, Pt1000, …) | 1 set | Matched to T1's and T2's requirements | [TODO (Paolo)]{.todo} |
+| Beam stock | 1 | Material and dimensions per [Beam rig §design requirements](beam-rig.qmd#sec-beam-design) | [TODO (Paolo)]{.todo} |
+| Strain gauges + adhesive | 1 set | See sourcing notes below | [TODO (Paolo)]{.todo} |
+| Linear Hall sensor + target | 1 | For M2 | [TODO (Paolo)]{.todo} |
+| Accelerometer | 1 | For M3 | [TODO (Paolo)]{.todo} |
+| Load cell + reference masses | 1 set | For M1 | [TODO (Paolo)]{.todo} |
+| Clamp/fixture for the beam | 1 | See [Beam rig §the clamp](beam-rig.qmd#sec-beam-clamp) | [TODO (Paolo)]{.todo} |
+| **Tier 3 total (adds to tier 2)** |  |  | [TODO (Paolo)]{.todo} |
+
+: Tier 3 — filter stage, thermal rig, beam rig {#tbl-bom-tier3}
+
+## Sourcing criteria {#sec-bom-sourcing}
+
+Not vendors or part numbers — what to check on a datasheet before choosing
+one.
+
+- **Voltage reference.** Initial accuracy (ppm), temperature coefficient
+  (ppm/°C over the bench's operating range), output noise, and load
+  regulation against the current the divider and conditioning stage
+  actually draw from it.
+- **Instrumentation amplifier.** Gain accuracy and drift against the gain
+  the [conditioning board](conditioning-board.qmd#sec-cond-inamp) needs,
+  CMRR and how it degrades with frequency, input bias current against the
+  source impedance it will see, input offset voltage and drift small
+  compared with the smallest signal to resolve, single-supply operation with
+  adequate output swing.
+- **Strain gauges.** Gauge factor and its tolerance, resistance matched to
+  the bridge and amplifier design, a backing material whose thermal
+  expansion is compatible with — ideally self-compensated for — whichever
+  beam material is chosen in [Beam rig](beam-rig.qmd), a gauge length short
+  compared with the strain gradient described in [Beam rig §the
+  relations](beam-rig.qmd#sec-beam-relations), and a maximum elongation
+  rating well above the working strain.

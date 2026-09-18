@@ -1,9 +1,157 @@
 ---
 title: "Thermal rig"
 description: "Water bath, stirrer and reference thermometer"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+::: {.callout-warning}
+## Safety first
+
+- Hot water and any hotplate stay in sight and within reach; a bath is
+  **never left unattended** while it is heated, or while a mains-powered
+  stirrer or hotplate is plugged in.
+- If a heat gun is used for the plunge-test transition, treat it like the
+  hotplate: mains-powered, hot enough to burn on contact, and never rested on
+  anything but its own stand.
+- Check the lead and the plug of every mains-powered stirrer or hotplate
+  before each session, keep the socket away from splashes, and switch off at
+  the mains — not just at the vessel — when adjusting anything in the bath.
+- Ice, glass thermometers and wet hands are a slip-and-drop combination; keep
+  the board and the rest of the electronics on a dry bench well clear of the
+  bath.
+:::
+
+## The stirred water bath {#sec-therm-bath}
+
+A still bath is not isothermal. Left alone, a heated or cooled bath develops
+a vertical gradient of several kelvin from natural convection alone — warmer
+fluid rises, cooler fluid sinks, and nothing mixes them without forcing it.
+If the sensor under test and the reference thermometer sit at different
+depths in a still bath, they are, quite literally, measuring two different
+temperatures, and no calibration fit can separate that from a genuine sensor
+error.
+
+"Well stirred" means the bath is close enough to isothermal that where the
+reference thermometer sits stops mattering. Check that, do not assume it:
+with the bath at steady state and the stirrer running, move the reference
+thermometer to a few different points — near the sensor, near the wall, near
+the surface, near the bottom — and confirm the readings agree within the
+reference thermometer's own resolution. If they do not, the bath needs more
+time, more stirring, or a different stirrer position, before any calibration
+point is recorded from it.
+
+## The ice bath {#sec-therm-ice}
+
+Used as a fixed point, an ice bath should be built as:
+
+- **Crushed, not cubed, ice** — fine ice packs densely and removes the air
+  gaps that would otherwise let a pocket of standing water sit at some other
+  temperature than the ice immediately around it.
+- **Distilled water**, not tap — dissolved minerals depress the freezing
+  point, and the depression is not a fixed, known offset unless the water's
+  composition is known.
+- **Ice packed to the bottom of the vessel.** Water's density peaks at
+  $4\,^\circ$C, above the freezing point; if ice simply floats on a layer of
+  water with nothing packing ice down to the bottom, that lower layer can sit
+  measurably above $0\,^\circ$C, undisturbed by the convection that would
+  otherwise mix it with the ice above.
+- **Sensor and reference well below the surface**, embedded in the
+  ice-water slush itself, not resting against floating ice or sitting in
+  clear water above the slush.
+
+Even built this way, an ordinary ice bath does not realise exactly
+$0\,^\circ$C: dissolved gas and any residual impurity in the water depress
+the freezing point slightly, the local atmospheric pressure is not the
+reference pressure implicit in "$0\,^\circ$C", and the bath's own uniformity
+is never perfect. None of that is a number to assume — it is a number to
+measure, by comparing the bath against the reference thermometer, which is
+exactly the first calibration point
+[T1](../experiments/T1-temperature-static/index.qmd) takes.
+
+## The reference thermometer {#sec-therm-ref}
+
+The same requirement S1 states for its DMM applies here: the reference
+thermometer must be *better* than the sensors under test, by a stated
+margin, not merely assumed to be. Its calibration — model and calibration
+state, certificate or none — belongs in the sidecar's
+[`references[]` block](../data-format/index.qmd#sec-fields), exactly as the
+DMM's does for S1.
+
+**Immersion depth.** A thermometer conducts heat along its own stem or leads
+toward the ambient air it exits into, and if it is not immersed deeply
+enough, the reading is a mixture of the bath temperature and the ambient
+temperature outside it, not the bath temperature alone. Modelling the stem
+as a 1-D fin losing heat by convection along its length — thermal
+conductivity and cross-section $k$, $A$, perimeter $P$ exposed to a
+convection coefficient $h$ — the fin parameter is $m=\sqrt{hP/(kA)}$, and the
+sensing tip's temperature approaches the bath temperature as the immersed
+length $L_\mathrm{imm}$ satisfies [@doebelin]
+
+$$
+L_\mathrm{imm} \gg \frac{1}{m} = \sqrt{\frac{kA}{hP}}
+$$ {#eq-therm-immersion}
+
+— an immersion depth of a few times this characteristic length makes the
+stem-conduction error small; a depth comparable to or less than it does not.
+Manufacturers usually state a minimum immersion depth for exactly this
+reason; use it, or verify @eq-therm-immersion for the instrument actually in
+hand.
+
+## Mounting the sensors under test {#sec-therm-mount}
+
+- **Thermal contact.** Submerge the sensor fully rather than resting it
+  against the vessel wall, and close any gap that liquid cannot reach with a
+  thermally conductive path — for example thermal paste for a probe pressed
+  against a solid surface.
+- **Lead conduction.** The same fin argument as @eq-therm-immersion applies
+  to the sensor's own leads: they are a heat path out of (or into) the
+  sensing element, toward whatever temperature the leads are at outside the
+  bath. This is a real, quantifiable systematic error, not a rounding
+  concern — run enough lead length inside the bath before it exits, and
+  prefer thin, high-resistivity lead material (small $kA$ in
+  @eq-therm-immersion, hence a large $m$ and a short characteristic length)
+  over thick, highly conductive wire.
+- **Self-heating.** Any sensor that is excited electrically — an RTD's
+  excitation current, a semiconductor sensor's bias — dissipates power
+  $P_\mathrm{diss}$ in itself and sits above the true medium temperature by
+  [@bentley]
+
+$$
+\Delta T_\mathrm{sh} = \frac{P_\mathrm{diss}}{G_\mathrm{th}}
+$$ {#eq-therm-selfheat}
+
+  where $G_\mathrm{th}$ is the thermal conductance from the sensor to its
+  medium — larger, so $\Delta T_\mathrm{sh}$ smaller, in a stirred liquid
+  than in still air. That is one more reason a poorly stirred bath is a
+  poorly characterized bath: $G_\mathrm{th}$ itself depends on how well the
+  bath is stirred.
+
+## The plunge-test rig for T2 {#sec-therm-plunge}
+
+[T2](../experiments/T2-temperature-dynamic/index.qmd) fits a first-order
+step response, which assumes the input actually is a step: an instantaneous
+change from one medium's temperature to another's. A transfer between media
+that takes a finite time $t_\mathrm{transition}$ is not a step, it is a
+ramp, and a ramp fed into a first-order system does not produce the response
+a step would, biasing the fitted time constant. The requirement is
+
+$$
+t_\mathrm{transition} \ll \tau
+$$ {#eq-therm-plunge}
+
+Check this after the fact rather than assuming it: estimate
+$t_\mathrm{transition}$ from the plunge itself — video, or the first visible
+deflection in the recorded signal — and compare it against the $\tau$ T2
+fits. If the two are not clearly separated, the plunge, not the sensor, is
+the thing to speed up; no amount of subsequent data analysis recovers a
+$\tau$ that the rig never actually delivered as a step.
+
+## Vessels, stirrers, thermometers
+
+Specific models — bath vessel, stirrer, hotplate, ice-bath vessel, reference
+thermometer: [TODO (Paolo)]{.todo}.
+
+## References
+
+::: {#refs}
 :::

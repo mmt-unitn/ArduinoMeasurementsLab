@@ -1,9 +1,293 @@
 ---
 title: "Signal conditioning board"
 description: "Offset and scale, dividers, instrumentation amplifier, buffer"
+toc: true
 ---
 
+This is the board tier 2 and tier 3 experiments share: whatever the sensor
+is, its output has to be moved onto the ADC's actual input window before it
+is worth digitizing at all. This page derives each stage from the ADC's own
+limits, states the requirements a purchased part must meet, and leaves the
+part number for later.
+
+## Why conditioning at all {#sec-cond-why}
+
+Every board in [Supported boards](../setup/boards.qmd) has an ADC with a
+fixed, unipolar input range: 0 to $V_\mathrm{ref}$, where $V_\mathrm{ref}$ is
+3.3 V on most supported boards and 5 V on the two Renesas ones. Nothing about
+that range adapts to whatever is connected to it. A sensor's own output range
+is whatever its physics gives you, and it is essentially never
+$[0, V_\mathrm{ref}]$.
+
+[S1](../experiments/S1-daq-static/index.qmd) puts a number on what that
+mismatch costs. A 16-bit converter with $V_\mathrm{ref}=3.3\,$V has a
+quantization step
+
+$$
+q = \frac{V_\mathrm{ref}}{2^{16}-1} \approx 50.4\ \mu\mathrm{V}
+$$ {#eq-cond-lsb}
+
+and S1 measures that its own noise floor erodes even a *full-scale*, 3.3 V
+input from 16 nominal bits down to roughly 11 effective ones. Now feed the
+same converter a sensor whose useful output spans only 0–50 mV — not an
+unusual figure for a bridge or a low-level analog sensor (S1's own handbook
+poses exactly this case). Using @eq-cond-lsb, that signal occupies
+
+$$
+\frac{50\ \mathrm{mV}}{50.4\ \mu\mathrm{V}} \approx 992\ \text{codes}
+$$
+
+out of 65535 available — under 10 bits of the nominal 16, before any noise is
+even considered. Whatever effective resolution the converter has left after
+its own noise, this signal starts from a worse position, because it was
+never given the range to use.
+
+::: {.callout-important}
+## The fix is gain before the converter, never after
+
+Multiplying a digitized value by a gain in software does not put back codes
+that were never produced. A reading that used 992 codes still uses 992
+distinct values after multiplication — only their spacing changes. The only
+way to recover resolution is to make the *physical* signal occupy more of
+$[0, V_\mathrm{ref}]$ before it is converted, which means gain applied in the
+analog domain, ahead of the ADC.
+:::
+
+## The offset-and-scale stage {#sec-cond-offset-scale}
+
+Given a sensor's operating range $[V_{in,\min}, V_{in,\max}]$, the
+conditioning stage must implement a linear map onto the ADC input,
+
+$$
+V_\mathrm{adc} = G\,V_{in} + V_\mathrm{off}
+$$ {#eq-cond-map}
+
+Rather than mapping the sensor's range onto the whole $[0, V_\mathrm{ref}]$,
+design for an interior window $[p_\mathrm{lo}V_\mathrm{ref},\,
+p_\mathrm{hi}V_\mathrm{ref}]$ with $0 < p_\mathrm{lo} < p_\mathrm{hi} < 1$ —
+for example $p_\mathrm{lo}=0.05$, $p_\mathrm{hi}=0.95$. Solving @eq-cond-map
+at the two endpoints of the sensor's range gives
+
+$$
+G = \frac{(p_\mathrm{hi}-p_\mathrm{lo})\,V_\mathrm{ref}}{V_{in,\max}-V_{in,\min}},
+\qquad
+V_\mathrm{off} = p_\mathrm{lo}V_\mathrm{ref} - G\,V_{in,\min}
+$$ {#eq-cond-gain-offset}
+
+For example, mapping a $\pm 5\,$V bipolar generator output — the kind S2 and
+S3 drive into the board — onto a $3.3\,$V unipolar input, with
+$p_\mathrm{lo}=0.05$ and $p_\mathrm{hi}=0.95$: @eq-cond-gain-offset gives
+$G = 0.9\times3.3/10 \approx 0.297$ and
+$V_\mathrm{off} = 0.05\times3.3 - 0.297\times(-5) \approx 1.65\,$V. The
+generator's output is attenuated *and* shifted, not merely shifted, because
+its own swing already exceeds the ADC's.
+
+Three reasons to leave headroom instead of using the full $0$–$100\,\%$:
+
+1. **Overshoot.** A real signal is rarely bounded exactly by its nominal
+   range — noise, a transient, a slightly-out-of-spec calibration source —
+   and a signal that saturates a rail produces a hard, easily-missed
+   nonlinearity (clipping) instead of a value that is merely close to a
+   limit.
+2. **Op-amp output swing.** Few op-amps swing all the way to their supply
+   rails; even "rail-to-rail" parts have a dropout of some tens of
+   millivolts near each rail, so a design that targets 0 V or
+   $V_\mathrm{ref}$ exactly is targeting a region the amplifier may not
+   reach linearly.
+3. **A calibration needs both ends free.** Fitting @eq-cond-map — or a small
+   nonlinearity around it — needs points that bracket the operating range;
+   leaving margin means an out-of-range calibration point does not itself
+   clip.
+
+## Resistive dividers {#sec-cond-dividers}
+
+The simplest way to move a voltage down is a two-resistor divider:
+
+$$
+V_\mathrm{adc} = V_{in}\,\frac{R_2}{R_1+R_2} = V_{in}\,D,
+\qquad D=\frac{R_2}{R_1+R_2}
+$$ {#eq-cond-divider}
+
+### Loading
+
+The divider's Thévenin source resistance, as seen by the ADC, is
+$R_s = R_1 \parallel R_2$. The ADC's sample-and-hold capacitor
+$C_\mathrm{sh}$ must charge through $R_s$ within the sampling time
+$t_\mathrm{acq}$ the board allows per conversion. Settling to within one
+half-LSB after a step takes roughly $n\ln 2$ time constants for an $n$-bit
+converter, so
+
+$$
+t_\mathrm{acq} \;\ge\; R_s\,C_\mathrm{sh}\,n\ln 2
+$$ {#eq-cond-settle}
+
+[@kester2005]. A divider built from resistors large enough to draw
+negligible current from the sensor can easily be too large to satisfy
+@eq-cond-settle — which is the usual reason a divider needs a buffer behind
+it (@sec-cond-buffer) rather than feeding the ADC directly.
+
+### Tolerance and temperature coefficient
+
+$D$ in @eq-cond-divider is a function of two resistors, each known only to
+its tolerance. For $R_i$ with relative tolerance $\delta_i$ treated as a
+rectangular bound, $u(R_i) = R_i\delta_i/\sqrt{3}$, and the sensitivity
+coefficients are
+
+$$
+\frac{\partial D}{\partial R_1} = -\frac{D}{R_1+R_2},
+\qquad
+\frac{\partial D}{\partial R_2} = \frac{1-D}{R_1+R_2}
+$$ {#eq-cond-div-sens}
+
+so that, combining independently,
+
+$$
+u(D) = \sqrt{\left(\frac{\partial D}{\partial R_1}u(R_1)\right)^2 +
+             \left(\frac{\partial D}{\partial R_2}u(R_2)\right)^2}
+$$ {#eq-cond-div-u}
+
+If the two resistors are drawn from the same reel and share a temperature
+coefficient $\alpha$, a uniform temperature change $\Delta T$ scales both by
+$(1+\alpha\Delta T)$ and $D$ is unchanged — a ratio is what a divider
+measures, and matched TCs cancel in it. What does not cancel is any
+*mismatch* $\Delta\alpha = \alpha_1-\alpha_2$ between the two parts, which
+contributes an additional drift of order $D(1-D)\,\Delta\alpha\,\Delta T$ to
+the ratio. A matched pair, or a single resistor network on one substrate,
+removes this term almost entirely; two resistors from different batches do
+not.
+
+### Why a divider alone cannot give gain
+
+$D=R_2/(R_1+R_2)<1$ for any positive $R_1,R_2$: a purely resistive divider
+can only attenuate. Producing $G>1$ needs an active stage, which is the
+subject of the next two sections.
+
+## The instrumentation amplifier {#sec-cond-inamp}
+
+A bridge — a load cell, a strain-gauge bridge on the [beam
+rig](beam-rig.qmd) — does not present a voltage referenced to ground: it
+presents a small *differential* voltage between two nodes that each sit near
+half the excitation voltage, common mode. A single-ended amplifier measures
+one node relative to ground and cannot separate the differential signal from
+that common-mode level without amplifying the common-mode level's own noise
+and drift by the same gain. An instrumentation amplifier is built to reject
+exactly that [@doebelin]:
+
+$$
+V_\mathrm{out} = G\left(V_+ - V_-\right) + \text{(rejected common mode)}
+$$
+
+quantified by its common-mode rejection ratio,
+
+$$
+\mathrm{CMRR} = 20\log_{10}\frac{A_d}{A_\mathrm{cm}}
+$$ {#eq-cond-cmrr}
+
+A common-mode voltage $V_\mathrm{cm}$ appears at the output as an equivalent
+differential error of $V_\mathrm{cm}/\mathrm{CMRR}$ (the linear ratio, not
+the dB figure) referred to the input — for a bridge sitting at several volts
+of common mode and a differential signal of millivolts, CMRR is not a
+footnote, it is the reason this stage exists at all.
+
+**Input bias current.** Every real amplifier input draws a small bias
+current $I_B$. Through a source impedance $R_s$ that current produces an
+offset $I_B R_s$, and through *mismatched* impedances at the two inputs, an
+offset current $I_\mathrm{os}$ produces a differential error
+$I_\mathrm{os}\,\Delta R_s$. For a low-impedance bridge (hundreds of ohms)
+this is usually negligible; for a high-impedance source it is not, and it is
+one more reason to buffer a high-impedance sensor (@sec-cond-buffer) before,
+not instead of, amplifying it.
+
 ::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## Requirements for the in-amp — part left open
+
+A suitable device must be:
+
+- single-supply, since the board provides no negative rail;
+- rail-to-rail output, or with enough headroom that @eq-cond-gain-offset's
+  window is reachable;
+- specified with an input offset voltage and drift small compared with the
+  smallest signal to be resolved;
+- gain-settable by a single external resistor, so $G$ in
+  @eq-cond-gain-offset is chosen once the sensor's range is known.
+
+The part itself is [TODO (Paolo)]{.todo}.
+:::
+
+## The buffer {#sec-cond-buffer}
+
+A high-impedance source — the output of a divider sized for low current
+draw, a piezoresistive or capacitive sensor — cannot itself satisfy
+@eq-cond-settle at a reasonable acquisition time. A unity-gain op-amp
+follower between the source and the ADC solves this: its own output
+impedance is set by open-loop gain and feedback, not by the source, and is
+small enough that a deliberately added series $R_\mathrm{filt}$ and shunt
+$C_\mathrm{filt}$ at the ADC pin — which double as ESD protection and a
+first noise-bandwidth limit — can be sized directly from @eq-cond-settle
+with $R_s \to R_\mathrm{filt}$:
+
+$$
+R_\mathrm{filt}C_\mathrm{filt} \le \frac{t_\mathrm{acq}}{n\ln 2}
+$$ {#eq-cond-buf-rc}
+
+with no dependence on the sensor's own, now-buffered, impedance.
+
+## What goes in the sidecar {#sec-cond-sidecar}
+
+The [`conditioning` block](../data-format/index.qmd#sec-fields) of every
+channel carries `gain` and `offset`. These must be the **fitted** values
+from a calibration against a reference — applying known inputs at the
+sensor connector and fitting @eq-cond-map to the ADC readings — never the
+values computed from @eq-cond-gain-offset with nominal resistor and
+gain-resistor values.
+
+The reason is @eq-cond-div-u again, compounded across stages: a divider, an
+in-amp gain resistor and a buffer's own gain error each contribute a
+percent-level term from tolerance alone, and they do not cancel between
+stages — they add. A "design" gain of, say, $G=20.0$ computed from nominal
+parts can easily be the true gain to only $1$–$2\,\%$, which is worse than
+the effective resolution S1 measures for the bare converter. Recording the
+design value in the sidecar would silently reintroduce the very error this
+board exists to remove. Calibrate the stage the same way S1 calibrates the
+bare ADC — apply known references at the sensor input, fit, and record what
+was fitted, not what was designed.
+
+## Uncertainty this stage adds {#sec-cond-budget}
+
+Write the corrected sensor value recovered from an ADC reading as
+
+$$
+\hat V_\mathrm{sensor} = \frac{V_\mathrm{adc} - V_\mathrm{off,fit}}{G_\mathrm{fit}}
+$$ {#eq-cond-correct}
+
+with sensitivity coefficients
+
+$$
+\frac{\partial \hat V_\mathrm{sensor}}{\partial V_\mathrm{off,fit}} = -\frac{1}{G_\mathrm{fit}},
+\qquad
+\frac{\partial \hat V_\mathrm{sensor}}{\partial G_\mathrm{fit}} =
+  -\frac{V_\mathrm{adc}-V_\mathrm{off,fit}}{G_\mathrm{fit}^2} =
+  -\frac{\hat V_\mathrm{sensor}}{G_\mathrm{fit}}
+$$ {#eq-cond-sens}
+
+Three components an experiment using this board should carry into its own
+budget, following [Data format](../data-format/index.qmd#sec-budget):
+
+| Component | Nature | Sensitivity | Where it comes from |
+|---|---|---|---|
+| Gain uncertainty $u(G_\mathrm{fit})$ | Multiplicative | $\propto \hat V_\mathrm{sensor}$ | Standard error of the calibration fit |
+| Offset uncertainty $u(V_\mathrm{off,fit})$ | Additive | Constant, $1/G_\mathrm{fit}$ | Standard error of the calibration fit |
+| Drift with temperature | Influence quantity | Via $\partial G/\partial T$, $\partial V_\mathrm{off}/\partial T$ | Component temperature coefficients and the bench's $\Delta T$ from calibration |
+
+: Uncertainty components contributed by the conditioning board {#tbl-cond-budget}
+
+The distinction in the second column matters when reading a budget: a gain
+error scales with how large the reading is, so it dominates near full scale;
+an offset error is the same absolute size everywhere in the range, so it
+dominates near zero. A budget that only reports $u_c$ at one operating point
+hides which of the two is actually being seen.
+
+## References
+
+::: {#refs}
 :::

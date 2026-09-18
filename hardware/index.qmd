@@ -1,9 +1,124 @@
 ---
 title: "Bench hardware"
 description: "What to build, and what to buy"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+A board running `UsbIo` is an instrument, not a bench. Everything between the
+sensor and the pin — and in some cases the pin itself — still has to be
+added, and what you add depends on what you plan to measure. This page
+organises the bench hardware into three cumulative cost tiers, maps each
+experiment to the tier and items it needs, and says what belongs on a
+breadboard and what does not.
+
+## Three tiers
+
+Each tier adds to the one before it; nothing bought for tier 1 becomes
+redundant once the bench reaches tier 3.
+
+### Tier 1 — board, reference, meter
+
+- A supported board — see [Supported boards](../setup/boards.qmd)
+- USB cable, and a hub where the board needs one
+- A voltage reference IC, for a known calibration point
+- A digital multimeter, better than the board and with a stated
+  specification — see [S1](../experiments/S1-daq-static/index.qmd)
+- Breadboard, resistors and wires, for a divider calibration point
+
+Enough for S1, and for anything that only needs a resistance reading — no
+signal generator, no data acquisition card beyond the board itself.
+
+### Tier 2 — signal generator, conditioning board
+
+- A signal generator, for driving a known waveform into the board
+- A [signal conditioning board](conditioning-board.qmd): an offset-and-scale
+  stage, resistive dividers, an instrumentation amplifier, a buffer
+
+Adds S2, and any experiment whose sensor's native output range does not
+already sit inside the ADC's input window — which, per S1, is most of them.
+
+### Tier 3 — filter stage, thermal rig, beam rig
+
+- An [anti-alias filter stage](filter-stage.qmd)
+- A [thermal rig](thermal-rig.qmd): stirred bath, ice bath, reference
+  thermometer, sensor-mounting hardware
+- A [cantilever beam rig](beam-rig.qmd): the shared mechanical specimen,
+  strain gauges, a Hall sensor and target, a mount for an accelerometer
+
+Completes S3 and the mechanical strand, and the thermal experiments that need
+the rig itself rather than just a resistance reading.
+
+Costs are collected, per item, in the [bill of materials](bom.qmd) — none
+are recorded yet; that page explains why it is still worth reading before
+they are.
+
+## What each experiment needs
+
+@tbl-hw-experiments is built directly from each experiment's own front
+matter (`experiment.needs`, `experiment.tier`), which is the authoritative
+list — this page does not duplicate numbers that live there and could drift
+out of sync with them.
+
+| Experiment | Tier | Hardware needed |
+|---|:--:|---|
+| [S1](../experiments/S1-daq-static/index.qmd) — Static DAQ characterization | [1]{.tier .tier-1} | Voltage reference IC, DMM |
+| [S2](../experiments/S2-daq-dynamic/index.qmd) — Dynamic DAQ characterization | [2]{.tier .tier-2} | Signal generator, [conditioning board](conditioning-board.qmd) |
+| [S3](../experiments/S3-aliasing-filtering/index.qmd) — Aliasing, conditioning and filtering | [3]{.tier .tier-3} | Signal generator, conditioning board, [filter stage](filter-stage.qmd) |
+| [T1](../experiments/T1-temperature-static/index.qmd) — Static temperature calibration | [2]{.tier .tier-2} | [Thermal rig](thermal-rig.qmd), reference thermometer, conditioning board |
+| [T2](../experiments/T2-temperature-dynamic/index.qmd) — Dynamic temperature response | [2]{.tier .tier-2} | Thermal rig, reference thermometer |
+| [T3](../experiments/T3-long-term-stability/index.qmd) — Long-term stability and drift | [3]{.tier .tier-3} | Insulated box, a bench host that stays on |
+| [M1](../experiments/M1-strain-load/index.qmd) — Strain gauges and load cell | [3]{.tier .tier-3} | [Beam rig](beam-rig.qmd), load cell, instrumentation amplifier, reference masses |
+| [M2](../experiments/M2-hall-displacement/index.qmd) — Hall-effect displacement | [3]{.tier .tier-3} | Beam rig, micrometer stage, linear Hall sensor |
+| [M3](../experiments/M3-vibration/index.qmd) — Vibration and modal analysis | [3]{.tier .tier-3} | Beam rig, accelerometer, strain gauge channel |
+
+: Hardware required by experiment, from each experiment's own front matter {#tbl-hw-experiments}
+
+Two entries look out of place next to the tier framing above: T1 and T2 are
+tier-2 experiments that need the thermal rig, which is described here
+alongside tier-3 hardware. That is not a mistake — the rig itself (a vessel,
+a stirrer, an ice bucket) is cheap, while a signal generator and a
+conditioning board are not, and tier is tracking cost and build effort, not
+which page of this section happens to document the hardware.
+
+## Breadboard, or a soldered board {#sec-hw-breadboard}
+
+Digital I/O, a quick resistive divider for a calibration point, a first check
+that a sensor responds at all — a breadboard is fine for these, and faster to
+change than solder. The analog stages of the conditioning and filter boards
+are a different case:
+
+::: {.callout-important}
+## Why the analog stages should not stay on a breadboard
+
+- **Contact resistance.** A breadboard's spring contacts are not a soldered
+  joint: their resistance is neither zero nor stable, and it moves with
+  vibration, oxidation and how firmly the wire was pushed in. A few tens of
+  milliohms of drifting resistance is invisible on a digital line and is a
+  direct, time-varying error on a divider ratio or a bridge arm.
+- **Stray capacitance.** The strips and the long, unshielded jumpers common
+  on a breadboard add capacitance to ground that is neither small nor
+  specified. Combined with the source impedance of a divider or a
+  high-impedance sensor, it forms an unintended low-pass pole exactly where
+  the [filter stage](filter-stage.qmd) is trying to place one on purpose —
+  and the two interact in ways that are not designed for.
+- **Thermoelectric junctions.** Every place two dissimilar metals touch — a
+  nickel-plated spring contact against a tinned jumper wire — is a
+  thermocouple junction, generating a Seebeck EMF of order microvolts to tens
+  of microvolts per kelvin of local temperature difference. That is
+  comparable to, or larger than, the LSB voltages [S1](../experiments/S1-daq-static/index.qmd)
+  measures, and it responds to draughts and to a hand held near the board.
+  A soldered joint has the same physics but a far smaller, far more stable
+  EMF, because the junction and its temperature stay fixed.
+
+None of these three matters for a digital pin toggling between 0 V and
+$V_\mathrm{ref}$. All three matter for a stage whose entire purpose is to
+preserve a signal to better than a percent.
 :::
+
+Build the conditioning and filter stages on a soldered board — perfboard is
+enough; it does not need to be a fabricated PCB — and keep the breadboard for
+whatever still changes between sessions.
+
+Continue to [Signal conditioning board](conditioning-board.qmd),
+[Anti-alias filter stage](filter-stage.qmd), [Thermal rig](thermal-rig.qmd),
+[Cantilever beam rig](beam-rig.qmd), or [Bill of materials](bom.qmd).

@@ -1,9 +1,189 @@
 ---
 title: "Cantilever beam rig"
 description: "Shared rig for the mechanical experiments"
+toc: true
 ---
 
+## The concept {#sec-beam-concept}
+
+The rig is one clamped cantilever: length $L$, width $b$, thickness $h$,
+cross-section area $A=bh$, second moment of area $I=bh^3/12$, Young's modulus
+$E$ and density $\rho$ of whatever material it is eventually machined from —
+none of which is decided yet; see @sec-beam-design and @tbl-beam-dims. Strain
+gauges sit near the clamped root, where bending strain is largest; a target
+for a Hall-effect sensor sits at the free tip, for a non-contact displacement
+measurement; a mounting point at or near the tip carries an accelerometer.
+
+## Why a cantilever {#sec-beam-why}
+
+One specimen makes strain, tip displacement and natural frequency all
+accessible from the same loading, and the same $L, b, h, E, \rho$ enter all
+three relations below. [M1](../experiments/M1-strain-load/index.qmd) reads
+strain, [M2](../experiments/M2-hall-displacement/index.qmd) reads tip
+displacement, [M3](../experiments/M3-vibration/index.qmd) reads the
+free-vibration frequency — and because the three formulas share the same
+geometry and the same $E$, each experiment's result is a cross-check on the
+other two, not an isolated number.
+
+## The relations {#sec-beam-relations}
+
+### Tip deflection under a tip load
+
+For a cantilever fixed at $x=0$ and free at $x=L$, carrying a concentrated
+load $F$ at the tip, the Euler–Bernoulli bending moment is $M(x)=F(L-x)$.
+Integrating the curvature equation $EI\,y''(x)=-M(x)$ twice with
+$y(0)=y'(0)=0$ gives the deflection at any $x$, and at the tip
+
+$$
+\delta = \frac{FL^3}{3EI}, \qquad I=\frac{bh^3}{12}
+$$ {#eq-beam-deflection}
+
+### Surface strain under a tip load
+
+At the outer fibre, a distance $c=h/2$ from the neutral axis, the bending
+strain is $\varepsilon(x)=M(x)\,c/(EI)$. Substituting $M(x)=F(L-x)$ and
+$I=bh^3/12$,
+
+$$
+\varepsilon(x) = \frac{6F(L-x)}{Ebh^2}
+$$ {#eq-beam-strain}
+
+Strain is largest at the root ($x=0$) and falls linearly to zero at the tip
+— which is why the gauges sit as close to the root as the clamp allows.
+
+### First natural frequency
+
+For the same uniform cantilever, the first-mode natural frequency is
+
+$$
+f_1 = \frac{\lambda_1^2}{2\pi L^2}\sqrt{\frac{EI}{\rho A}},
+\qquad \lambda_1 \approx 1.875,\ \ A=bh
+$$ {#eq-beam-f1}
+
+with $\lambda_1$ the first root of the cantilever's characteristic equation
+$\cos\lambda\cosh\lambda=-1$ [@blevins].
+
+### The stiffness cross-check
+
+@eq-beam-deflection defines a linear tip stiffness $k=F/\delta=3EI/L^3$.
+[M1](../experiments/M1-strain-load/index.qmd) fits @eq-beam-strain's slope
+$d\varepsilon/dF$ at the gauge position against a set of reference masses;
+[M2](../experiments/M2-hall-displacement/index.qmd) fits
+@eq-beam-deflection's slope $d\delta/dF = 1/k$ directly. Both slopes contain
+the same $E$ and the same $L,b,h$; solving each independently for $E$ and
+comparing is the cross-check — and a disagreement between the two, given the
+same nominal geometry, is a direct measurement of how wrong "nominal
+geometry" actually is (@sec-beam-clamp).
+
+## Design requirements {#sec-beam-design}
+
+Nothing about $L,b,h$ or the material is fixed. What constrains the choice
+is a set of inequalities, not a set of numbers.
+
+**Strain must be resolvable but stay elastic.** The strain at the working
+tip load $F_\mathrm{work}$, at the gauge position, must sit comfortably
+above the smallest strain the [conditioning chain](conditioning-board.qmd)
+can resolve, and comfortably below the material's yield strain with a
+safety factor $n_\mathrm{sf}$:
+
+$$
+\varepsilon_\mathrm{min,resolvable} \;\ll\; \varepsilon(0) =
+\frac{6F_\mathrm{work}L}{Ebh^2} \;\le\; \frac{\varepsilon_\mathrm{yield}}{n_\mathrm{sf}}
+$$ {#eq-beam-strain-bound}
+
+where $\varepsilon_\mathrm{min,resolvable}$ folds together the bridge
+sensitivity (gauge factor, excitation voltage), the [conditioning
+board's](conditioning-board.qmd) gain, and the ADC's effective quantization
+step — the same kind of quantity
+[S1](../experiments/S1-daq-static/index.qmd) measures for the bare
+converter.
+
+**The first mode must be sampled adequately but stay clear of the
+environment.** Let $f_{s,\max}$ be the highest sustained sampling rate the
+chosen board actually achieves — a figure
+[S1](../experiments/S1-daq-static/index.qmd) measures, not the one
+requested — and $f_\mathrm{env}$ the upper edge of ambient vibration at the
+bench (building, footfall, mains-related sources; characterized with the
+same accelerometer M3 uses, not assumed). Then
+
+$$
+f_\mathrm{env} \;\ll\; f_1 = \frac{\lambda_1^2}{2\pi L^2}\sqrt{\frac{EI}{\rho A}}
+\;\ll\; \frac{f_{s,\max}}{2K}
+$$ {#eq-beam-freq-bound}
+
+with $K>1$ an oversampling margin beyond the bare Nyquist limit
+$f_{s,\max}/2$ — resolving a resonance peak and estimating damping from a
+handful of points near it needs more than one sample per cycle at the edge
+of aliasing.
+
+@eq-beam-strain-bound and @eq-beam-freq-bound are exactly what tells you
+which of $L, b, h$ and which material to pick: they are two inequalities in
+five unknowns ($L,b,h,E,\rho$, plus whatever $F_\mathrm{work}$ is chosen),
+which is why this page states them and does not solve them — that is the
+design step still to do.
+
 ::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## Tip mass is not in @eq-beam-f1
+
+@eq-beam-f1 is the bare-beam frequency. A Hall-effect target and an
+accelerometer mounted at the tip add a concentrated mass there, which is not
+part of the uniform-beam derivation and lowers $f_1$ below what
+@eq-beam-f1 alone predicts. Treat the formula as a starting point for
+sizing, not as the frequency the rig will actually show — that has to be
+measured, same as everything else on this page.
+:::
+
+## The clamp {#sec-beam-clamp}
+
+The single largest source of disagreement between
+@eq-beam-deflection–@eq-beam-f1 and what the rig actually shows is the
+boundary condition at $x=0$. The formulas assume a perfectly rigid clamp —
+zero rotation, zero translation — and a real clamp is neither: it has finite
+stiffness, it has its own mass, and where it stops being "clamp" and starts
+being "beam" is not the same as where a ruler says the clamp's edge is.
+
+What this does, in order of importance:
+
+1. **Softens the boundary.** A clamp with finite rotational stiffness
+   behaves like a torsional spring in series with the beam, increasing
+   measured deflection and strain above @eq-beam-deflection and
+   @eq-beam-strain for the same $F$, and lowering $f_1$ below @eq-beam-f1.
+2. **Moves the effective root.** If the clamp does not grip cleanly at a
+   single cross-section, the beam's effective length $L_\mathrm{eff}$ is not
+   the protruding length a ruler measures. Fit $L_\mathrm{eff}$ from the
+   data — from @eq-beam-deflection or @eq-beam-f1, with $E$ known some other
+   way — rather than assuming it equals the physical protrusion.
+3. **Adds its own dynamics.** A clamp with mass and stiffness has its own
+   resonance; if that resonance is not well above $f_1$, it couples into the
+   measurement instead of behaving as a rigid boundary [@ewins]:
+   $$
+   f_\mathrm{clamp} \gg f_1
+   $$ {#eq-beam-clamp-freq}
+
+Because none of this can be designed away completely, the practical response
+is to **measure repeatability**: unclamp and re-clamp the beam several
+times, repeating a stiffness or frequency measurement each time, and report
+the spread as part of the uncertainty budget rather than assuming a single
+clamping event is representative.
+
+## Dimensions to be decided
+
+@tbl-beam-dims lists every dimensional and material quantity this page
+leaves open, what constrains it, and nothing else.
+
+| Symbol | Quantity | Constrained by | Value |
+|---|---|---|:--:|
+| $L$ | Length, clamp to tip | @eq-beam-freq-bound (frequency window), @eq-beam-strain-bound (strain at working load), bench footprint | [TODO (Paolo)]{.todo} |
+| $b$ | Width | @eq-beam-strain-bound, gauge width available | [TODO (Paolo)]{.todo} |
+| $h$ | Thickness | @eq-beam-strain-bound and @eq-beam-freq-bound together — both scale with $h$ | [TODO (Paolo)]{.todo} |
+| Material ($E$, $\rho$) | Young's modulus, density | The same two inequalities; also fatigue life over repeated M1/M3 sessions | [TODO (Paolo)]{.todo} |
+| $x_\mathrm{gauge}$ | Gauge position from root | As close to $x=0$ as the clamp allows, per @eq-beam-strain | [TODO (Paolo)]{.todo} |
+| $F_\mathrm{work}$ | Working tip load (M1, M2) | @eq-beam-strain-bound | [TODO (Paolo)]{.todo} |
+| $m_\mathrm{tip}$ | Added tip mass (Hall target + accelerometer) | Its effect on @eq-beam-f1, see the note above | [TODO (Paolo)]{.todo} |
+
+: Beam-rig dimensions still to be decided {#tbl-beam-dims}
+
+## References
+
+::: {#refs}
 :::
