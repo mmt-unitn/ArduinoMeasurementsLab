@@ -1,0 +1,74 @@
+---
+title: "M3 — Vibration and modal analysis"
+subtitle: "Testing a theory without measuring the beam"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before the bench {.center}
+
+### One tap, every mode
+
+A tap is broadband. One impulse excites every mode the structure has, and a
+single four-second recording contains all of them.
+
+No shaker. No swept excitation. No force transducer.
+
+### The prediction you can test today
+
+$$
+\frac{f_2}{f_1} \approx 6.267, \qquad \frac{f_3}{f_1} \approx 17.548
+$$
+
+No length. No thickness. No modulus. No density.
+
+These are pure numbers, and your measurement can falsify them **without anyone
+measuring the beam** — which is fortunate, because this rig's dimensions are
+not decided yet.
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will do
+
+1. Clamp the beam and measure the **free length from the clamp face**.
+2. Tap, with the accelerometer **removed**. Strain channel only.
+3. Tap again with the accelerometer fitted. Both channels.
+4. Three taps each, at least.
+
+::: {.callout-warning}
+## Two ways to waste the session
+
+**A double strike.** A bounced hammer puts a comb in the spectrum that looks
+like structure. Check the time trace before the spectrum, every time.
+
+**Unplugging the accelerometer instead of removing it.** Its mass is still on
+the beam, so the "unloaded" run is loaded too and the ratio comes out at 1.
+:::
+
+### Then
+
+Open [the handbook](handbook.qmd) and one of the analysis templates —
+[Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+## What you should come away with {.center}
+
+### Three sentences you should be able to defend
+
+1. "The measured frequency ratios are … against a prediction of 6.267 and
+   17.548, and the departure is in the direction shear deformation predicts."
+2. "The two damping estimators give … and …; the half-power one is biased high
+   on a record this short, and here is why."
+3. "Fitting the accelerometer lowered $f_1$ by … %, measured on a channel that
+   adds no mass."

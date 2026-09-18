@@ -1,0 +1,578 @@
+---
+title: "M3 — Analysis template (R)"
+subtitle: "Vibration and modal analysis"
+description: "Natural frequencies, the dimensionless ratios, damping two ways and mass loading, in R"
+engine: knitr
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment. To analyse your own measurements, replace the files in `data/`
+and change the paths in the first chunk — nothing else.
+
+The Python template [`analysis-py.qmd`](analysis-py.qmd) has the same
+sections, the same figure labels and the same output tables, and produces the
+same numbers from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the peak finder and the filter are written out
+
+Peak finding and band-pass filtering are exactly the operations where
+`scipy.signal` and R's `gsignal` differ in their defaults — a different
+prominence rule, a different edge convention — and an analysis whose
+frequencies depend on which language ran it is not an analysis. Both are
+written from their definitions here, as
+[S3 does for its filters](../S3-aliasing-filtering/handbook.qmd#sec-s3-fir).
+:::
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+library(ggplot2)
+library(patchwork)
+
+source("../../shared/R/labtools.R")
+
+theme_set(theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25)))
+
+RUN_UNLOADED <- "tap-noaccel"    # accelerometer REMOVED from the beam
+RUN_LOADED <- "tap-accel"        # accelerometer fitted
+PIN_STRAIN <- 15
+PIN_ACCEL <- 16
+
+N_MODES <- 3
+FIR_TAPS <- 401                  # odd, so the group delay is an integer sample
+
+# Modes are identified on a window matched to the decay, not on the whole
+# record. The higher modes die fastest -- their decay rate is zeta * 2 pi f,
+# which grows with frequency even when zeta does not -- so by the end of a long
+# record only the first mode and the noise floor are left, and a peak finder
+# run over the whole thing picks noise for the third mode. The first mode's
+# damping is still read from the FULL record, where it is still ringing.
+ID_WINDOW_S <- 2.0
+
+# Roots of cos(lambda) cosh(lambda) = -1, the cantilever's eigenvalues.
+LAMBDA <- c(1.875104069, 4.694091133, 7.854757438)
+
+# S2's measured device clock error and its uncertainty, in ppm.
+# TODO (Paolo): replace with the values from this bench's own S2 session.
+CLOCK_PPM <- -18.9
+U_CLOCK_PPM <- 8.3
+```
+
+```{r}
+#| label: helpers
+sampling_rate <- function(run) 1e6 / timing_summary(run$data)$stats$period_us
+
+# Amplitude spectrum of a transient, with a RECTANGULAR window.
+#
+# Not a Hann window. A free decay starts at its maximum, at the very edge of
+# the record, and a Hann window is zero there -- it would suppress exactly the
+# part of the signal that carries the information and reshape the decay,
+# biasing every half-power width low. A tapering window exists to hide the
+# discontinuity a non-coherent *steady* sinusoid has at the record's ends; a
+# transient that has decayed inside the record has no such discontinuity, so it
+# needs no taper. On this data the choice moves the damping estimate by about
+# 20 %, which is larger than anything else in this analysis.
+spectrum_of <- function(x, fs) {
+  n <- length(x)
+  mag <- Mod(fft(x - mean(x))[1:(n %/% 2 + 1)]) * 2 / n
+  # The bin spacing is fs/n, NOT fs/2 divided into n%/%2 steps: for an odd n
+  # the last bin sits below the Nyquist frequency, and spacing the axis to
+  # exactly fs/2 would stretch every frequency by a part in n.
+  list(freqs = (0:(n %/% 2)) * fs / n, mag = mag)
+}
+
+# Parabolic interpolation on the three bins around bin k (1-based).
+refine_peak <- function(freqs, mag, k) {
+  delta <- 0
+  if (k > 1 && k < length(mag)) {
+    a <- mag[k - 1]; b <- mag[k]; cc <- mag[k + 1]
+    denom <- a - 2 * b + cc
+    if (denom != 0) delta <- 0.5 * (a - cc) / denom
+  }
+  freqs[k] + delta * (freqs[2] - freqs[1])
+}
+
+# The `n_modes` largest local maxima, separated in *relative* frequency.
+#
+# The separation has to be relative, not a fixed number of hertz. A decaying
+# mode has broad skirts, and a skirt peak a few hertz from a strong mode is
+# still that mode; an absolute rule either admits the skirt or forbids two
+# genuinely close modes. Cantilever modes are spaced by factors of six, so
+# rejecting anything within 50 % of an already-picked peak keeps the skirts out
+# and the real modes in. Consecutive cantilever modes are at least 2.8 times
+# apart -- f2/f1 is 6.27 and f3/f2 is 2.80 -- so a 50 % rule has a wide margin
+# on both sides, and it has to be that wide because the rectangular window this
+# analysis needs has broader skirts than a tapered one would.
+find_modes <- function(freqs, mag, n_modes = N_MODES, f_min = 1.0,
+                       rel_separation = 0.5) {
+  order_idx <- order(mag, decreasing = TRUE)
+  picked <- integer(0)
+  for (k in order_idx) {
+    if (freqs[k] < f_min || k == 1 || k == length(mag)) next
+    if (!(mag[k] >= mag[k - 1] && mag[k] >= mag[k + 1])) next
+    if (length(picked) > 0 &&
+        any(abs(freqs[k] - freqs[picked]) < rel_separation * freqs[picked])) next
+    picked <- c(picked, k)
+    if (length(picked) == n_modes) break
+  }
+  sort(picked)
+}
+
+# Half-power bandwidth around bin k, by linear interpolation. Returns NA when
+# the -3 dB points fall outside the resolvable span, which is the honest answer
+# for a mode too narrow for the record.
+half_power <- function(freqs, mag, k) {
+  target <- mag[k] / sqrt(2)
+  lo <- NA_real_; hi <- NA_real_
+  i <- k
+  while (i > 1 && mag[i] > target) i <- i - 1
+  if (i >= 1 && mag[i] <= target && target < mag[i + 1]) {
+    t <- (target - mag[i]) / (mag[i + 1] - mag[i])
+    lo <- freqs[i] + t * (freqs[i + 1] - freqs[i])
+  }
+  j <- k
+  while (j < length(mag) && mag[j] > target) j <- j + 1
+  if (j <= length(mag) && mag[j] <= target && target < mag[j - 1]) {
+    t <- (target - mag[j]) / (mag[j - 1] - mag[j])
+    hi <- freqs[j] - t * (freqs[j] - freqs[j - 1])
+  }
+  hi - lo
+}
+
+sinc <- function(x) ifelse(x == 0, 1, sin(pi * x) / (pi * x))
+
+# Windowed-sinc band-pass, as the difference of two low-passes.
+fir_bandpass <- function(f_lo, f_hi, fs, n_taps = FIR_TAPS) {
+  n <- 0:(n_taps - 1)
+  m <- (n_taps - 1) / 2
+  w <- 0.54 - 0.46 * cos(2 * pi * n / (n_taps - 1))      # Hamming
+  lo <- w * sinc(2 * f_lo / fs * (n - m))
+  hi <- w * sinc(2 * f_hi / fs * (n - m))
+  hi / sum(hi) - lo / sum(lo)
+}
+
+fir_apply <- function(x, h) {
+  y <- stats::filter(x, h, method = "convolution", sides = 1)
+  as.vector(y[length(h):length(x)])
+}
+
+# Indices of strict local maxima -- the peaks a logarithmic decrement is read
+# from.
+positive_peaks <- function(x) {
+  inner <- 2:(length(x) - 1)
+  inner[x[inner] > x[inner - 1] & x[inner] > x[inner + 1] & x[inner] > 0]
+}
+
+ols <- function(x, y) {
+  sxx <- sum((x - mean(x))^2)
+  slope <- sum((x - mean(x)) * (y - mean(y))) / sxx
+  intercept <- mean(y) - slope * mean(x)
+  resid <- y - (intercept + slope * x)
+  s <- sqrt(sum(resid^2) / max(length(x) - 2, 1))
+  list(slope = slope, intercept = intercept, u_slope = s / sqrt(sxx), s_res = s)
+}
+```
+
+```{r}
+#| label: load
+unloaded <- read_run(file.path("data", paste0(RUN_UNLOADED, ".csv")))
+loaded <- read_run(file.path("data", paste0(RUN_LOADED, ".csv")))
+
+fs_un <- sampling_rate(unloaded)
+fs_ld <- sampling_rate(loaded)
+
+d_un <- unloaded$data[unloaded$data$pin == PIN_STRAIN, ]
+strain_un <- d_un$volts
+t_un <- sort(unique(d_un$t_us)) / 1e6
+t_un <- t_un - t_un[1]
+
+wide_ld <- pivot_channels(loaded$data, "volts")
+strain_ld <- wide_ld[[as.character(PIN_STRAIN)]]
+accel_ld <- wide_ld[[as.character(PIN_ACCEL)]]
+t_ld_us <- as.numeric(rownames(wide_ld))
+t_ld <- (t_ld_us - t_ld_us[1]) / 1e6
+```
+
+```{r}
+#| label: banner
+#| echo: false
+#| output: asis
+cat(synthetic_banner(unloaded$meta))
+```
+
+## Data quality
+
+```{r}
+#| label: quality
+#| echo: false
+#| output: asis
+runs <- list(unloaded, loaded)
+bad <- sum(vapply(runs, function(r) length(validate_meta(r$meta)) > 0, logical(1)))
+lossy <- character(0)
+for (r in runs) {
+  st <- r$meta$stream_stats
+  counters <- st[setdiff(names(st), "records")]
+  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+    lossy <- c(lossy, r$meta$run)
+  }
+}
+cat(sprintf('
+Two runs read: `%s` with the accelerometer removed, and
+`%s` with it fitted. Achieved rates %.1f Hz and
+%.1f Hz; records %.2f s and %.2f s.
+%s
+%s
+', RUN_UNLOADED, RUN_LOADED, fs_un, fs_ld,
+   t_un[length(t_un)], t_ld[length(t_ld)],
+   if (bad == 0) "All sidecars are complete."
+   else sprintf("%d sidecar(s) have missing fields.", bad),
+   if (length(lossy) == 0) "No run reports a lost record."
+   else paste0("Runs with losses: ", paste(lossy, collapse = ", "))))
+```
+
+```{r}
+#| label: fig-m3-trace
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 3.0
+#| fig-cap: "The free decay, before any spectrum is computed. One clean impulse and a monotone envelope: a second impulse close behind the first would put a comb in the spectrum that is easy to mistake for structure."
+ggplot(data.frame(t = t_un, v = strain_un - mean(strain_un)), aes(t, v)) +
+  geom_line(linewidth = 0.2) +
+  geom_vline(xintercept = ID_WINDOW_S, linewidth = 0.35, linetype = "dashed",
+             colour = "grey40") +
+  labs(x = "Time [s]", y = "Strain channel [V, mean removed]",
+       subtitle = sprintf("modes identified within %.0f s", ID_WINDOW_S))
+```
+
+## Modes and the dimensionless ratios
+
+```{r}
+#| label: modes
+id_window <- t_un <= ID_WINDOW_S
+sp_un <- spectrum_of(strain_un[id_window], fs_un)
+freqs_un <- sp_un$freqs; mag_un <- sp_un$mag
+peaks_un <- find_modes(freqs_un, mag_un)
+f_modes <- vapply(peaks_un, function(k) refine_peak(freqs_un, mag_un, k), numeric(1))
+
+bin_hz <- freqs_un[2] - freqs_un[1]
+ratios_measured <- f_modes[-1] / f_modes[1]
+ratios_theory <- (LAMBDA[-1] / LAMBDA[1])^2
+```
+
+```{r}
+#| label: out-modes
+#| echo: false
+#| output: asis
+rows <- sprintf("| %d | %.6f | %.3f | %.3f |",
+                seq_along(f_modes), LAMBDA[seq_along(f_modes)], f_modes,
+                mag_un[peaks_un] * 1e3)
+cat(sprintf('
+| Mode | $\\lambda_n$ | $f_n$ [Hz] | Peak amplitude [mV] |
+|---|---|---|---|
+%s
+
+: The first three modes of the unloaded beam, from the strain channel over the first %.0f s {#tbl-m3-modes}
+', paste(rows, collapse = "\n"), ID_WINDOW_S))
+```
+
+```{r}
+#| label: out-ratios
+#| echo: false
+#| output: asis
+rows <- sprintf("| $f_%d/f_1$ | %.4f | %.4f | %+.2f |",
+                seq_along(ratios_measured) + 1, ratios_theory, ratios_measured,
+                (ratios_measured / ratios_theory - 1) * 100)
+cat(sprintf('
+| Ratio | Euler–Bernoulli | Measured | Departure |
+|---|---|---|---|
+%s
+
+: The prediction that needs no beam dimensions {#tbl-m3-ratios}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: fig-m3-spectrum
+#| echo: false
+#| fig-width: 7.2
+#| fig-height: 3.6
+#| fig-cap: "Free-decay spectrum of the strain channel, with the identified modes marked and the Euler–Bernoulli prediction for the second and third drawn from the measured first. The prediction uses no property of the beam."
+keep <- freqs_un <= min(f_modes[length(f_modes)] * 1.4, fs_un / 2)
+ggplot(data.frame(f = freqs_un[keep], m = pmax(mag_un[keep], 1e-9)), aes(f, m)) +
+  geom_vline(xintercept = f_modes, linewidth = 0.3, linetype = "dotted",
+             colour = "grey30") +
+  geom_vline(xintercept = f_modes[1] * ratios_theory, linewidth = 0.35,
+             linetype = "dashed", colour = "#b6771a") +
+  geom_line(linewidth = 0.25) +
+  scale_y_log10() +
+  labs(x = "Frequency [Hz]", y = "Amplitude [V]")
+```
+
+```{r}
+#| label: out-ratios-text
+#| echo: false
+#| output: asis
+worst <- which.max(abs(ratios_measured / ratios_theory - 1))
+dep <- (ratios_measured[worst] / ratios_theory[worst] - 1) * 100
+cat(sprintf('
+Both ratios are pure numbers: @tbl-m3-ratios tests Euler–Bernoulli without any
+length, thickness, modulus or density entering anywhere. The largest departure
+is %.2f %% on $f_%d/f_1$, %s the prediction.
+
+A departure **below** the prediction on the higher modes is the expected
+direction: Euler–Bernoulli neglects shear deformation and rotary inertia,
+whose influence grows with mode number, and both lower the true frequency
+relative to the theory. A departure the other way, or a large one on
+$f_2/f_1$, points at the clamp instead — the boundary condition, not the beam.
+
+Note also that the device clock error cancels exactly in a ratio, because both
+frequencies are measured against the same clock. That is one more reason the
+ratios are a better test of the theory than either frequency alone.
+', abs(dep), worst + 1, if (dep < 0) "below" else "above"))
+```
+
+## Damping, two ways
+
+```{r}
+#| label: damping
+# --- half-power bandwidth, from the spectrum
+bw <- vapply(peaks_un, function(k) half_power(freqs_un, mag_un, k), numeric(1))
+zeta_hp <- bw / (2 * f_modes)
+
+# --- logarithmic decrement, from a band-passed first mode
+band <- 0.35 * f_modes[1]
+h <- fir_bandpass(max(f_modes[1] - band, 0.5 * bin_hz), f_modes[1] + band, fs_un)
+lag <- (length(h) - 1) %/% 2
+x_bp <- fir_apply(strain_un - mean(strain_un), h)
+t_bp <- t_un[(lag + 1):(length(strain_un) - lag)]
+
+pk <- positive_peaks(x_bp)
+# Keep only peaks well above the noise floor, so the fit is on real decay.
+tail_n <- length(x_bp) %/% 5
+floor_sd <- sd(x_bp[(length(x_bp) - tail_n + 1):length(x_bp)])
+pk <- pk[x_bp[pk] > 5 * floor_sd]
+fit_dec <- ols(seq_along(pk) - 1, log(x_bp[pk]))
+delta_log <- -fit_dec$slope
+zeta_ld <- delta_log / sqrt(4 * pi^2 + delta_log^2)
+u_zeta_ld <- fit_dec$u_slope / (2 * pi)
+```
+
+```{r}
+#| label: fig-m3-decay
+#| echo: false
+#| fig-width: 7.6
+#| fig-height: 3.2
+#| fig-cap: "The first mode, band-passed, with the peaks used for the logarithmic decrement. Right: the logarithm of those peaks against cycle number. A straight line means viscous damping; curvature would mean something else, most often friction in the clamp."
+p_bp <- ggplot(data.frame(t = t_bp, x = x_bp), aes(t, x)) +
+  geom_line(linewidth = 0.2) +
+  geom_point(data = data.frame(t = t_bp[pk], x = x_bp[pk]), aes(t, x), size = 0.6) +
+  labs(x = "Time [s]", y = "Band-passed mode 1 [V]")
+
+dec_df <- data.frame(i = seq_along(pk) - 1, y = log(x_bp[pk]))
+p_dec <- ggplot(dec_df, aes(i, y)) +
+  geom_point(size = 0.9) +
+  geom_abline(intercept = fit_dec$intercept, slope = fit_dec$slope,
+              linewidth = 0.4) +
+  labs(x = "Peak number", y = "log x_i")
+
+p_bp | p_dec
+```
+
+```{r}
+#| label: out-damping
+#| echo: false
+#| output: asis
+rows <- vapply(seq_along(f_modes), function(i) {
+  if (is.finite(bw[i])) {
+    sprintf("| %d | %.2f | %.3f | %.2f |", i, f_modes[i], bw[i], zeta_hp[i] * 1e3)
+  } else {
+    sprintf("| %d | %.2f | not resolvable | — |", i, f_modes[i])
+  }
+}, character(1))
+cat(sprintf('
+| Mode | $f_n$ [Hz] | Half-power width [Hz] | $\\zeta$ [10⁻³] |
+|---|---|---|---|
+%s
+
+: Damping from the half-power bandwidth {#tbl-m3-halfpower}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: out-damping-text
+#| echo: false
+#| output: asis
+ratio_est <- zeta_hp[1] / zeta_ld
+cat(sprintf('
+| Estimator | $\\zeta_1$ [10⁻³] | From |
+|---|---|---|
+| Logarithmic decrement | %.2f ± %.2f | %d peaks of the band-passed mode |
+| Half-power bandwidth | %.2f | A %.3f Hz bin over the %.0f s identification window |
+
+: The two damping estimators {#tbl-m3-damping}
+
+The two agree to **%.0f %%**, which is what should
+happen when both are done carefully — and they are two genuinely independent
+routes, one in the time domain and one in the frequency domain.
+
+Two things had to be right for that. The spectrum uses a **rectangular**
+window: a free decay starts at its maximum, at the edge of the record, where a
+Hann window is zero, and tapering it there biases the half-power width low by
+about 20 %% on this data. And the mode has to be resolvable at all — the
+identification window is %.0f s, which cannot resolve a line
+narrower than about %.3f Hz against a measured width of
+%.3f Hz. Shorten the record and only the half-power figure moves; that
+asymmetry is the test, and it is worth running.
+', zeta_ld * 1e3, u_zeta_ld * 1e3, length(pk), zeta_hp[1] * 1e3, bin_hz,
+   ID_WINDOW_S, abs(ratio_est - 1) * 100, ID_WINDOW_S, 1 / ID_WINDOW_S, bw[1]))
+```
+
+## Mass loading
+
+```{r}
+#| label: loading
+id_window_ld <- t_ld <= ID_WINDOW_S
+sp_ld <- spectrum_of(strain_ld[id_window_ld], fs_ld)
+freqs_ld <- sp_ld$freqs; mag_ld <- sp_ld$mag
+peaks_ld <- find_modes(freqs_ld, mag_ld)
+f_modes_ld <- vapply(peaks_ld, function(k) refine_peak(freqs_ld, mag_ld, k), numeric(1))
+
+sp_ac <- spectrum_of(accel_ld[id_window_ld], fs_ld)
+freqs_ac <- sp_ac$freqs; mag_ac <- sp_ac$mag
+peaks_ac <- find_modes(freqs_ac, mag_ac)
+f_modes_ac <- vapply(peaks_ac, function(k) refine_peak(freqs_ac, mag_ac, k), numeric(1))
+
+loading_ratio <- f_modes_ld[1] / f_modes[1]
+bin_ld <- freqs_ld[2] - freqs_ld[1]
+u_loading <- loading_ratio * sqrt((bin_ld / 2 / f_modes_ld[1])^2 +
+                                  (bin_hz / 2 / f_modes[1])^2)
+```
+
+```{r}
+#| label: out-loading
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Configuration | Channel | $f_1$ [Hz] |
+|---|---|---|
+| Accelerometer removed | strain | %.3f |
+| Accelerometer fitted | strain | %.3f |
+| Accelerometer fitted | acceleration | %.3f |
+
+: The same beam, measured with and without the sensor that changes it {#tbl-m3-loading}
+', f_modes[1], f_modes_ld[1], f_modes_ac[1]))
+```
+
+```{r}
+#| label: out-loading-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+Fitting the accelerometer lowered the first natural frequency by
+%.2f %%, measured as
+$f_1\'/f_1 = %.4f \\pm %.4f$ on a channel that adds
+no mass. The accelerometer\'s own channel agrees with the strain channel in the
+loaded configuration to
+%.0f ppm — as it
+must, since both are watching the same structure.
+
+What the accelerometer cannot do is measure the *unloaded* beam, because its
+presence is the load. Without the strain channel this systematic error would
+be invisible: a loaded beam rings perfectly cleanly at the wrong frequency.
+', (1 - loading_ratio) * 100, loading_ratio, u_loading,
+   abs(f_modes_ac[1] - f_modes_ld[1]) / f_modes_ld[1] * 1e6))
+```
+
+## Uncertainty budget
+
+The measurand is the first **undamped** natural frequency of the unloaded
+beam, per [the handbook](handbook.qmd#eq-m3-measurand), with the
+[sensitivity coefficients](handbook.qmd#eq-m3-sensitivity) given there.
+
+```{r}
+#| label: budget
+f_d <- f_modes[1]
+zeta <- zeta_ld
+f_1 <- f_d / sqrt(1 - zeta^2) / (1 + CLOCK_PPM * 1e-6)
+
+c_fd <- 1 / sqrt(1 - zeta^2)
+c_zeta <- f_d * zeta / (1 - zeta^2)^1.5
+c_clk <- -f_1
+
+# The scatter of the interpolated peak across repeats is not available from a
+# single tap, so the resolution bound stands in for it and is named as such.
+grid <- timing_summary(unloaded$data)$stats
+grid_rel <- grid$residual_max_abs_us / (grid$duration_s * 1e6)
+
+components <- list(
+  list(quantity = "Peak location", value = f_d, unit = "Hz",
+       distribution = "type-a", std = bin_hz / 4, sensitivity = c_fd),
+  list(quantity = "Frequency resolution", value = 0, unit = "Hz",
+       distribution = "rectangular", half_width = bin_hz / 2, sensitivity = c_fd),
+  list(quantity = "Damping correction", value = zeta, unit = "Hz",
+       distribution = "type-a", std = abs(zeta_hp[1] - zeta_ld) / 2,
+       sensitivity = c_zeta),
+  list(quantity = "Device clock", value = 0, unit = "Hz",
+       distribution = "rectangular", half_width = U_CLOCK_PPM * 1e-6,
+       sensitivity = c_clk),
+  list(quantity = "Sampling grid", value = 0, unit = "Hz",
+       distribution = "rectangular", half_width = grid_rel, sensitivity = c_clk)
+)
+budget <- budget_table(components, k = 2)
+```
+
+```{r}
+#| label: out-budget
+#| echo: false
+#| output: asis
+cat(budget_to_markdown(
+  budget,
+  caption = "Uncertainty budget for the first undamped natural frequency",
+  label = "tbl-m3-budget"))
+```
+
+```{r}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant <- budget$table[which.max(budget$table$index_pct), ]
+damping_shift <- f_d / sqrt(1 - zeta^2) - f_d
+cat(sprintf('
+$f_1 = %.3f$ Hz with an expanded uncertainty $U = %.3f$ Hz at
+$k = 2$, a relative uncertainty of %.0f ppm.
+
+The dominant component is **%s** at
+%.0f %% of the combined variance. The damped-to-undamped
+correction itself moves the answer by only %.2f mHz —
+about %.2f %% of one frequency bin — so it is in
+the table as a checked-and-negligible component rather than as a live one. It
+stops being negligible for a heavily damped structure, which is why it is
+written down rather than dropped.
+
+The way to improve this measurement is a **longer record**: it shrinks the
+resolution bound and the peak-location scatter together, and it is the only
+component here that a better converter would not touch.
+', f_1, budget$U, budget$U / f_1 * 1e6, dominant$quantity, dominant$index_pct,
+   damping_shift * 1e3, damping_shift / bin_hz * 100))
+```
+
+## What to report
+
+1. @fig-m3-trace: the time trace, with evidence of a single clean tap.
+2. @tbl-m3-modes and @fig-m3-spectrum: three modes, and the rate justified
+   against the highest one reported.
+3. @tbl-m3-ratios: the dimensionless test of Euler–Bernoulli, with the
+   direction of any departure discussed.
+4. @tbl-m3-halfpower, @tbl-m3-damping and @fig-m3-decay: both damping
+   estimators, their disagreement explained rather than averaged.
+5. @tbl-m3-loading: the mass loading, measured on the non-loading channel.
+6. @tbl-m3-budget: the budget, the dominant component, and what you would
+   change first.

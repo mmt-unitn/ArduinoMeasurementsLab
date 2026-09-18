@@ -1,0 +1,93 @@
+::: {.callout-warning}
+## A beam under load stores energy
+
+- **Know the beam's elastic limit** before loading it, and stay well inside
+  it. A beam deflected past yield does not return, and the calibration of
+  every mechanical experiment on the rig goes with it.
+- **A released beam moves.** Keep hands, instruments and anything breakable
+  out of the swept volume, and never load the tip while looking along the
+  beam's plane of motion.
+- **Wear eye protection when tapping**, and tap with a soft-faced hammer or a
+  fingertip — never a hard tool, which dents the surface and excites the
+  wrong things.
+- Gauge leads and the accelerometer cable must be strain-relieved. A cable
+  that tugs is a spring you did not intend to add.
+:::
+
+### 1. Check the sampling rate you can achieve {#sec-m3-step-rate}
+
+The third mode sits near 17.5 times the first
+([@eq-m3-ratios](handbook.qmd#eq-m3-ratios)), so the rate has to be chosen for
+the highest mode you intend to report, not the lowest.
+
+```bash
+arduino-io info                      # confirm the streaming flag
+arduino-io mode 15 analog && arduino-io mode 16 analog
+arduino-io stream 15,16 --hz 4000 --seconds 1 --csv /tmp/rate-check.csv
+```
+
+Read the achieved rate from the summary. This experiment needs a streaming
+board and a Linux host; see [Supported boards](../../setup/boards.qmd).
+
+### 2. Clamp the beam, and record how {#sec-m3-step-clamp}
+
+The clamp is the largest source of disagreement with theory — see
+[the beam rig](../../hardware/beam-rig.qmd#sec-beam-clamp). Tighten it to a
+stated torque, measure the **free length** from the face of the clamp rather
+than assuming the nominal length, and write both down. If the beam is
+re-clamped during the session, everything measured before it belongs to a
+different structure.
+
+### 3. Tap test without the accelerometer {#sec-m3-step-noaccel}
+
+Record the strain channel alone first, with the accelerometer **removed** from
+the beam — not merely unplugged:
+
+```bash
+arduino-io stream 15 --hz 4000 --seconds 4 --csv data/tap-noaccel.csv
+```
+
+Start the recording, wait a moment, then tap once near the tip and let the
+beam ring down undisturbed. Do not touch the beam, the bench or the clamp
+until the recording ends.
+
+::: {.callout-tip}
+## What a good tap looks like
+
+One clean impulse, no double strike, and a decay that reaches the noise floor
+inside the record. If the trace shows two impulses close together the hammer
+bounced; discard it and tap again. A double strike puts a comb in the spectrum
+that is easy to mistake for structure.
+:::
+
+### 4. Tap test with the accelerometer {#sec-m3-step-accel}
+
+Fit the accelerometer at the tip, and repeat, recording **both** channels:
+
+```bash
+arduino-io stream 15,16 --hz 4000 --seconds 4 --csv data/tap-accel.csv
+```
+
+The strain channel is the comparison: it adds no mass, so it sees the true
+frequency in @sec-m3-step-noaccel and the loaded frequency here, and the ratio
+of the two is the mass-loading effect measured directly.
+
+### 5. Repeat each tap {#sec-m3-step-repeat}
+
+Three taps per configuration, at least. A tap test's scatter comes from where
+and how hard you struck, not from the converter, and a single recording gives
+no handle on it.
+
+### 6. Fill the sidecars {#sec-m3-step-sidecar}
+
+The same discipline as
+[S1's checklist](../S1-daq-static/handbook.qmd#sec-s1-step-sidecar), plus:
+
+- [ ] `acquisition.requested_period_us` **and** `acquisition.achieved_rate_hz`
+- [ ] all six `stream_stats` counters — a lost record puts a hole in a time
+      axis whose whole purpose is frequency
+- [ ] the free length measured from the clamp face, and the clamp torque
+- [ ] whether the accelerometer was **fitted** or **removed**, not just
+      whether it was recorded
+- [ ] the strain bridge's sensitivity, from [M1](../M1-strain-load/index.qmd)
+- [ ] `synthetic: false`

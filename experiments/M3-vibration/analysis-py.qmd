@@ -1,0 +1,584 @@
+---
+title: "M3 — Analysis template (Python)"
+subtitle: "Vibration and modal analysis"
+description: "Natural frequencies, the dimensionless ratios, damping two ways and mass loading, in Python"
+engine: jupyter
+jupyter: python3
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment. To analyse your own measurements, replace the files in `data/`
+and change the paths in the first cell — nothing else.
+
+The R template [`analysis-r.qmd`](analysis-r.qmd) has the same sections, the
+same figure labels and the same output tables, and produces the same numbers
+from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the peak finder and the filter are written out
+
+Peak finding and band-pass filtering are exactly the operations where
+`scipy.signal` and R's `gsignal` differ in their defaults — a different
+prominence rule, a different edge convention — and an analysis whose
+frequencies depend on which language ran it is not an analysis. Both are
+written from their definitions here, as
+[S3 does for its filters](../S3-aliasing-filtering/handbook.qmd#sec-s3-fir).
+:::
+
+## Setup
+
+```{python}
+#| label: setup
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd().parents[1] / "shared" / "python"))
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from labtools import (budget_table, pivot_channels, read_run, synthetic_banner,
+                      timing_summary, validate_meta)
+
+plt.rcParams.update({
+    "figure.figsize": (7.0, 4.0),
+    "axes.grid": True,
+    "grid.alpha": 0.3,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+})
+
+DATA = Path("data")
+RUN_UNLOADED = "tap-noaccel"     # accelerometer REMOVED from the beam
+RUN_LOADED = "tap-accel"         # accelerometer fitted
+PIN_STRAIN = 15
+PIN_ACCEL = 16
+
+N_MODES = 3
+FIR_TAPS = 401                   # odd, so the group delay is an integer sample
+
+# Modes are identified on a window matched to the decay, not on the whole
+# record. The higher modes die fastest -- their decay rate is zeta * 2 pi f,
+# which grows with frequency even when zeta does not -- so by the end of a long
+# record only the first mode and the noise floor are left, and a peak finder
+# run over the whole thing picks noise for the third mode. The first mode's
+# damping is still read from the FULL record, where it is still ringing.
+ID_WINDOW_S = 2.0
+
+# Roots of cos(lambda) cosh(lambda) = -1, the cantilever's eigenvalues.
+LAMBDA = np.array([1.875104069, 4.694091133, 7.854757438])
+
+# S2's measured device clock error and its uncertainty, in ppm.
+# TODO (Paolo): replace with the values from this bench's own S2 session.
+CLOCK_PPM = -18.9
+U_CLOCK_PPM = 8.3
+```
+
+```{python}
+#| label: helpers
+def sampling_rate(run):
+    """Hz, from the least-squares grid fit of the device timestamps."""
+    return 1.0e6 / timing_summary(run.data).stats["period_us"]
+
+
+def spectrum(x, fs):
+    """Amplitude spectrum of a transient, with a RECTANGULAR window.
+
+    Not a Hann window. A free decay starts at its maximum, at the very edge of
+    the record, and a Hann window is zero there -- it would suppress exactly
+    the part of the signal that carries the information and reshape the decay,
+    biasing every half-power width low. A tapering window exists to hide the
+    discontinuity a non-coherent *steady* sinusoid has at the record's ends; a
+    transient that has decayed inside the record has no such discontinuity, so
+    it needs no taper. On this data the choice moves the damping estimate by
+    about 20 %, which is larger than anything else in this analysis.
+    """
+    x = np.asarray(x, float)
+    n = x.size
+    mag = np.abs(np.fft.rfft(x - x.mean())) * 2.0 / n
+    return np.fft.rfftfreq(n, 1.0 / fs), mag
+
+
+def refine_peak(freqs, mag, k):
+    """Parabolic interpolation on the three bins around bin k."""
+    if 0 < k < mag.size - 1:
+        a, b, c = mag[k - 1], mag[k], mag[k + 1]
+        denom = a - 2.0 * b + c
+        delta = 0.5 * (a - c) / denom if denom != 0.0 else 0.0
+    else:
+        delta = 0.0
+    df = freqs[1] - freqs[0]
+    return freqs[k] + delta * df
+
+
+def find_modes(freqs, mag, n_modes=N_MODES, f_min=1.0, rel_separation=0.5):
+    """The `n_modes` largest local maxima, separated in *relative* frequency.
+
+    The separation has to be relative, not a fixed number of hertz. A decaying
+    mode has broad skirts, and a skirt peak a few hertz from a strong mode is
+    still that mode; an absolute rule either admits the skirt or forbids two
+    genuinely close modes. Cantilever modes are spaced by factors of six, so
+    rejecting anything within 25 % of an already-picked peak keeps the skirts
+    out and the real modes in. Consecutive cantilever modes are at least 2.8
+    times apart -- f2/f1 is 6.27 and f3/f2 is 2.80 -- so a 50 % rule has a wide
+    margin on both sides, and it has to be that wide because the rectangular
+    window this analysis needs has broader skirts than a tapered one would.
+
+    Written out rather than taken from a library: a prominence rule chosen by
+    a library is a scientific choice made on the analyst's behalf.
+    """
+    order = np.argsort(mag)[::-1]
+    picked = []
+    for k in order:
+        if freqs[k] < f_min or k == 0 or k == mag.size - 1:
+            continue
+        if not (mag[k] >= mag[k - 1] and mag[k] >= mag[k + 1]):
+            continue
+        if any(abs(freqs[k] - freqs[j]) < rel_separation * freqs[j]
+               for j in picked):
+            continue
+        picked.append(k)
+        if len(picked) == n_modes:
+            break
+    picked.sort(key=lambda k: freqs[k])
+    return picked
+
+
+def half_power(freqs, mag, k):
+    """Half-power bandwidth around bin k, by linear interpolation.
+
+    Returns NaN when the -3 dB points fall outside the resolvable span, which
+    is the honest answer for a mode too narrow for the record.
+    """
+    target = mag[k] / np.sqrt(2.0)
+    lo = hi = np.nan
+    i = k
+    while i > 0 and mag[i] > target:
+        i -= 1
+    if i >= 0 and mag[i] <= target < mag[i + 1]:
+        t = (target - mag[i]) / (mag[i + 1] - mag[i])
+        lo = freqs[i] + t * (freqs[i + 1] - freqs[i])
+    j = k
+    while j < mag.size - 1 and mag[j] > target:
+        j += 1
+    if j < mag.size and mag[j] <= target < mag[j - 1]:
+        t = (target - mag[j]) / (mag[j - 1] - mag[j])
+        hi = freqs[j] - t * (freqs[j] - freqs[j - 1])
+    return hi - lo
+
+
+def fir_bandpass(f_lo, f_hi, fs, n_taps=FIR_TAPS):
+    """Windowed-sinc band-pass, as the difference of two low-passes."""
+    n = np.arange(n_taps, dtype=float)
+    m = (n_taps - 1) / 2.0
+    w = 0.54 - 0.46 * np.cos(2.0 * np.pi * n / (n_taps - 1))       # Hamming
+    lo = w * np.sinc(2.0 * f_lo / fs * (n - m))
+    hi = w * np.sinc(2.0 * f_hi / fs * (n - m))
+    return hi / hi.sum() - lo / lo.sum()
+
+
+def fir_apply(x, h):
+    return np.convolve(np.asarray(x, float), h, mode="valid")
+
+
+def positive_peaks(t, x):
+    """Indices of strict local maxima -- the peaks a logarithmic decrement
+    is read from."""
+    inner = np.arange(1, x.size - 1)
+    keep = (x[inner] > x[inner - 1]) & (x[inner] > x[inner + 1]) & (x[inner] > 0)
+    return inner[keep]
+
+
+def ols(x, y):
+    x = np.asarray(x, float); y = np.asarray(y, float)
+    sxx = ((x - x.mean()) ** 2).sum()
+    slope = ((x - x.mean()) * (y - y.mean())).sum() / sxx
+    intercept = y.mean() - slope * x.mean()
+    resid = y - (intercept + slope * x)
+    s = np.sqrt((resid ** 2).sum() / max(x.size - 2, 1))
+    return {"slope": float(slope), "intercept": float(intercept),
+            "u_slope": float(s / np.sqrt(sxx)), "s_res": float(s)}
+```
+
+```{python}
+#| label: load
+unloaded = read_run(DATA / f"{RUN_UNLOADED}.csv")
+loaded = read_run(DATA / f"{RUN_LOADED}.csv")
+
+fs_un = sampling_rate(unloaded)
+fs_ld = sampling_rate(loaded)
+
+strain_un = unloaded.data.loc[unloaded.data["pin"] == PIN_STRAIN, "volts"].to_numpy()
+t_un = np.sort(unloaded.data.loc[unloaded.data["pin"] == PIN_STRAIN, "t_us"].unique()) / 1e6
+t_un = t_un - t_un[0]
+
+wide_ld = pivot_channels(loaded.data, "volts")
+strain_ld = wide_ld[PIN_STRAIN].to_numpy()
+accel_ld = wide_ld[PIN_ACCEL].to_numpy()
+t_ld = (wide_ld.index.to_numpy() - wide_ld.index.to_numpy()[0]) / 1e6
+```
+
+```{python}
+#| label: banner
+#| echo: false
+#| output: asis
+print(synthetic_banner(unloaded.meta))
+```
+
+## Data quality
+
+```{python}
+#| label: quality
+#| echo: false
+#| output: asis
+runs = [unloaded, loaded]
+bad = sum(1 for r in runs if validate_meta(r.meta))
+lossy = [r.meta["run"] for r in runs
+         if any(k != "records" and isinstance(v, int) and v > 0
+                for k, v in r.meta.get("stream_stats", {}).items())]
+print(f"""
+Two runs read: `{RUN_UNLOADED}` with the accelerometer removed, and
+`{RUN_LOADED}` with it fitted. Achieved rates {fs_un:.1f} Hz and
+{fs_ld:.1f} Hz; records {t_un[-1]:.2f} s and {t_ld[-1]:.2f} s.
+{'All sidecars are complete.' if bad == 0 else f'{bad} sidecar(s) have missing fields.'}
+{'No run reports a lost record.' if not lossy else 'Runs with losses: ' + ', '.join(lossy)}
+""")
+```
+
+```{python}
+#| label: fig-m3-trace
+#| echo: false
+#| fig-cap: "The free decay, before any spectrum is computed. One clean impulse and a monotone envelope: a second impulse close behind the first would put a comb in the spectrum that is easy to mistake for structure."
+fig, ax = plt.subplots(figsize=(7.0, 3.0))
+ax.plot(t_un, strain_un - strain_un.mean(), lw=0.4)
+ax.axvline(ID_WINDOW_S, color="0.4", lw=0.9, ls="--")
+ax.text(ID_WINDOW_S, ax.get_ylim()[1] * 0.85,
+        f"  modes identified within {ID_WINDOW_S:.0f} s", fontsize=8, color="0.3")
+ax.set_xlabel("Time [s]")
+ax.set_ylabel("Strain channel [V, mean removed]")
+fig.tight_layout()
+plt.show()
+```
+
+## Modes and the dimensionless ratios
+
+```{python}
+#| label: modes
+id_window = t_un <= ID_WINDOW_S
+freqs_un, mag_un = spectrum(strain_un[id_window], fs_un)
+peaks_un = find_modes(freqs_un, mag_un)
+f_modes = np.array([refine_peak(freqs_un, mag_un, k) for k in peaks_un])
+
+bin_hz = freqs_un[1] - freqs_un[0]
+ratios_measured = f_modes[1:] / f_modes[0]
+ratios_theory = (LAMBDA[1:] / LAMBDA[0]) ** 2
+```
+
+```{python}
+#| label: out-modes
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {i + 1} | {LAMBDA[i]:.6f} | {f_modes[i]:.3f} | {mag_un[peaks_un[i]] * 1e3:.3f} |"
+    for i in range(len(f_modes)))
+print(f"""
+| Mode | $\\lambda_n$ | $f_n$ [Hz] | Peak amplitude [mV] |
+|---|---|---|---|
+{rows}
+
+: The first three modes of the unloaded beam, from the strain channel over the first {ID_WINDOW_S:.0f} s {{#tbl-m3-modes}}
+""")
+```
+
+```{python}
+#| label: out-ratios
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| $f_{i + 2}/f_1$ | {ratios_theory[i]:.4f} | {ratios_measured[i]:.4f} | "
+    f"{(ratios_measured[i] / ratios_theory[i] - 1) * 100:+.2f} |"
+    for i in range(len(ratios_measured)))
+print(f"""
+| Ratio | Euler–Bernoulli | Measured | Departure |
+|---|---|---|---|
+{rows}
+
+: The prediction that needs no beam dimensions {{#tbl-m3-ratios}}
+""")
+```
+
+```{python}
+#| label: fig-m3-spectrum
+#| echo: false
+#| fig-cap: "Free-decay spectrum of the strain channel, with the identified modes marked and the Euler–Bernoulli prediction for the second and third drawn from the measured first. The prediction uses no property of the beam."
+fig, ax = plt.subplots(figsize=(7.2, 3.6))
+ax.semilogy(freqs_un, np.maximum(mag_un, 1e-9), lw=0.6)
+for i, f in enumerate(f_modes):
+    ax.axvline(f, color="0.3", lw=0.8, ls=":")
+    ax.text(f, mag_un[peaks_un[i]] * 1.6, f"$f_{i + 1}$", fontsize=8,
+            ha="center", color="0.2")
+for r in ratios_theory:
+    ax.axvline(f_modes[0] * r, color="#b6771a", lw=0.9, ls="--")
+ax.set_xlim(0, min(f_modes[-1] * 1.4, fs_un / 2))
+ax.set_xlabel("Frequency [Hz]")
+ax.set_ylabel("Amplitude [V]")
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-ratios-text
+#| echo: false
+#| output: asis
+worst = int(np.argmax(np.abs(ratios_measured / ratios_theory - 1.0)))
+dep = (ratios_measured[worst] / ratios_theory[worst] - 1.0) * 100
+direction = "below" if dep < 0 else "above"
+print(f"""
+Both ratios are pure numbers: @tbl-m3-ratios tests Euler–Bernoulli without any
+length, thickness, modulus or density entering anywhere. The largest departure
+is {abs(dep):.2f} % on $f_{worst + 2}/f_1$, {direction} the prediction.
+
+A departure **below** the prediction on the higher modes is the expected
+direction: Euler–Bernoulli neglects shear deformation and rotary inertia,
+whose influence grows with mode number, and both lower the true frequency
+relative to the theory. A departure the other way, or a large one on
+$f_2/f_1$, points at the clamp instead — the boundary condition, not the beam.
+
+Note also that the device clock error cancels exactly in a ratio, because both
+frequencies are measured against the same clock. That is one more reason the
+ratios are a better test of the theory than either frequency alone.
+""")
+```
+
+## Damping, two ways
+
+```{python}
+#| label: damping
+# --- half-power bandwidth, from the spectrum
+bw = np.array([half_power(freqs_un, mag_un, k) for k in peaks_un])
+zeta_hp = bw / (2.0 * f_modes)
+
+# --- logarithmic decrement, from a band-passed first mode
+band = 0.35 * f_modes[0]
+h = fir_bandpass(max(f_modes[0] - band, 0.5 * bin_hz), f_modes[0] + band, fs_un)
+lag = (len(h) - 1) // 2
+x_bp = fir_apply(strain_un - strain_un.mean(), h)
+t_bp = t_un[lag:len(strain_un) - lag]
+
+pk = positive_peaks(t_bp, x_bp)
+# Keep only peaks well above the noise floor, so the fit is on real decay.
+floor = x_bp[-len(x_bp) // 5:].std(ddof=1)
+pk = pk[x_bp[pk] > 5.0 * floor]
+fit_dec = ols(np.arange(pk.size, dtype=float), np.log(x_bp[pk]))
+delta_log = -fit_dec["slope"]
+zeta_ld = delta_log / np.sqrt(4.0 * np.pi ** 2 + delta_log ** 2)
+u_zeta_ld = fit_dec["u_slope"] / (2.0 * np.pi)
+```
+
+```{python}
+#| label: fig-m3-decay
+#| echo: false
+#| fig-cap: "The first mode, band-passed, with the peaks used for the logarithmic decrement. Right: the logarithm of those peaks against cycle number. A straight line means viscous damping; curvature would mean something else, most often friction in the clamp."
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.6, 3.2))
+ax1.plot(t_bp, x_bp, lw=0.4)
+ax1.plot(t_bp[pk], x_bp[pk], "o", ms=2.5)
+ax1.set_xlabel("Time [s]")
+ax1.set_ylabel("Band-passed mode 1 [V]")
+
+ax2.plot(np.arange(pk.size), np.log(x_bp[pk]), "o", ms=3)
+grid = np.arange(pk.size, dtype=float)
+ax2.plot(grid, fit_dec["intercept"] + fit_dec["slope"] * grid, lw=1.0)
+ax2.set_xlabel("Peak number")
+ax2.set_ylabel("$\\ln x_i$")
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-damping
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {i + 1} | {f_modes[i]:.2f} | "
+    + (f"{bw[i]:.3f} | {zeta_hp[i] * 1e3:.2f}" if np.isfinite(bw[i])
+       else "not resolvable | —")
+    + " |"
+    for i in range(len(f_modes)))
+print(f"""
+| Mode | $f_n$ [Hz] | Half-power width [Hz] | $\\zeta$ [10⁻³] |
+|---|---|---|---|
+{rows}
+
+: Damping from the half-power bandwidth {{#tbl-m3-halfpower}}
+""")
+```
+
+```{python}
+#| label: out-damping-text
+#| echo: false
+#| output: asis
+n_cycles = pk.size
+ratio_est = zeta_hp[0] / zeta_ld if np.isfinite(zeta_hp[0]) else float("nan")
+print(f"""
+| Estimator | $\\zeta_1$ [10⁻³] | From |
+|---|---|---|
+| Logarithmic decrement | {zeta_ld * 1e3:.2f} ± {u_zeta_ld * 1e3:.2f} | {n_cycles} peaks of the band-passed mode |
+| Half-power bandwidth | {zeta_hp[0] * 1e3:.2f} | A {bin_hz:.3f} Hz bin over the {ID_WINDOW_S:.0f} s identification window |
+
+: The two damping estimators {{#tbl-m3-damping}}
+
+The two agree to **{abs(ratio_est - 1) * 100:.0f} %**, which is what should
+happen when both are done carefully — and they are two genuinely independent
+routes, one in the time domain and one in the frequency domain.
+
+Two things had to be right for that. The spectrum uses a **rectangular**
+window: a free decay starts at its maximum, at the edge of the record, where a
+Hann window is zero, and tapering it there biases the half-power width low by
+about 20 % on this data. And the mode has to be resolvable at all — the
+identification window is {ID_WINDOW_S:.0f} s, which cannot resolve a line
+narrower than about {1.0 / ID_WINDOW_S:.3f} Hz against a measured width of
+{bw[0]:.3f} Hz. Shorten the record and only the half-power figure moves; that
+asymmetry is the test, and it is worth running.
+""")
+```
+
+## Mass loading
+
+```{python}
+#| label: loading
+id_window_ld = t_ld <= ID_WINDOW_S
+freqs_ld, mag_ld = spectrum(strain_ld[id_window_ld], fs_ld)
+peaks_ld = find_modes(freqs_ld, mag_ld)
+f_modes_ld = np.array([refine_peak(freqs_ld, mag_ld, k) for k in peaks_ld])
+
+freqs_ac, mag_ac = spectrum(accel_ld[id_window_ld], fs_ld)
+peaks_ac = find_modes(freqs_ac, mag_ac)
+f_modes_ac = np.array([refine_peak(freqs_ac, mag_ac, k) for k in peaks_ac])
+
+loading_ratio = f_modes_ld[0] / f_modes[0]
+bin_ld = freqs_ld[1] - freqs_ld[0]
+u_loading = loading_ratio * np.hypot(bin_ld / 2 / f_modes_ld[0],
+                                     bin_hz / 2 / f_modes[0])
+```
+
+```{python}
+#| label: out-loading
+#| echo: false
+#| output: asis
+print(f"""
+| Configuration | Channel | $f_1$ [Hz] |
+|---|---|---|
+| Accelerometer removed | strain | {f_modes[0]:.3f} |
+| Accelerometer fitted | strain | {f_modes_ld[0]:.3f} |
+| Accelerometer fitted | acceleration | {f_modes_ac[0]:.3f} |
+
+: The same beam, measured with and without the sensor that changes it {{#tbl-m3-loading}}
+""")
+```
+
+```{python}
+#| label: out-loading-text
+#| echo: false
+#| output: asis
+print(f"""
+Fitting the accelerometer lowered the first natural frequency by
+{(1.0 - loading_ratio) * 100:.2f} %, measured as
+$f_1'/f_1 = {loading_ratio:.4f} \\pm {u_loading:.4f}$ on a channel that adds
+no mass. The accelerometer's own channel agrees with the strain channel in the
+loaded configuration to
+{abs(f_modes_ac[0] - f_modes_ld[0]) / f_modes_ld[0] * 1e6:.0f} ppm — as it
+must, since both are watching the same structure.
+
+What the accelerometer cannot do is measure the *unloaded* beam, because its
+presence is the load. Without the strain channel this systematic error would
+be invisible: a loaded beam rings perfectly cleanly at the wrong frequency.
+""")
+```
+
+## Uncertainty budget
+
+The measurand is the first **undamped** natural frequency of the unloaded
+beam, per [the handbook](handbook.qmd#eq-m3-measurand), with the
+[sensitivity coefficients](handbook.qmd#eq-m3-sensitivity) given there.
+
+```{python}
+#| label: budget
+f_d = float(f_modes[0])
+zeta = float(zeta_ld)
+f_1 = f_d / np.sqrt(1.0 - zeta ** 2) / (1.0 + CLOCK_PPM * 1e-6)
+
+c_fd = 1.0 / np.sqrt(1.0 - zeta ** 2)
+c_zeta = f_d * zeta / (1.0 - zeta ** 2) ** 1.5
+c_clk = -f_1
+
+# The scatter of the interpolated peak across repeats is not available from a
+# single tap, so the resolution bound stands in for it and is named as such.
+grid = timing_summary(unloaded.data).stats
+grid_rel = grid["residual_max_abs_us"] / (grid["duration_s"] * 1e6)
+
+components = [
+    dict(quantity="Peak location", value=f_d, unit="Hz",
+         distribution="type-a", std=bin_hz / 4, sensitivity=c_fd),
+    dict(quantity="Frequency resolution", value=0.0, unit="Hz",
+         distribution="rectangular", half_width=bin_hz / 2, sensitivity=c_fd),
+    dict(quantity="Damping correction", value=zeta, unit="Hz",
+         distribution="type-a", std=abs(zeta_hp[0] - zeta_ld) / 2,
+         sensitivity=c_zeta),
+    dict(quantity="Device clock", value=0.0, unit="Hz",
+         distribution="rectangular", half_width=U_CLOCK_PPM * 1e-6,
+         sensitivity=c_clk),
+    dict(quantity="Sampling grid", value=0.0, unit="Hz",
+         distribution="rectangular", half_width=grid_rel, sensitivity=c_clk),
+]
+budget = budget_table(components, k=2)
+```
+
+```{python}
+#| label: out-budget
+#| echo: false
+#| output: asis
+print(budget.to_markdown(
+    caption="Uncertainty budget for the first undamped natural frequency",
+    label="tbl-m3-budget"))
+```
+
+```{python}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant = budget.table.loc[budget.table["index_pct"].idxmax()]
+damping_shift = f_d / np.sqrt(1.0 - zeta ** 2) - f_d
+print(f"""
+$f_1 = {f_1:.3f}$ Hz with an expanded uncertainty $U = {budget.U:.3f}$ Hz at
+$k = 2$, a relative uncertainty of {budget.U / f_1 * 1e6:.0f} ppm.
+
+The dominant component is **{dominant['quantity']}** at
+{dominant['index_pct']:.0f} % of the combined variance. The damped-to-undamped
+correction itself moves the answer by only {damping_shift * 1e3:.2f} mHz —
+about {damping_shift / bin_hz * 100:.2f} % of one frequency bin — so it is in
+the table as a checked-and-negligible component rather than as a live one. It
+stops being negligible for a heavily damped structure, which is why it is
+written down rather than dropped.
+
+The way to improve this measurement is a **longer record**: it shrinks the
+resolution bound and the peak-location scatter together, and it is the only
+component here that a better converter would not touch.
+""")
+```
+
+## What to report
+
+1. @fig-m3-trace: the time trace, with evidence of a single clean tap.
+2. @tbl-m3-modes and @fig-m3-spectrum: three modes, and the rate justified
+   against the highest one reported.
+3. @tbl-m3-ratios: the dimensionless test of Euler–Bernoulli, with the
+   direction of any departure discussed.
+4. @tbl-m3-halfpower, @tbl-m3-damping and @fig-m3-decay: both damping
+   estimators, their disagreement explained rather than averaged.
+5. @tbl-m3-loading: the mass loading, measured on the non-loading channel.
+6. @tbl-m3-budget: the budget, the dominant component, and what you would
+   change first.

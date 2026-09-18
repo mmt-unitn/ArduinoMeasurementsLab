@@ -6,20 +6,16 @@ Writes two runs into `experiments/M3-vibration/data/`:
                 The beam's free response after a tap, at its true (unloaded)
                 modal frequencies -- the baseline for the Euler-Bernoulli
                 ratio check and for the two damping estimates.
-  tap-accel     Strain gauge and accelerometer together. The generator gives
-                each channel its own frequency input: the strain channel
-                keeps the true frequencies (it adds no mass, so it is
-                unaffected by the accelerometer's presence -- see
-                hardware/beam-rig.qmd's note on tip mass), while the
-                accelerometer channel's first mode is generated at the
-                mass-loaded frequency f1' = f1 * mass_loading.f1_ratio_loaded
-                (params/m3.yaml). A real beam would show the shift on every
-                channel, because mass loading is a property of the whole
-                structure, not of one sensor; giving the two channels
-                different frequency inputs in the same synthetic file is a
-                deliberate simplification that lets a single recording
-                demonstrate the comparison directly, and it is stated here so
-                it is not mistaken for a measurement.
+  tap-accel     Strain gauge and accelerometer together, with the
+                accelerometer's mass on the beam. BOTH channels are generated
+                at the mass-loaded first mode f1' = f1 *
+                mass_loading.f1_ratio_loaded (params/m3.yaml), because mass
+                loading is a property of the whole structure and not of one
+                sensor: the strain gauge adds no mass of its own, but it is
+                bonded to a beam that is now carrying the accelerometer.
+                The loading is therefore measured the way the handbook says
+                it is -- by comparing the STRAIN channel across the two runs,
+                which needs no knowledge of the accelerometer's mass.
 
 Each channel is the sum of three modes released from rest at t = 0 (a tap):
 a decaying sine per mode, x(t) = sum_k A_k * exp(-zeta_k * 2 pi f_k * t) *
@@ -106,6 +102,12 @@ def generate() -> None:
     strain_amp = list(modal["strain_amplitude"])
     accel_amp = list(modal["accel_amplitude_ms2"])
 
+    # Mass loading is a property of the whole structure, so BOTH channels of
+    # the loaded run see the shifted first mode -- the strain gauge adds no
+    # mass of its own, but it is bonded to a beam that is now carrying the
+    # accelerometer. Giving the strain channel the unloaded frequency would
+    # make eq-m3-loading-measured trivially equal to 1 and destroy the very
+    # comparison this experiment exists to make.
     loaded_ratio = params["mass_loading"]["f1_ratio_loaded"]
     freqs_loaded = [freqs_true[0] * loaded_ratio, freqs_true[1], freqs_true[2]]
 
@@ -124,7 +126,10 @@ def generate() -> None:
         restart_extra_us=host.restart_extra_us,
     )
     t_us = timing.grid(n, rng)
-    t_s = t_us / 1.0e6
+    # Relative to the FIRST sample: the tap is at t = 0 of the record, and
+    # the timing model starts t_us at the board's uptime. Against the
+    # absolute clock the decay would already be over before sampling began.
+    t_s = (t_us - t_us[0]) / 1.0e6
     strain = _decay_sum(t_s, freqs_true, zetas, strain_amp)
     v_strain = offset_v + strain_sens * strain
     codes = adc.convert(v_strain, rng)
@@ -154,8 +159,11 @@ def generate() -> None:
         restart_extra_us=host.restart_extra_us,
     )
     t_us = timing.grid(n, rng)
-    t_s = t_us / 1.0e6
-    strain = _decay_sum(t_s, freqs_true, zetas, strain_amp)
+    # Relative to the FIRST sample: the tap is at t = 0 of the record, and
+    # the timing model starts t_us at the board's uptime. Against the
+    # absolute clock the decay would already be over before sampling began.
+    t_s = (t_us - t_us[0]) / 1.0e6
+    strain = _decay_sum(t_s, freqs_loaded, zetas, strain_amp)
     accel = _decay_sum(t_s, freqs_loaded, zetas, accel_amp)
     v_strain = offset_v + strain_sens * strain
     v_accel = offset_v + accel_sens * accel

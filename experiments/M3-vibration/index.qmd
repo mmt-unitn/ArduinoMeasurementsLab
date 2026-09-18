@@ -13,10 +13,97 @@ experiment:
   validated:
     usbio: "TODO (Paolo)"
     driver: "TODO (Paolo)"
+toc: true
 ---
 
-::: {.callout-note}
-## Experiment not written yet
-This folder is part of the AMLab scaffold. The overview, slides, handbook and
-the two analysis templates will be added.
+Strike the beam once and let it ring. The decay contains every mode the
+structure has, and reading them off a spectrum tests a piece of theory that
+needs **no knowledge of the beam whatsoever**: the ratios of the natural
+frequencies are pure numbers, fixed by the roots of
+$\cos\lambda\cosh\lambda = -1$, and a measurement can falsify them without
+anyone measuring a length, a thickness or a modulus.
+
+That makes M3 the one mechanical experiment on this site whose central result
+survives the beam's dimensions being undecided — and it is also where the
+platform's timing quality finally becomes the measurand's own uncertainty,
+because everything here is a frequency.
+
+## Materials {#sec-m3-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — before the bench
+- [Handbook](handbook.qmd) — theory, procedure, tasks ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd) — Jupyter engine
+- [R template](analysis-r.qmd) — knitr engine
+:::
+
+:::
+
+## What you measure {#sec-m3-index-measure}
+
+| Quantity | How | Why it matters |
+|---|---|---|
+| $f_1, f_2, f_3$ | Peak picking on the free-decay spectrum | The structure's own dynamics |
+| $f_2/f_1$, $f_3/f_1$ | Ratios of the above | Tests Euler–Bernoulli with no dimensions at all |
+| Damping $\zeta$, two ways | Logarithmic decrement and half-power bandwidth | Two estimators with opposite biases |
+| Mass-loading ratio | The strain channel, with and without the accelerometer | A systematic error the experimenter creates by measuring |
+
+: What M3 produces {#tbl-m3-index-outputs}
+
+## Bench {#sec-m3-index-bench}
+
+**Tier 3.** The [beam rig](../../hardware/beam-rig.qmd) with strain gauges at
+the root and an accelerometer that can be fitted and **removed** at the tip.
+
+**Board.** Streaming is required and the rate must suit the *third* mode, not
+the first — mbed boards only.
+
+**Host.** Linux. A lost record puts a hole in a time axis whose whole purpose
+is frequency.
+
+::: {.callout-important}
+## This experiment cashes in S1 and S2
+
+Every result here is a frequency, so the sampling grid is not a detail.
+[S1](../S1-daq-static/index.qmd) measured the grid's residuals and
+[S2](../S2-daq-dynamic/index.qmd) measured the device clock's error in ppm —
+which is a scale factor on every frequency reported here. Quote both.
+:::
+
+## Reference data {#sec-m3-index-data}
+
+Two generated runs in `data/`:
+
+| File | Contents |
+|---|---|
+| `tap-noaccel` | Free decay, strain channel only, accelerometer **removed** |
+| `tap-accel` | The same tap with the accelerometer fitted, strain and acceleration together |
+
+: Reference data shipped with M3 {#tbl-m3-index-data}
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+Produced by a seeded generator (`tools/synth/m3_vibration.py`) whose
+parameters — including every beam-dependent quantity — are placeholders marked
+`TODO (Paolo)` in `tools/synth/params/m3.yaml`. Only the frequency *ratios*
+are tied to theory, which is exactly the quantity the experiment tests.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+Four hours, tier 3, postgraduate. The two failures that waste a session are a
+double strike and unplugging the accelerometer instead of removing it — the
+second gives a null loading result that looks like a measurement. Full notes
+in the [handbook](handbook.qmd#sec-m3-instructor).
 :::

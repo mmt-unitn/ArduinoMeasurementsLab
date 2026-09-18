@@ -1,0 +1,147 @@
+### A tap contains every mode at once {#sec-m3-tap}
+
+Strike a beam and let go. What follows is free vibration: no forcing, only the
+structure's own dynamics, decaying under whatever damping it has. A tap is
+broadband — it excites every mode the structure has — so a single recording of
+a single tap contains all of them, separated in frequency and waiting to be
+read off a spectrum.
+
+That is the whole appeal of a tap test. No shaker, no swept excitation, no
+force transducer: an impulse and a sensor.
+
+### Frequencies without dimensions {#sec-m3-frequencies}
+
+For a uniform cantilever of length $L$, cross-section $A = bh$, second moment
+$I = bh^3/12$, density $\rho$ and modulus $E$, Euler–Bernoulli theory gives
+
+$$
+f_n = \frac{\lambda_n^2}{2\pi L^2}\sqrt{\frac{EI}{\rho A}}
+$$ {#eq-m3-euler}
+
+where the $\lambda_n$ are the roots of $\cos\lambda\cosh\lambda = -1$:
+
+$$
+\lambda_1 \approx 1.8751, \qquad
+\lambda_2 \approx 4.6941, \qquad
+\lambda_3 \approx 7.8548
+$$ {#eq-m3-lambda}
+
+::: {.callout-important}
+## The ratios are the testable prediction
+
+Every quantity in @eq-m3-euler except $\lambda_n$ is a property of *this*
+beam — and this rig's dimensions are
+[not decided yet](../../hardware/beam-rig.qmd). Taking the ratio of two modes
+removes all of them at once:
+
+$$
+\frac{f_2}{f_1} = \left(\frac{\lambda_2}{\lambda_1}\right)^2 \approx 6.267,
+\qquad
+\frac{f_3}{f_1} = \left(\frac{\lambda_3}{\lambda_1}\right)^2 \approx 17.548
+$$ {#eq-m3-ratios}
+
+No length, no thickness, no modulus, no density. These two numbers are a
+prediction that a measurement can falsify **without knowing anything about the
+beam**, and they are the central result of this experiment.
+:::
+
+::: {.content-hidden when-format="revealjs"}
+When a measured ratio departs from @eq-m3-ratios, the theory is rarely what
+failed. The usual culprits, in order of likelihood: the clamp is not the ideal
+built-in boundary the derivation assumes, so the effective length is not the
+free length; the beam is not uniform, because the gauges, their wiring and any
+tip target are lumped masses; and shear deformation and rotary inertia, which
+Euler–Bernoulli neglects, matter more for the higher modes than the first.
+That last one has a sign: it pushes the higher modes *down* relative to the
+prediction, so $f_3/f_1$ coming out low is the expected direction of error.
+:::
+
+### Damping, two ways {#sec-m3-damping}
+
+**Logarithmic decrement**, from the time domain. For a lightly damped mode the
+envelope decays exponentially, so successive peaks $x_i$ separated by $k$
+cycles give
+
+$$
+\delta = \frac{1}{k}\ln\frac{x_i}{x_{i+k}},
+\qquad
+\zeta = \frac{\delta}{\sqrt{4\pi^2 + \delta^2}}
+$$ {#eq-m3-logdec}
+
+**Half-power bandwidth**, from the frequency domain. The width of the
+resonance where the power has fallen to half its peak — amplitude to
+$1/\sqrt{2}$ — gives
+
+$$
+\zeta = \frac{\Delta f_{-3\,\mathrm{dB}}}{2 f_n}
+$$ {#eq-m3-halfpower}
+
+::: {.content-hidden when-format="revealjs"}
+The two should agree, and when they do not the disagreement is informative.
+The half-power estimate is biased **high** when the record is short, because
+the finite observation window broadens every peak whether it is damped or not:
+a record of length $T$ cannot resolve a bandwidth narrower than about $1/T$,
+so a lightly damped mode measured over too few cycles reports the window's
+width instead of its own. The logarithmic decrement has the opposite
+weakness — it needs the mode isolated from its neighbours, which means
+filtering, and a filter that is too narrow imposes its own decay.
+
+Closely spaced modes break both. So does damping that is not viscous: dry
+friction in a clamp gives a decay that is linear in time rather than
+exponential, which shows up as curvature in a plot of $\ln x_i$ against $i$
+and is invisible in a single $\delta$ computed from two peaks.
+:::
+
+### Mass loading: the sensor changes the answer {#sec-m3-loading}
+
+An accelerometer of mass $m$ at the tip lowers the first natural frequency,
+because it adds mass without adding stiffness. Using the first mode's
+effective mass at the tip, $m_\mathrm{eff} \approx 0.2427\,\rho A L$,
+
+$$
+\frac{f_1'}{f_1} = \sqrt{\frac{m_\mathrm{eff}}{m_\mathrm{eff} + m}}
+$$ {#eq-m3-loading}
+
+This is a systematic error the experimenter introduces by measuring. It cannot
+be averaged away, and it is not visible in a single recording — a loaded beam
+rings perfectly cleanly at the wrong frequency.
+
+**The strain gauge is the way out.** A foil gauge bonded to the surface adds
+no measurable mass, so it reports the beam's true frequency whether or not the
+accelerometer is fitted. Recording both channels, with and without the
+accelerometer, measures the loading directly:
+
+$$
+\frac{f_1'}{f_1}
+= \frac{f_1\left(\text{strain, accelerometer fitted}\right)}
+       {f_1\left(\text{strain, accelerometer removed}\right)}
+$$ {#eq-m3-loading-measured}
+
+and needs no knowledge of $m$, $\rho$, $A$ or $L$.
+
+### What the sampling has to deliver {#sec-m3-sampling}
+
+This is the first experiment on this site whose measurand is a *frequency*, so
+the quality of the time axis enters directly.
+
+- **Rate.** The third mode is about 17.5 times the first
+  (@eq-m3-ratios), so a rate chosen for $f_1$ will alias $f_3$. Sample for the
+  highest mode you intend to report, and filter or verify the rest.
+- **Record length.** Frequency resolution is $1/T$. Resolving a half-power
+  bandwidth of $2\zeta f_n$ needs $T \gg 1/(2\zeta f_n)$ — which for a lightly
+  damped mode is many cycles.
+- **Grid quality.** [S1](../S1-daq-static/index.qmd) measured this platform's
+  timing residuals and [S2](../S2-daq-dynamic/index.qmd) turned them into a
+  penalty in bits. A frequency estimated against the device's own `t_us` is as
+  good as that grid; estimated against a nominal rate, it inherits the clock
+  error S2 measured in ppm, which is a *scale factor on every frequency here*.
+
+::: {.callout-warning}
+## A decaying signal is not a stationary one
+
+Everything in @sec-m3-damping assumes the mode decays. That is exactly what
+makes a periodogram's peak width ambiguous: a decaying sinusoid has a genuinely
+broadened line, and the broadening *is* the damping. Do not window the record
+so aggressively that the decay is hidden, and do not extend it so far past the
+decay that the analysis is fitting noise.
+:::

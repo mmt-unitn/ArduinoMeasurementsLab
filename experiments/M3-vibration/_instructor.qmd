@@ -1,0 +1,85 @@
+### Session timing {#sec-m3-instructor-timing}
+
+Four hours, for a pair of students at one bench:
+
+| Time | Activity | Watch for |
+|---|---|---|
+| 0:00–0:20 | Slides; the ratios as the testable prediction | They understand why no dimensions are needed |
+| 0:20–0:45 | Clamping, free length measured, rate check | Assuming the nominal length |
+| 0:45–1:20 | Tap tests without the accelerometer | Double strikes |
+| 1:20–1:50 | Tap tests with the accelerometer fitted | Unplugging it instead of removing it |
+| 1:50–3:20 | Analysis template | Damping, and the two estimators disagreeing |
+| 3:20–4:00 | Ratios, loading and budget discussion | — |
+
+### Expected results {#sec-m3-instructor-expected}
+
+[TODO (Paolo)]{.todo}: replace with values measured on the real bench once the
+beam is designed. Until then these are the generator's parameters.
+
+- $f_2/f_1$ and $f_3/f_1$ within a per cent or so of 6.267 and 17.548, with
+  $f_3/f_1$ more likely to come out **low** than high — Euler–Bernoulli
+  neglects shear and rotary inertia, which matter more for higher modes.
+- Damping ratios of order $10^{-3}$ to $10^{-2}$, decreasing with mode number
+  in this rig by construction.
+- A mass-loading ratio a few per cent below 1, measured on the strain channel
+  in both configurations.
+- Half-power damping estimates **higher** than logarithmic-decrement ones on a
+  short record, for the reason in the theory.
+
+### Common failures, in the order they happen {#sec-m3-instructor-failures}
+
+1. **Double strike.** A bounced hammer puts a comb in the spectrum. Teach them
+   to look at the time trace before the spectrum, every time.
+2. **The sampling rate is chosen for $f_1$.** The third mode then aliases, and
+   it lands somewhere plausible. This is S3's lesson arriving with
+   consequences; let it happen once, deliberately, if time allows.
+3. **The record is too short to resolve the damping.** The half-power width
+   then measures the window, not the mode. The symptom is a damping ratio that
+   changes when the record is truncated — worth having them try.
+4. **The accelerometer is unplugged, not removed.** Its mass is still there,
+   so the "unloaded" measurement is loaded too and the ratio comes out at 1.
+   This is the single most common way to get a null result here.
+5. **The beam is re-clamped mid-session** without saying so. Frequencies then
+   shift between runs for no visible reason.
+6. **The strain channel is ignored** because the accelerometer's signal is
+   larger. The strain channel is the one that makes the loading measurement
+   possible at all.
+
+### Discussion questions and where they should land {#sec-m3-instructor-discussion}
+
+**"Why can we test the theory without knowing the beam?"** Because
+@eq-m3-ratios is dimensionless. This is worth dwelling on — it is a general
+strategy, not a trick for this experiment.
+
+**"Our $f_3/f_1$ is 2 % low. Is Euler–Bernoulli wrong?"** It is incomplete,
+and in a direction that is predictable. Ask which neglected effect grows with
+mode number.
+
+**"The two damping estimates disagree by 30 %."** Ask which one is biased and
+by what mechanism, then have them shorten the record and watch the half-power
+estimate get worse while the log-decrement one does not.
+
+**"Does the accelerometer measure the beam or the beam-plus-accelerometer?"**
+The latter, always. The strain channel is what lets them say by how much.
+
+### Assessment rubric {#sec-m3-instructor-rubric}
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Records | 10 | Clean single taps; time trace inspected before the spectrum; repeats |
+| Mode identification | 20 | Three modes, with the rate justified against $f_3$ |
+| Ratios against theory | 25 | @eq-m3-ratios tested and any departure discussed in the right direction |
+| Damping | 20 | Both estimators, their disagreement explained rather than averaged |
+| Mass loading | 15 | Measured on the strain channel in both configurations |
+| Uncertainty budget | 10 | Frequency resolution, grid quality and the damped/undamped correction present |
+
+Deduct for any frequency quoted without saying whether it is damped or
+undamped, and for any spectrum shown without its record length.
+
+### If a group finishes early {#sec-m3-instructor-extension}
+
+- Add a known small mass at the tip and check @eq-m3-loading quantitatively.
+- Re-clamp at a different free length and test the $f \propto 1/L^2$ scaling —
+  which needs only *ratios* of lengths, so it stays dimension-free.
+- Compare the first mode's damping at two amplitudes. Viscous damping is
+  amplitude independent; friction in the clamp is not.

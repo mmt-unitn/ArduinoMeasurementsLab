@@ -1,0 +1,217 @@
+---
+title: "M3 — Vibration and modal analysis"
+subtitle: "Laboratory handbook"
+description: "Tap test and free decay: natural frequencies, damping and mass loading"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-m3-outcomes}
+
+By the end of this session you should be able to:
+
+1. Explain why a tap excites every mode, and what a double strike does to the
+   spectrum.
+2. State the Euler–Bernoulli prediction as a **dimensionless** one, and test it
+   without knowing any property of the beam.
+3. Identify natural frequencies from a free-decay spectrum, and justify the
+   sampling rate against the highest mode reported.
+4. Estimate damping by logarithmic decrement and by half-power bandwidth, and
+   say which is biased, in which direction, and why.
+5. Measure the mass loading an accelerometer imposes, using a channel that
+   adds no mass.
+6. Carry the sampling-grid quality and the device clock error from S1 and S2
+   into a frequency's uncertainty budget.
+
+## Prerequisites {#sec-m3-prerequisites}
+
+- [S1](../S1-daq-static/index.qmd) and [S2](../S2-daq-dynamic/index.qmd): the
+  grid quality and the clock error in ppm are inputs here.
+- [S3](../S3-aliasing-filtering/index.qmd): the third mode will alias if the
+  rate is chosen for the first.
+- [M1](../M1-strain-load/index.qmd) for the strain bridge's sensitivity.
+- Second-order linear systems, and the discrete Fourier transform.
+
+## Hardware and cost tier {#sec-m3-hardware}
+
+::: {.callout-note}
+## Tier 3 — the beam rig, instrumented
+:::
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Streaming board with `UsbIo` | Acquisition | mbed only; the rate must suit the third mode |
+| Linux host | Acquisition | A lost record is a hole in the time axis |
+| Beam rig | The structure | See [the beam rig](../../hardware/beam-rig.qmd) |
+| Strain gauge bridge at the root | The non-loading channel | Its sensitivity comes from M1 |
+| Accelerometer at the tip | The loading channel | Must be removable, not merely unpluggable |
+| Soft-faced hammer | Excitation | — |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+## Theory {#sec-m3-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-m3-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-m3-recording}
+
+One CSV and one sidecar per tap, in the format specified in
+[Data format](../../data-format/index.qmd); the checklist in
+@sec-m3-step-sidecar is the bench version.
+
+The field that matters most here, and that no analysis can reconstruct, is
+whether the accelerometer was **fitted or removed** — not whether it was
+recorded.
+
+```{.yaml filename="data/tap-noaccel.yaml"}
+experiment: M3
+run: tap-noaccel
+date: 2026-09-18
+operator: "your name"
+synthetic: false
+
+board: {model: portenta-h7, adc_bits: 16, vref_mV: 3300}
+
+acquisition:
+  pins: [15]
+  requested_period_us: 250
+  achieved_rate_hz: 0.0          # from the stream summary
+  duration_s: 4.0
+
+stream_stats: {records: 0, device_overruns: 0, seq_gaps: 0,
+               host_drops: 0, resyncs: 0, stale_records: 0}
+
+channels:
+  - pin: 15
+    quantity: strain
+    unit: "1"
+    sensor: "foil strain gauge bridge, root of the beam"
+    conditioning: {gain: 1.0, offset: 0.0, filter: none}
+    calibration_reference: "see M1 (bridge sensitivity against reference masses)"
+
+environment:
+  notes: "accelerometer REMOVED from the beam; free length 0.000 m from the clamp face; clamp torque TODO"
+```
+
+## Analysis tasks {#sec-m3-tasks}
+
+Open [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+1. **Data quality.** Validate the sidecars and read the stream counters. Look
+   at the time trace before anything else, and confirm a single clean tap.
+2. **Spectra.** Compute the free-decay spectrum of each channel, identify the
+   first three modes, and refine each peak by interpolation.
+3. **The ratios.** Report $f_2/f_1$ and $f_3/f_1$ against @eq-m3-ratios, with
+   uncertainties, and discuss the direction of any departure.
+4. **Damping.** Estimate $\zeta_1$ by logarithmic decrement and by half-power
+   bandwidth. Tabulate both, and explain the disagreement rather than
+   averaging it.
+5. **Mass loading.** Compare the strain channel's $f_1$ with and without the
+   accelerometer fitted, per @eq-m3-loading-measured.
+6. **Budget.** Build the budget of @sec-m3-budget.
+
+## Uncertainty budget {#sec-m3-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+**The measurand** is the first **undamped** natural frequency $f_1$ of the
+unloaded beam, recovered from what is actually observed — a damped frequency,
+on a possibly loaded beam, against a clock of finite accuracy:
+
+$$
+f_1 = \frac{f_d}{\sqrt{1 - \zeta^2}}\cdot\frac{1}{1 + \delta_\mathrm{clk}}
+$$ {#eq-m3-measurand}
+
+with $\delta_\mathrm{clk}$ the device clock's fractional error, measured in
+[S2](../S2-daq-dynamic/index.qmd). The sensitivity coefficients are
+
+$$
+\frac{\partial f_1}{\partial f_d} = \frac{1}{\sqrt{1-\zeta^2}},
+\qquad
+\frac{\partial f_1}{\partial \zeta} = \frac{f_d\,\zeta}{(1-\zeta^2)^{3/2}},
+\qquad
+\frac{\partial f_1}{\partial \delta_\mathrm{clk}} \approx -f_1
+$$ {#eq-m3-sensitivity}
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| Peak location | A | — | Scatter of the interpolated peak across repeated taps | $1/\sqrt{1-\zeta^2}$ |
+| Frequency resolution | B | Rectangular | Half a bin, $f_s/(2N)$ | $1/\sqrt{1-\zeta^2}$ |
+| Damping correction | B | — | $u(\zeta)$ from the spread of the two estimators | $f_d\zeta/(1-\zeta^2)^{3/2}$ |
+| Device clock | B | Rectangular | S2's measured ppm and its uncertainty | $-f_1$ |
+| Sampling grid | B | Rectangular | S1's grid residual, as a relative bound on the time base | $-f_1$ |
+
+: Components of the M3 budget {#tbl-m3-components}
+
+Report $u_c$ and $U = 2u_c$, the index $h_i$ of every component, and one
+sentence naming the dominant term.
+
+::: {.callout-important}
+## Two honest admissions this budget makes
+
+**The damped and undamped frequencies differ by less than the resolution
+here.** For $\zeta \sim 10^{-2}$ the correction $1/\sqrt{1-\zeta^2}$ is about
+$5\times10^{-5}$ — far below the frequency resolution of a four-second record.
+It is in the table anyway, because a component checked and found negligible is
+a result, and because it stops being negligible for a heavily damped
+structure.
+
+**The clock error is a scale factor on every frequency here, and it does not
+cancel in the ratios.** @eq-m3-ratios is a ratio of two frequencies measured
+against the *same* clock, so $\delta_\mathrm{clk}$ cancels exactly there —
+which is one more reason the ratios are the better test of the theory than
+either frequency alone.
+:::
+
+## Questions {#sec-m3-questions}
+
+1. Why can @eq-m3-ratios be tested without knowing $L$, $b$, $h$, $E$ or
+   $\rho$? Name another measurement in this course with the same property.
+2. Your $f_3/f_1$ is 2 % below 17.548. Which neglected physics would push it
+   that way, and would it push $f_2/f_1$ as hard?
+3. Your half-power damping estimate exceeds the logarithmic-decrement one by
+   40 %. Which is biased, by what mechanism, and what would you change to
+   test your explanation?
+4. You sample at four times $f_1$. Where does the third mode appear, and would
+   you notice?
+5. Fitting the accelerometer lowered $f_1$ by 3 %. Using @eq-m3-loading, what
+   does that say about the accelerometer's mass relative to the beam's
+   effective modal mass?
+6. The device clock is 18 ppm fast. By how much is each reported frequency
+   wrong, and why does the ratio $f_2/f_1$ not care?
+7. Your record is 4 s and $\zeta_1 = 0.012$. How many cycles of decay is that,
+   and is it enough to resolve the half-power bandwidth?
+
+## Instructor notes {#sec-m3-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::
