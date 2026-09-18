@@ -1,0 +1,55 @@
+experiment: TEST
+run: run-ok
+date: 2026-09-18
+operator: "test fixture"
+synthetic: true
+board:
+  model: portenta-h7
+  serial: "FIXTURE-0001"
+  usbio_version: "0.4.0"
+  adc_bits: 16
+  vref_mV: 3300
+host:
+  os: linux
+  os_version: "6.6"
+  machine: "fixture"
+  hub: true
+driver_version: "0.4.0"
+binding: python
+binding_version: "0.4.0"
+acquisition:
+  pins: [15, 16]
+  requested_period_us: 1000
+  achieved_rate_hz: 878.6
+  duration_s: 0.012502
+stream_stats:
+  records: 12
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+channels:
+  - pin: 15
+    quantity: voltage
+    unit: V
+    sensor: "voltage reference IC"
+    conditioning:
+      gain: 1.0
+      offset: 0.0
+      filter: none
+  - pin: 16
+    quantity: voltage
+    unit: V
+    sensor: "shorted input"
+    conditioning:
+      gain: 1.0
+      offset: 0.0
+      filter: none
+environment:
+  ambient_temperature_C: 23.0
+  notes: "fixture, not measured"
+references:
+  - instrument: DMM
+    model: "fixture"
+    calibration: none

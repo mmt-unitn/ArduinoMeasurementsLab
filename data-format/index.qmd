@@ -1,9 +1,485 @@
 ---
 title: "Data format"
 description: "One CSV plus one YAML sidecar, for every acquisition"
+toc: true
+toc-depth: 4
 ---
 
+Every AMLab acquisition — a single reading repeated a thousand times, a three
+second stream, a day of temperature logging — is stored the same way: **one
+CSV file with the samples, and one YAML file with the same stem carrying
+everything you would otherwise have to remember**.
+
+```
+experiments/S1-daq-static/data/
+├── reference.csv     # t_us,pin,raw
+└── reference.yaml    # who, what, which board, which host, how it went
+```
+
+The reason for the split is that the CSV must stay trivially readable by
+anything — `pandas`, `readr`, a spreadsheet, `awk` — while the metadata needs
+structure. The reason for insisting on the sidecar at all is that half the
+experiments on this site treat the acquisition conditions as *influence
+quantities*: the host operating system, the board's reference voltage, the
+requested versus achieved sampling rate. A CSV without its sidecar is not a
+measurement, it is a column of numbers.
+
+## The CSV {#sec-csv}
+
+Long format, exactly as produced by `arduino-io stream --csv`:
+
+```{.default filename="reference.csv"}
+t_us,pin,raw
+1043216,15,8103
+1043216,16,19821
+1044216,15,8110
+1044216,16,19825
+```
+
+- **`t_us`** — the *device's* `micros()` value for the record, as an integer.
+  Not host arrival time. Samples belonging to the same record share a
+  timestamp, because the board reads its selected channels in one pass of
+  `loop()`.
+- **`pin`** — the Arduino pin number, as an integer. Which physical input that
+  is depends on the board: A0 is pin 15 on a Portenta H7 and pin 14 on an UNO
+  R4, so the pin-to-quantity mapping lives in the sidecar's `channels` block
+  and nowhere else.
+- **`raw`** or **`volts`** — the sample. `raw` is the ADC code as the board
+  reported it; `volts` is that code converted by the driver. Exactly one of
+  the two must be present.
+
+::: {.callout-important}
+## Raw files get exactly these three columns
+
+Derived columns — a calibrated temperature, a filtered signal, a residual —
+belong in a *processed* file, written next to the raw one with a different
+stem (`run03-processed.csv`). A raw file is what came off the board; if it can
+be recomputed, it is not raw. This is what makes it safe to re-run an analysis
+from scratch a year later.
+:::
+
+### Raw codes and volts {#sec-volts}
+
+When a file carries `raw`, volts are recovered with the driver's own
+conversion — `Device::to_volts()`:
+
+$$
+V = \mathrm{raw} \times \frac{V_\mathrm{ref}}{2^{n_\mathrm{bits}} - 1}
+$$ {#eq-to-volts}
+
+with $V_\mathrm{ref}$ from `board.vref_mV` and $n_\mathrm{bits}$ from
+`board.adc_bits`. Note the denominator: full scale is $2^n - 1$, not $2^n$.
+`labtools` uses @eq-to-volts and nothing else, so a value computed on the host
+after the fact equals the one `arduino-io --volts` would have written.
+
+::: {.callout-warning}
+## `adc_bits` is what the board *reports*, not always what it *delivers*
+
+A Nano 33 BLE and a Nano RP2040 Connect report 16 bits and deliver 12
+significant ones. @eq-to-volts is still the right conversion — it is the one
+the driver applies — but the quantization step you should put in an
+uncertainty budget is the *effective* one. S1 measures it instead of trusting
+the datasheet, which is the whole point of that experiment.
+:::
+
+**Prefer `raw` in reference files.** It is the integer the ADC produced;
+volts are a derived quantity that depends on `vref_mV`, and keeping the code
+lets a later correction to the reference voltage be applied without
+re-acquiring. All the reference data shipped with these experiments stores
+`raw`.
+
+## The YAML sidecar {#sec-sidecar}
+
+```{.yaml filename="reference.yaml"}
+experiment: S1
+run: reference
+date: 2026-09-18
+operator: "synthetic generator"
+synthetic: true
+
+board:
+  model: portenta-h7
+  serial: "SYNTHETIC-0001"
+  usbio_version: "0.4.0"
+  adc_bits: 16
+  vref_mV: 3300
+
+host:
+  os: linux
+  os_version: "6.6"
+  machine: "raspberry-pi-5"
+  libusb_version: "1.0.27"
+  hub: true
+
+driver_version: "0.4.0"
+binding: python
+binding_version: "0.4.0"
+
+acquisition:
+  pins: [15, 16]
+  requested_period_us: 1000
+  achieved_rate_hz: 999.8
+  duration_s: 10.0
+
+stream_stats:
+  records: 9998
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+
+channels:
+  - pin: 15
+    quantity: voltage
+    unit: V
+    sensor: "voltage reference IC"
+    conditioning:
+      gain: 1.0
+      offset: 0.0
+      filter: none
+    calibration_reference: "DMM, see references"
+  - pin: 16
+    quantity: voltage
+    unit: V
+    sensor: "shorted input"
+    conditioning:
+      gain: 1.0
+      offset: 0.0
+      filter: none
+
+environment:
+  ambient_temperature_C: 23.0
+  notes: "generated, not measured"
+
+references:
+  - instrument: DMM
+    model: "TODO (Paolo)"
+    calibration: "TODO (Paolo)"
+```
+
+### Field reference {#sec-fields}
+
+Required fields are the ones without which an analysis template cannot
+produce a defensible number. `labtools`' `validate_meta()` checks exactly
+this list and returns a problem for each one missing.
+
+: Sidecar fields {#tbl-sidecar}
+
+| Field | Required | Type | Meaning |
+|---|:--:|---|---|
+| `experiment` | ● | string | Experiment id, e.g. `S1` |
+| `run` | ● | string | Run id, unique within the experiment |
+| `date` | ● | date | Acquisition date, `YYYY-MM-DD` |
+| `operator` | | string | Who ran it |
+| `synthetic` | ● | bool | `true` for generated data. Never omit it |
+| `board.model` | ● | string | Board slug, e.g. `portenta-h7` |
+| `board.serial` | | string | USB serial number, as `arduino-io list` shows it |
+| `board.usbio_version` | | string | Firmware version on the board |
+| `board.adc_bits` | ● | int | As reported by `arduino-io info` |
+| `board.vref_mV` | ● | int | As reported by `arduino-io info` |
+| `host.os` | | string | `linux`, `macos`, `windows` |
+| `host.os_version` | | string | |
+| `host.machine` | | string | Free text; useful when comparing hosts |
+| `host.libusb_version` | | string | |
+| `host.hub` | | bool | Was a USB hub in the path |
+| `driver_version` | | string | ArduinoDriver version |
+| `binding` | | string | `python`, `r` or `cli` |
+| `binding_version` | | string | |
+| `acquisition.pins` | ● | list of int | Pins in the file, ascending |
+| `acquisition.requested_period_us` | | int | `0` for free running |
+| `acquisition.achieved_rate_hz` | | float | Per channel, from the stream summary |
+| `acquisition.duration_s` | | float | |
+| `stream_stats.records` | | int | From the stream summary |
+| `stream_stats.device_overruns` | | int | |
+| `stream_stats.seq_gaps` | | int | |
+| `stream_stats.host_drops` | | int | |
+| `stream_stats.resyncs` | | int | |
+| `stream_stats.stale_records` | | int | |
+| `channels[].pin` | ● | int | |
+| `channels[].quantity` | ● | string | `voltage`, `temperature`, `strain`, … |
+| `channels[].unit` | ● | string | SI unit symbol |
+| `channels[].sensor` | | string | |
+| `channels[].conditioning.gain` | | float | Volts per volt at the ADC input |
+| `channels[].conditioning.offset` | | float | Volts added ahead of the ADC |
+| `channels[].conditioning.filter` | | string | `none`, or e.g. `RC 1st order, fc = 100 Hz` |
+| `channels[].calibration_reference` | | string | Which instrument set or read the reference |
+| `channels[].reference_value` | | float | The applied or measured reference value, in `unit` — a calibration point |
+| `channels[].reference_u` | | float | Standard uncertainty of `reference_value`, same unit |
+| `environment.ambient_temperature_C` | | float | |
+| `environment.notes` | | string | |
+| `references[].instrument` | | string | `DMM`, `generator`, `thermometer`, … |
+| `references[].model` | | string | |
+| `references[].calibration` | | string | Certificate, date, or `none` |
+| `generator` | | mapping | Present only in generated files: which tool and version wrote them |
+
 ::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## `stream_stats` is a data-quality record, not decoration
+
+The stream summary line is the only evidence that a recording is complete.
+Copy it into the sidecar and an analysis can refuse to draw conclusions from a
+run with `seq_gaps > 0` — which is a lost sample, not a late one, and puts a
+hole in the timestamp grid that a naive periodogram will happily turn into a
+spectral artifact. A run with every counter at zero is a complete recording.
+:::
+
+### Filling the sidecar at the bench {#sec-checklist}
+
+Every handbook repeats this checklist at the point where the data is taken.
+The fields nobody remembers an hour later are the ones in bold.
+
+1. **Board**: `arduino-io info` gives `adc_bits`, `vref_mV`, the firmware
+   version and the board model in one go. Paste it.
+2. **Host**: `uname -a` (Linux, macOS) or `systeminfo` (Windows); note whether
+   a **USB hub** is in the path.
+3. **Acquisition**: the requested period, and the **achieved** rate from the
+   stream summary — they are not the same number.
+4. **`stream_stats`**: all six counters from the summary line.
+5. **Channels**: which pin measured what, through which conditioning, with
+   which **gain and offset actually fitted to the board**, not the nominal
+   design values.
+6. **References**: the model and calibration state of every instrument whose
+   reading enters the result — the DMM, the generator, the thermometer.
+7. **`synthetic: false`.** For real data, say so explicitly.
+
+## Reading a run {#sec-labtools}
+
+Both implementations of `labtools` — Python in `shared/python/labtools`, R in
+`shared/R/labtools.R` — expose the same functions with the same names and the
+same numerical definitions. Every analysis template starts the same way in
+either language.
+
+::: {.panel-tabset}
+
+## Python
+
+```python
+from labtools import read_run, synthetic_banner, timing_summary, budget_table
+
+run = read_run("data/reference.csv")   # .csv, .yaml or the bare stem
+run.data      # pandas DataFrame: t_us, pin, raw, volts
+run.meta      # dict, straight from the sidecar
+```
+
+## R
+
+```r
+source("../../shared/R/labtools.R")
+
+run <- read_run("data/reference.csv")  # .csv, .yaml or the bare stem
+run$data      # data.frame: t_us, pin, raw, volts
+run$meta      # list, straight from the sidecar
+```
+
+:::
+
+`read_run()` accepts the CSV path, the YAML path, or the shared stem, and
+always returns both halves. If the CSV carries `raw` and the sidecar has
+`board.adc_bits` and `board.vref_mV`, a `volts` column is added with
+@eq-to-volts; if it carries `volts`, `raw` is *not* invented.
+
+### The functions {#sec-functions}
+
+: `labtools` in both languages {#tbl-labtools}
+
+| Function | Returns | What it does |
+|---|---|---|
+| `read_run(path)` | data + metadata | Reads a CSV/YAML pair; adds `volts` from `raw` when it can |
+| `write_run(path, data, meta)` | — | Writes the pair back, sidecar keys in canonical order |
+| `validate_meta(meta)` | list of problems | Empty list means the sidecar has every required field |
+| `synthetic_banner(meta)` | markdown string | A warning callout when `synthetic: true`, empty otherwise |
+| `pivot_channels(data, value)` | wide table | One column per pin, one row per timestamp |
+| `timing_summary(data)` | statistics + residuals | Interval statistics and the least-squares grid fit of @sec-timing |
+| `lsb_volts(meta)` | float | $V_\mathrm{ref} / (2^{n} - 1)$ |
+| `u_quantization(step)` | float | $step/\sqrt{12}$ |
+| `enob(fsr, sigma_r)` | float | $\log_2\left(\mathrm{FSR} / (\sqrt{12}\,\sigma_r)\right)$ |
+| `budget_table(components)` | budget | The GUM uncertainty budget of @sec-budget |
+
+Every analysis template calls `synthetic_banner()` before its first figure, in
+a cell that emits raw markdown:
+
+::: {.panel-tabset}
+
+## Python
+
+````markdown
+```{{python}}
+#| output: asis
+print(synthetic_banner(run.meta))
+```
+````
+
+## R
+
+````markdown
+```{{r}}
+#| output: asis
+cat(synthetic_banner(run$meta))
+```
+````
+
+:::
+
+so that a reader can never mistake generated data for a measurement.
+
+### Timing statistics {#sec-timing}
+
+`timing_summary()` answers one question: *is the sampling grid regular, and if
+not, how does it fail?* Bounded jitter and accumulating error are different
+defects with different consequences, and the residuals of a grid fit separate
+them cleanly.
+
+Take the distinct timestamps $t_0 \le t_1 \le \dots \le t_{n-1}$ of the run
+and fit, by ordinary least squares on the index $i$,
+
+$$
+\hat{t}_i = \hat{t}_0 + i\,\hat{T}
+$$ {#eq-grid-fit}
+
+The residuals
+
+$$
+r_i = t_i - \left(\hat{t}_0 + i\,\hat{T}\right)
+$$ {#eq-grid-residual}
+
+are the diagnostic. Residuals that scatter within a band of a few microseconds
+and show no trend mean bounded jitter: the grid is right, individual samples
+arrive early or late. Residuals that walk away linearly mean $\hat{T}$ is not
+the true period — a clock error. Residuals with sudden steps mean the schedule
+restarted, which is what the firmware does after a late record: it starts
+counting again from that moment instead of emitting a burst of catch-up
+records, so a hiccup shows up as one long interval and a step in $r_i$, never
+as a pile-up.
+
+The returned statistics are, in both languages:
+
+: `timing_summary()` output {#tbl-timing}
+
+| Name | Definition |
+|---|---|
+| `n` | Number of distinct timestamps |
+| `duration_s` | $(t_{n-1} - t_0) \times 10^{-6}$ |
+| `mean_interval_us` | Mean of $d_i = t_{i+1} - t_i$ |
+| `sd_interval_us` | Sample standard deviation of $d_i$, divisor $n-2$ |
+| `min_interval_us`, `max_interval_us`, `median_interval_us` | Of $d_i$ |
+| `achieved_rate_hz` | $(n-1)/\texttt{duration\_s}$ |
+| `period_us` | $\hat{T}$ from @eq-grid-fit |
+| `t0_us` | $\hat{t}_0$ from @eq-grid-fit |
+| `residual_rms_us` | $\sqrt{\overline{r_i^2}}$ |
+| `residual_max_abs_us` | $\max_i \lvert r_i \rvert$ |
+| `n_long_intervals` | Count of $d_i > 1.5 \times \operatorname{median}(d)$ — schedule restarts |
+
+together with the vectors $d_i$ and $r_i$ themselves, for plotting.
+
+::: {.callout-note}
+## Timestamp quantization
+
+`t_us` is an integer microsecond count, so every timestamp carries a
+quantization uncertainty
+
+$$
+u_q = \frac{1\,\mu\mathrm{s}}{\sqrt{12}} \approx 0.29\,\mu\mathrm{s}
+$$ {#eq-uq}
+
+which is the floor below which none of these statistics means anything. At
+1 kHz it is $2.9 \times 10^{-4}$ of the period and safely ignorable; at 30 kHz
+it is about 1 % of it and is not.
+:::
+
+### Uncertainty budgets {#sec-budget}
+
+`budget_table()` turns a list of uncertainty components into the table every
+experiment ends with. Each component is a mapping:
+
+::: {.panel-tabset}
+
+## Python
+
+```python
+budget = budget_table([
+    dict(quantity="Reference voltage", value=2.5000, unit="V",
+         distribution="normal", half_width=0.0004, coverage=2, sensitivity=1.0),
+    dict(quantity="Quantization", value=0.0, unit="V",
+         distribution="rectangular", half_width=lsb / 2, sensitivity=1.0),
+    dict(quantity="Repeatability", value=0.0, unit="V",
+         distribution="type-a", std=sigma / np.sqrt(n), sensitivity=1.0),
+], k=2)
+
+budget.table    # DataFrame, one row per component
+budget.u_c      # combined standard uncertainty
+budget.U        # expanded uncertainty, k = 2
+```
+
+## R
+
+```r
+budget <- budget_table(list(
+  list(quantity = "Reference voltage", value = 2.5000, unit = "V",
+       distribution = "normal", half_width = 0.0004, coverage = 2, sensitivity = 1.0),
+  list(quantity = "Quantization", value = 0.0, unit = "V",
+       distribution = "rectangular", half_width = lsb / 2, sensitivity = 1.0),
+  list(quantity = "Repeatability", value = 0.0, unit = "V",
+       distribution = "type-a", std = sigma / sqrt(n), sensitivity = 1.0)
+), k = 2)
+
+budget$table    # data.frame, one row per component
+budget$u_c      # combined standard uncertainty
+budget$U        # expanded uncertainty, k = 2
+```
+
+:::
+
+The standard uncertainty of each component follows @tbl-divisors, which is the
+GUM's treatment of Type B evaluations [@gum2008]:
+
+: Distribution to standard uncertainty {#tbl-divisors}
+
+| `distribution` | From | $u(x_i)$ |
+|---|---|---|
+| `normal` | `half_width` $a$, `coverage` $k_i$ (default 2) | $a/k_i$ |
+| `rectangular` | `half_width` $a$ | $a/\sqrt{3}$ |
+| `triangular` | `half_width` $a$ | $a/\sqrt{6}$ |
+| `u-shaped` | `half_width` $a$ | $a/\sqrt{2}$ |
+| `type-a` | `std` $s$ | $s$ |
+
+Combination is the GUM's law of propagation without correlation terms:
+
+$$
+u_c = \sqrt{\sum_i \left(c_i\, u(x_i)\right)^2},
+\qquad U = k\,u_c
+$$ {#eq-uc}
+
+with $c_i$ the sensitivity coefficient of each input quantity and $k = 2$ by
+default, for a coverage probability of about 95 % when the combined
+distribution is approximately normal. The table also reports each component's
+*index* $h_i$, the fraction of the combined variance it accounts for:
+
+$$
+h_i = \frac{\left(c_i\,u(x_i)\right)^2}{u_c^2}
+$$ {#eq-index}
+
+which is the column to read when deciding what to improve. A budget where one
+component holds 95 % of the variance is a budget with one thing worth fixing.
+
+::: {.callout-warning}
+## What `budget_table()` does not do
+
+It assumes the input quantities are uncorrelated and the model is linear in
+them at the operating point. Both assumptions are stated in every handbook
+that uses it, and both are wrong in at least one experiment on this site —
+T1's Steinhart–Hart fit is strongly nonlinear, and its handbook says what to
+do instead (propagate through the fitted model, or use a Monte Carlo
+evaluation as in JCGM 101 [@gum_s1]).
+:::
+
+## Processed files and figures
+
+A template that writes anything back does so next to the raw file with a
+different stem and its own sidecar, with `synthetic` copied from the source
+and a `derived_from` key naming the run it came from. Nothing in AMLab
+overwrites a raw file, ever.
+
+## References
+
+::: {#refs}
 :::

@@ -1,0 +1,11 @@
+experiment: TEST
+run: run-bad
+date: "not-a-date"
+synthetic: "yes"
+board:
+  model: portenta-h7
+acquisition:
+  pins: [15, 16]
+channels:
+  - pin: 15
+    quantity: voltage

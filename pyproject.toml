@@ -1,0 +1,42 @@
+[project]
+name = "amlab"
+version = "0.1.0"
+description = "Analysis environment and labtools for the AMLab measurement-science experiments"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Paolo Bosetti", email = "paolo.bosetti@unitn.it" }]
+
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "pandas>=2.1",
+  "matplotlib>=3.8",
+  "pyyaml>=6.0",
+  "jupyter>=1.0",
+  "ipykernel>=6.29",
+  "nbclient>=0.9",
+  "nbformat>=5.9",
+]
+
+[project.optional-dependencies]
+# The Python binding to the board. Not needed to render the site: every
+# analysis template runs against the shipped reference data.
+hardware = ["arduino-driver>=0.4.0"]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# labtools lives under shared/python so that the R implementation can sit
+# beside it in shared/R; the package itself is plain and importable.
+package-dir = { "" = "shared/python" }
+
+[tool.setuptools.packages.find]
+where = ["shared/python"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
