@@ -1,0 +1,30 @@
+/*-- scss:defaults --*/
+
+$body-bg: #ffffff !default;
+$body-color: #1c2b33 !default;
+$link-color: #0f6a86 !default;
+
+$font-family-sans-serif: "Source Sans Pro", -apple-system, "Segoe UI", Roboto,
+  "Helvetica Neue", Arial, sans-serif !default;
+$presentation-font-size-root: 34px !default;
+$presentation-heading-color: #14556b !default;
+$presentation-heading-font-weight: 600 !default;
+$code-block-font-size: 0.55em !default;
+
+/*-- scss:rules --*/
+
+.reveal .slide-logo { max-height: 40px; }
+
+// Slides carry the experiment id in the top-right corner.
+.reveal .exp-id {
+  position: absolute;
+  top: 0.4em;
+  right: 0.6em;
+  font-family: monospace;
+  font-size: 0.5em;
+  color: #5c7a89;
+}
+
+.reveal .smaller { font-size: 0.75em; }
+.reveal table { font-size: 0.65em; }
+.reveal .todo { background: #fff3cd; padding: 0 0.15em; }

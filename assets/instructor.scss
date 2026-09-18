@@ -1,0 +1,15 @@
+/*-- scss:defaults --*/
+
+// The instructor edition is visually distinct so a build is never mistaken
+// for the student one.
+$primary: #6b3a14 !default;
+$link-color: #8a4a12 !default;
+
+/*-- scss:rules --*/
+
+// Every instructor-only block carries a left rule and a label.
+.content-visible[data-profile="instructor"],
+div.instructor-note {
+  border-left: 4px solid $primary;
+  padding-left: 1rem;
+}

@@ -1,0 +1,25 @@
+# Profile: instructor edition.
+#
+#   quarto render --profile instructor
+#
+# Everything the students see, plus the blocks wrapped in
+# ::: {.content-visible when-profile="instructor"} ... :::
+# Built into its own output directory and never deployed to the public site;
+# CI keeps it as a build artifact only.
+project:
+  output-dir: _site-instructor
+
+website:
+  title: "AMLab — Instructor edition"
+  search: true
+  page-footer:
+    left: "Instructor edition — not for distribution to students"
+    center: "Paolo Bosetti — University of Trento"
+    right: "Text and figures CC BY-SA 4.0 · Code Apache-2.0"
+
+format:
+  html:
+    theme:
+      - cosmo
+      - assets/amlab.scss
+      - assets/instructor.scss

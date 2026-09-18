@@ -1,0 +1,80 @@
+/*-- scss:defaults --*/
+
+// AMLab palette: instrument-panel blues with a warm accent for callouts.
+$primary:        #14556b !default;
+$secondary:      #5c7a89 !default;
+$success:        #1d7a4f !default;
+$info:           #2a7fa8 !default;
+$warning:        #b6771a !default;
+$danger:         #a8322d !default;
+$light:          #f6f8f9 !default;
+$dark:           #12242c !default;
+
+$body-color:     #1c2b33 !default;
+$body-bg:        #ffffff !default;
+$link-color:     #0f6a86 !default;
+
+$font-family-sans-serif: "Source Sans Pro", -apple-system, BlinkMacSystemFont,
+  "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !default;
+$font-family-monospace: "Source Code Pro", SFMono-Regular, Menlo, Consolas,
+  monospace !default;
+
+$font-size-root: 16px !default;
+$h1-font-size: 2.0rem !default;
+$h2-font-size: 1.55rem !default;
+$h3-font-size: 1.25rem !default;
+
+$code-bg: #f4f6f7 !default;
+$code-color: #8a3a2c !default;
+
+$toc-color: $primary !default;
+
+/*-- scss:rules --*/
+
+// Experiment identifier badge, used in listings and page headers.
+.exp-id {
+  display: inline-block;
+  font-family: $font-family-monospace;
+  font-weight: 600;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.25rem;
+  background: $primary;
+  color: #fff;
+}
+
+// Cost tier chips: tier 1 cheapest, tier 3 richest.
+.tier {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.25rem;
+  border: 1px solid currentColor;
+}
+.tier-1 { color: #1d7a4f; }
+.tier-2 { color: #b6771a; }
+.tier-3 { color: #a8322d; }
+
+// A "TODO (Paolo)" marker must be impossible to miss in a rendered page.
+.todo {
+  background: #fff3cd;
+  border-bottom: 2px dotted #b6771a;
+  padding: 0 0.2rem;
+  font-weight: 600;
+}
+
+// Experiment listing table: keep the metadata columns narrow.
+.experiment-listing table {
+  font-size: 0.92rem;
+  th:first-child, td:first-child { white-space: nowrap; }
+}
+
+// Equations get a little more room than Bootstrap's default line height.
+.quarto-title-block .description { font-size: 1.05rem; }
+div.callout { margin-top: 1.1rem; margin-bottom: 1.1rem; }
+
+// Tables produced by budget_table(): right-align the numeric columns.
+table.gum-budget td:not(:first-child),
+table.gum-budget th:not(:first-child) { text-align: right; }

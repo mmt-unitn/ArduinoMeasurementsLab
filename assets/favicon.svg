@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AMLab">
+  <rect width="64" height="64" rx="10" fill="#14556b"/>
+  <polyline points="8,44 18,44 24,20 32,52 40,32 46,38 56,38"
+            fill="none" stroke="#ffffff" stroke-width="5"
+            stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

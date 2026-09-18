@@ -1,0 +1,40 @@
+<%
+// Custom listing template for AMLab experiments.
+//
+// Reads the nested `experiment:` block of each experiment's index.qmd front
+// matter (id, tier, duration, level, boards, host, needs, validated) and
+// renders one row per experiment, sorted by id -- which encodes the strand
+// (S, T, M) and the order within it.
+//
+// Every line of emitted HTML starts at column 0: indented lines would be
+// taken for a Markdown code block and the table would be shown as source.
+const rows = items.slice().sort((a, b) => {
+  const ia = (a.experiment && a.experiment.id) || a.title || "";
+  const ib = (b.experiment && b.experiment.id) || b.title || "";
+  return String(ia).localeCompare(String(ib));
+});
+const list = (v) => Array.isArray(v) ? v.join(", ") : (v === undefined || v === null ? "" : String(v));
+// item.path is site-root-relative ("/experiments/S1-daq-static/index.qmd");
+// this template is used only by experiments/index.qmd, so the link is made
+// relative to that page.
+const href = (p) => String(p || "").replace(/\.qmd$/, ".html").replace(/^\/experiments\//, "");
+%>
+<div class="experiment-listing">
+<table class="table table-sm">
+<thead>
+<tr><th>ID</th><th>Experiment</th><th>Tier</th><th>Duration</th><th>Boards</th><th>Topics</th></tr>
+</thead>
+<tbody>
+<% for (const item of rows) { const e = item.experiment || {}; %>
+<tr>
+<td><span class="exp-id"><%= e.id || "" %></span></td>
+<td><a href="<%- href(item.path) %>"><%= item.title %></a><br><small class="text-muted"><%= item.description || "" %></small></td>
+<td><span class="tier tier-<%= e.tier || 1 %>"><%= e.tier || "" %></span></td>
+<td><%= e.duration || "" %></td>
+<td><small><%= list(e.boards) %></small></td>
+<td><small><%= list(item.categories) %></small></td>
+</tr>
+<% } %>
+</tbody>
+</table>
+</div>

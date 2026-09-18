@@ -1,0 +1,130 @@
+project:
+  type: website
+  output-dir: _site
+  render:
+    - "*.qmd"
+    - "!_*.qmd"
+    - "!experiments/_template/"
+
+website:
+  title: "AMLab"
+  description: "Measurement science laboratory activities on the ArduinoDriver platform"
+  site-url: https://pbosetti.github.io/ArduinoMeasurementsLab/
+  repo-url: https://github.com/pbosetti/ArduinoMeasurementsLab
+  repo-actions: [issue]
+  page-navigation: true
+  favicon: assets/favicon.svg
+  navbar:
+    background: primary
+    search: true
+    left:
+      - href: index.qmd
+        text: Home
+      - href: setup/index.qmd
+        text: Setup
+      - href: hardware/index.qmd
+        text: Hardware
+      - href: data-format/index.qmd
+        text: Data format
+      - href: experiments/index.qmd
+        text: Experiments
+      - href: about.qmd
+        text: About
+    right:
+      - icon: github
+        href: https://github.com/pbosetti/ArduinoDriver
+        aria-label: ArduinoDriver on GitHub
+  sidebar:
+    - id: setup
+      title: "Setup"
+      style: floating
+      collapse-level: 2
+      contents:
+        - setup/index.qmd
+        - setup/boards.qmd
+        - setup/firmware.qmd
+        - section: "Host computer"
+          contents:
+            - setup/host-linux.qmd
+            - setup/host-macos.qmd
+            - setup/host-windows.qmd
+        - section: "Language bindings"
+          contents:
+            - setup/python.qmd
+            - setup/r.qmd
+        - setup/verify.qmd
+        - setup/troubleshooting.qmd
+    - id: hardware
+      title: "Hardware"
+      style: floating
+      contents:
+        - hardware/index.qmd
+        - hardware/conditioning-board.qmd
+        - hardware/filter-stage.qmd
+        - hardware/thermal-rig.qmd
+        - hardware/beam-rig.qmd
+        - hardware/bom.qmd
+    - id: experiments
+      title: "Experiments"
+      style: floating
+      collapse-level: 2
+      contents:
+        - experiments/index.qmd
+        - section: "Signal processing and DAQ"
+          contents:
+            - experiments/S1-daq-static/index.qmd
+            - experiments/S2-daq-dynamic/index.qmd
+            - experiments/S3-aliasing-filtering/index.qmd
+        - section: "Thermal and environmental"
+          contents:
+            - experiments/T1-temperature-static/index.qmd
+            - experiments/T2-temperature-dynamic/index.qmd
+            - experiments/T3-long-term-stability/index.qmd
+        - section: "Mechanical"
+          contents:
+            - experiments/M1-strain-load/index.qmd
+            - experiments/M2-hall-displacement/index.qmd
+            - experiments/M3-vibration/index.qmd
+  page-footer:
+    left: "Text and figures CC BY-SA 4.0 · Code Apache-2.0"
+    center: "Paolo Bosetti — University of Trento"
+    right:
+      - icon: github
+        href: https://github.com/pbosetti/ArduinoMeasurementsLab
+
+bibliography: shared/bibliography.bib
+
+format:
+  html:
+    theme:
+      - cosmo
+      - assets/amlab.scss
+    toc: true
+    toc-depth: 3
+    number-sections: false
+    # `code-tools: true` would embed the whole .qmd source in every page,
+    # which leaks the instructor-only blocks into the student site. Keep the
+    # show/hide-code toggle, drop the "View Source" item.
+    code-tools:
+      source: false
+      toggle: true
+      caption: "Code"
+    code-copy: true
+    code-link: false
+    link-external-newwindow: true
+    fig-width: 7
+    fig-height: 4.2
+    fig-dpi: 160
+    df-print: kable
+
+execute:
+  freeze: false
+  echo: true
+  warning: false
+
+knitr:
+  opts_chunk:
+    comment: "#>"
+    collapse: true
+
+lightbox: true
