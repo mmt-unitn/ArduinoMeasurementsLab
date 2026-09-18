@@ -1,0 +1,29 @@
+# The build plan is a working document, never part of the published repository.
+PLAN.md
+
+# Quarto
+/_site/
+/_site-instructor/
+/.quarto/
+_environment.local
+*_files/
+*.rmarkdown
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+renv/library/
+renv/staging/
+
+# OS
+.DS_Store
+
+**/*.quarto_ipynb
