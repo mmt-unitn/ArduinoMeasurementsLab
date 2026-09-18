@@ -1,9 +1,140 @@
 ---
 title: "R binding"
 description: "Installing and checking arduinodriver"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## Install
+
+```r
+remotes::install_github("pbosetti/ArduinoDriver", subdir = "extras/r/arduinodriver")
+```
+
+The package's `configure` script builds `arduino_driver_c` from source, so it
+needs **CMake 3.24 or newer** and, by default, **network access** — it
+fetches the ArduinoDriver repository itself via CMake's `FetchContent` to
+build against. If you are working inside a local checkout of the monorepo
+instead, point `ARDUINODRIVER_LOCAL_CHECKOUT` at it to build from that copy
+directly, with no network needed:
+
+```bash
+ARDUINODRIVER_LOCAL_CHECKOUT=/path/to/ArduinoDriver R CMD INSTALL extras/r/arduinodriver
+```
+
+## Quick check
+
+```r
+dev <- arduinodriver::device_open_first()
+dev$pin_mode(13, arduinodriver::PinMode$OUTPUT)
+dev$digital_write(13, TRUE)
+```
+
+`device_open_first()` opens the first identified board;
+`device_open_by_serial(serial)` opens a specific one by the USB serial number
+`arduino-io list` shows. `dev$close()` releases it (a finalizer also closes
+it when the object is garbage-collected).
+
+## API reference
+
+### `PinMode`
+
+A plain named list, not an enum — access with `$`: `PinMode$INPUT`,
+`OUTPUT`, `INPUT_PULLUP`, `INPUT_PULLDOWN`, `ANALOG_IN`, `PWM`, `DAC`.
+
+### `Device` (R6 class)
+
+Every member is a **method** — always called with `()`, unlike Python's
+properties:
+
+| Method | Does |
+|---|---|
+| `dev$info()` | a named list: the board's raw fields (id, pin counts, resolution bits, reference and IO voltages in millivolts, capability flags) plus `board_name`, `streaming`, `events`, `vref_volts` and `io_volts` added by the binding |
+| `dev$pin_count()` | number of addressable pins |
+| `dev$pin_mode(pin, mode)` | sets a pin's mode |
+| `dev$digital_write(pin, high)` | writes a digital output |
+| `dev$digital_read(pin)` | reads a digital input |
+| `dev$read_all_digital()` | every digital pin, index `i + 1` for pin `i` |
+| `dev$analog_read(pin)` | raw ADC code |
+| `dev$analog_read_volts(pin)` | converted to volts |
+| `dev$read_all_analog()` | every analog pin's raw code, ascending pin order |
+| `dev$pwm_write(pin, duty)` | raw PWM code |
+| `dev$pwm_write_fraction(pin, fraction)` | duty cycle as `0`–`1` |
+| `dev$dac_write(pin, value)` | raw DAC code |
+| `dev$dac_write_volts(pin, volts)` | DAC output in volts |
+| `dev$reset()` | every pin back to `INPUT` |
+| `dev$start_stream(pins, period_us = 0L, digital = FALSE, queue_capacity = 0L)` | starts continuous sampling, returns a `Stream` |
+| `dev$close()` | closes the device |
+
+::: {.callout-warning}
+## `info()` is a method in R — a portability trap
+
+In the [Python binding](python.qmd), `dev.info` is a **property**: no
+parentheses. In R, `dev$info()` is an ordinary R6 **method**: it needs the
+parentheses, or you get the function object back instead of the data. Code
+ported between the two bindings has to change this, and it fails silently in
+R (a printed closure, not an error) rather than loudly — check for it.
 :::
+
+### `Stream` (R6 class)
+
+Returned by `dev$start_stream()`. Every member here is a method too:
+
+| Method | Does |
+|---|---|
+| `stream$read(max_samples = 64L, timeout_ms = 1000L)` | blocks until at least one sample is available or the timeout elapses; returns a `data.frame` with columns `pin`, `raw`, `volts`, `t_us` (0 rows on timeout) |
+| `stream$stats()` | a named list: `device_overruns`, `records_received`, `seq_gaps`, `host_drops`, `resyncs`, `stale_records` |
+| `stream$running()` | logical |
+| `stream$error()` | string, why the worker stopped on its own; `""` while running normally or after a regular `stop()` |
+| `stream$stop()` | stops the device stream and joins the worker thread |
+| `stream$close()` | stops (if still running) and releases the stream |
+
+See [Verifying a bench](verify.qmd#stream-summary-fields) for what each
+`stats()` field means and why all zeros is the AMLab acceptance criterion for
+a recording.
+
+::: {.callout-note}
+## Not in the R binding
+
+Pin events and callback-based streaming are **not** part of the R binding
+either. Both bindings currently expose the same subset: enumeration, pin
+configuration, digital/analog/PWM/DAC I/O, and polling-based continuous
+sampling. Events and callback streaming are C++/CLI only.
+:::
+
+## Worked example: one second at 1 kHz
+
+Parallel to the [Python example](python.qmd#worked-example-one-second-at-1-khz):
+acquires one second of data from a single analog pin at 1 kHz and writes it
+in the AMLab CSV convention (`t_us,pin,volts`).
+
+```r
+library(arduinodriver)
+
+pin <- 15L  # A0 on a Portenta H7; check `arduino-io caps` on your board
+
+dev <- device_open_first()
+dev$pin_mode(pin, PinMode$ANALOG_IN)
+
+stream <- dev$start_stream(pin, period_us = 1000L)
+
+rows <- list()
+deadline <- Sys.time() + 1
+while (Sys.time() < deadline) {
+  batch <- stream$read(max_samples = 256L, timeout_ms = 200L)
+  if (nrow(batch) > 0) rows[[length(rows) + 1]] <- batch
+}
+
+stats <- stream$stats()
+cat(sprintf(
+  "%d records, %d seq gaps, %d host drops\n",
+  stats$records_received, stats$seq_gaps, stats$host_drops
+))
+
+stream$stop()
+stream$close()
+
+data <- do.call(rbind, rows)[, c("t_us", "pin", "volts")]
+write.csv(data, "acquisition.csv", row.names = FALSE, quote = FALSE)
+
+dev$close()
+```

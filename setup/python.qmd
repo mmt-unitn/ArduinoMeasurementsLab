@@ -1,9 +1,168 @@
 ---
 title: "Python binding"
 description: "Installing and checking arduino_driver"
+toc: true
 ---
 
+## Install
+
+From a checkout of the ArduinoDriver repository:
+
+```bash
+pip install extras/python
+```
+
+Or straight from git, without cloning first:
+
+```bash
+pip install "git+https://github.com/pbosetti/ArduinoDriver.git#subdirectory=extras/python"
+```
+
+The package wraps `arduino_driver_c` — a C ABI over the C++ driver — through
+`ctypes`. It needs no compiler at import time; a build step compiles the
+native library only when the wheel itself is built, and the published wheel
+is `py3-none-<platform>` (one wheel covers every supported Python version;
+Python 3.9 or newer).
+
+## Quick check
+
+```python
+from arduino_driver import Device, PinMode
+
+with Device.open_first() as dev:
+    dev.pin_mode(13, PinMode.OUTPUT)
+    dev.digital_write(13, True)
+    print(dev.info)
+```
+
+`Device.open_first()` opens the first identified board and is meant to be
+used as a context manager, as above; it also has a plain `close()` if you
+prefer to manage the lifetime yourself. `Device.open_by_serial(serial)`
+opens a specific board by the USB serial number `arduino-io list` shows.
+
+## API reference
+
+### `PinMode`
+
+An `IntEnum`: `PinMode.INPUT`, `OUTPUT`, `INPUT_PULLUP`, `INPUT_PULLDOWN`,
+`ANALOG_IN`, `PWM`, `DAC`.
+
+### `Device`
+
+`info` and `pin_count` are **properties**, not methods — call them without
+parentheses:
+
+```python
+dev.info        # an Info object: board_id, board_name, n_pins,
+                 # n_analog_pins, adc_bits, pwm_bits, dac_bits,
+                 # vref_volts, io_volts, streaming, events
+dev.pin_count    # int
+```
+
+Everything else on `Device` is an ordinary method:
+
+| Method | Does |
+|---|---|
+| `pin_mode(pin, mode)` | sets a pin's mode |
+| `digital_write(pin, high)` | writes a digital output |
+| `digital_read(pin)` → `bool` | reads a digital input |
+| `read_all_digital()` → `list[bool]` | every digital pin in one call |
+| `analog_read(pin)` → `int` | raw ADC code |
+| `analog_read_volts(pin)` → `float` | converted to volts |
+| `read_all_analog()` → `list[int]` | every analog pin's raw code, ascending pin order |
+| `to_volts(raw)` → `float` | converts a raw code using this board's resolution and reference |
+| `pwm_write(pin, duty)` | raw PWM code |
+| `pwm_write_fraction(pin, fraction)` | duty cycle as `0.0`–`1.0` |
+| `dac_write(pin, value)` | raw DAC code |
+| `dac_write_volts(pin, volts)` | DAC output in volts |
+| `reset()` | every pin back to `INPUT` |
+| `start_stream(pins, period_us=0, *, digital=False, queue_capacity=0)` → `Stream` | starts continuous sampling |
+| `close()` | closes the device (also called by `__exit__`/`__del__`) |
+
+`pin_mode()` must be called before reading or writing a pin, exactly like
+`pinMode()` in a sketch; every method validates pins and values locally
+before sending anything over USB, so most mistakes fail fast with a specific
+exception.
+
+### `Stream`
+
+Returned by `Device.start_stream()`. `stats`, `running` and `error` are
+**properties**, like `Device.info` — this is the same trap in reverse: in
+Python they take no parentheses, while the equivalent calls in the [R
+binding](r.qmd) are methods and do.
+
+```python
+stream.stats     # a StreamStats
+stream.running   # bool
+stream.error     # str, why the worker stopped on its own
+```
+
+`read()`, `stop()` and `close()` are ordinary methods:
+
+| Method | Does |
+|---|---|
+| `read(max_samples, timeout_ms)` → `list[Sample]` | blocks until at least one sample is available or the timeout elapses; empty list on timeout |
+| `stop()` | stops the device stream and joins the worker thread |
+| `close()` | stops (if still running) and releases the stream |
+
+`Stream` is also a context manager (`with dev.start_stream(...) as stream:`).
+
+**`Sample`** (a frozen dataclass): `pin`, `raw`, `volts`, `t_us` — the
+device's own `micros()` timestamp when the record was sampled.
+
+**`StreamStats`** (a frozen dataclass): `device_overruns`,
+`records_received`, `seq_gaps`, `host_drops`, `resyncs`, `stale_records` —
+see [Verifying a bench](verify.qmd#stream-summary-fields) for what each one
+means and why all zeros is the AMLab acceptance criterion for a recording.
+
 ::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## Not in the Python binding
+
+Pin events and callback-based streaming are **not** part of the Python
+binding. Both bindings currently expose the same subset: enumeration, pin
+configuration, digital/analog/PWM/DAC I/O, and polling-based continuous
+sampling. Events and callback streaming are C++/CLI only.
 :::
+
+## Quarto on the AMLab development machine
+
+The analysis templates render with Quarto's Jupyter engine. On the AMLab
+development machine the Python environment lives at `~/.venv`; point Quarto
+at it before rendering anything that uses the Python binding:
+
+```bash
+export QUARTO_PYTHON="$HOME/.venv/bin/python"
+```
+
+## Worked example: one second at 1 kHz
+
+This acquires one second of data from a single analog pin at 1 kHz and writes
+it in the AMLab CSV convention (`t_us,pin,volts`):
+
+```python
+import csv
+import time
+
+from arduino_driver import Device, PinMode
+
+PIN = 15  # A0 on a Portenta H7; check `arduino-io caps` on your board
+
+with Device.open_first() as dev:
+    dev.pin_mode(PIN, PinMode.ANALOG_IN)
+
+    with dev.start_stream([PIN], period_us=1000) as stream:
+        rows = []
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            for sample in stream.read(max_samples=256, timeout_ms=200):
+                rows.append((sample.t_us, sample.pin, sample.volts))
+
+        stats = stream.stats
+        print(f"{stats.records_received} records, {stats.seq_gaps} seq gaps, "
+              f"{stats.host_drops} host drops")
+
+with open("acquisition.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["t_us", "pin", "volts"])
+    writer.writerows(rows)
+```

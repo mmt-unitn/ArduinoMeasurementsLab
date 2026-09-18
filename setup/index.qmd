@@ -1,9 +1,124 @@
 ---
 title: "Setting up a bench"
 description: "What a bench needs, and in which order to set it up"
+toc: true
 ---
 
+A bench is one Arduino board running the `UsbIo` firmware, one host computer
+that can talk to it, and one language binding for writing analysis scripts
+against the recorded data. Nothing about the boards or the host driver is
+AMLab-specific — this section is a guided path through
+[ArduinoDriver](https://github.com/pbosetti/ArduinoDriver)'s own setup, in the
+order that avoids backtracking.
+
+## What a bench needs
+
+- **One supported board** with a USB cable — see the [recommendation
+  matrix](#board-recommendation) below and [Supported boards](boards.qmd) for
+  the full detail.
+- **A host computer.** Linux, macOS and Windows are all supported; the three
+  differ in what setup they need and in how good the achieved sampling timing
+  is — see [Host operating system](#host-operating-system).
+- **The `arduino-io` command line tool and its C++ driver**, built from
+  source on the host.
+- **A language binding** — [Python](python.qmd), [R](r.qmd), or both — for
+  writing the analysis templates the experiments use.
+- **For the T\* and M\* experiments**, the conditioning and rig hardware
+  described in [Hardware](../hardware/index.qmd).
+
+## Setup order
+
+Each step depends on the one before it, so work through them in order the
+first time:
+
+1. **Board and firmware.** Install the Arduino core for your board, upload
+   the three-line `UsbIo` sketch, and confirm the board re-enumerates. See
+   [Flashing the UsbIo firmware](firmware.qmd).
+2. **Host OS preparation.** Linux needs a udev rule installed once; Windows
+   needs WinUSB bound to the board's vendor interface with Zadig; macOS needs
+   nothing. See [Linux](host-linux.qmd), [macOS](host-macos.qmd) or
+   [Windows](host-windows.qmd).
+3. **Host driver and CLI.** Build `arduino_driver` and the `arduino-io` CLI
+   from the ArduinoDriver repository and put `arduino-io` on `PATH`. The
+   per-OS pages above cover this alongside the OS-specific step.
+4. **Language binding.** Install the Python or R package that wraps the same
+   driver, for writing analysis scripts. See [Python](python.qmd) and
+   [R](r.qmd).
+5. **Verification.** Confirm the whole chain works end to end: `arduino-io
+   info`, a digital write, an analog read, and a short stream test with a
+   clean summary line. See [Verifying a bench](verify.qmd).
+
+If something does not work at any step, [Troubleshooting](troubleshooting.qmd)
+collects the symptoms ArduinoDriver's own documentation names, with causes
+and fixes.
+
+## Board recommendation {#board-recommendation}
+
+@tbl-board-matrix lists every board ArduinoDriver documents as compile-verified,
+with the properties that matter for choosing one for a bench. "Streaming"
+means continuous sampling over a bulk USB endpoint — required by the S1–S3 and
+M3 experiments (see [Supported boards](boards.qmd) for the full
+per-experiment breakdown). "Windows" means the board's vendor interface can be
+bound with WinUSB via Zadig; where it says no, that board cannot be used from
+a Windows host at all with `arduino-io`.
+
+| Board | Streaming | ADC bits | Logic | Windows | AMLab experiments | Cost |
+|---|---|---|---|---|---|---|
+| Portenta H7 | yes | 16 | 3.3 V | yes | S1–S3, T\*, M1–M3 | [TODO (Paolo)]{.todo} |
+| GIGA R1 WiFi | yes | 16 | 3.3 V | yes | S1–S3, T\*, M1–M3 | [TODO (Paolo)]{.todo} |
+| Nano 33 BLE | yes | 16 (12 significant) | 3.3 V | yes | S1–S3, T\*, M1–M3 | [TODO (Paolo)]{.todo} |
+| Nano RP2040 Connect | yes | 16 (12 significant) | 3.3 V | yes | S1–S3, T\*, M1–M3 | [TODO (Paolo)]{.todo} |
+| Zero | yes | 12 | 3.3 V | yes | S1–S3, T\*, M1–M3 | [TODO (Paolo)]{.todo} |
+| MKR family (e.g. MKR Zero) | yes | 12 | 3.3 V | yes | S1–S3, T\*, M1–M3 | [TODO (Paolo)]{.todo} |
+| Nano 33 IoT | yes | 12 | 3.3 V | yes | S1–S3, T\*, M1–M3 | [TODO (Paolo)]{.todo} |
+| UNO R4 Minima | no | 14 | 5 V | no | T\*, M1, M2 | [TODO (Paolo)]{.todo} |
+| Nano R4 | no | 14 | 5 V | no | T\*, M1, M2 | [TODO (Paolo)]{.todo} |
+
+: Board recommendation matrix. Data from `QUICKSTART.md` section 2 and the
+README's "Board support" and "Operating-system notes" sections. Only the
+Portenta H7 has been verified on real hardware; the others are
+compile-verified but not yet bench-tested (see [Supported
+boards](boards.qmd)). {#tbl-board-matrix}
+
 ::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## Why S2 and M3 need more than "streaming: yes"
+
+A board only reports *whether* it can stream, not how fast. The sketch takes
+at most one record per `loop()` iteration, so the achieved rate is bounded by
+the board's own loop speed — measured so far only on the Portenta H7 (about
+32 kHz on one channel, 23.5 kHz on two, with the plain example sketch). S2 and
+M3 need a high loop rate as well as streaming support; on any board other than
+the Portenta H7, run the [stream verification](verify.qmd) at the rate the
+experiment needs before committing a bench to it.
 :::
+
+Two further categories exist but are not in the table: boards with a written
+transport shim that has not been hardware-verified (RP2040/RP2350 via
+`arduino-pico`, ESP32-S2/S3), and boards that cannot run `UsbIo` at all (UNO
+R3, Mega, classic Nano, UNO R4 WiFi). See [Supported boards](boards.qmd) for
+both, and for the reasons.
+
+## Host operating system {#host-operating-system}
+
+::: {.callout-important}
+## Linux is the recommended lab host
+
+Sampling is driven by the sketch's `loop()`, not by a hardware timer, so the
+host's own USB scheduling shapes what actually arrives. On Linux the jitter
+observed on the reference bench is typically 1–2 µs; on macOS schedule
+restarts and device overruns are more common. Windows has not been
+characterized the same way for AMLab. One small machine per bench is enough —
+a Raspberry Pi running Linux is sufficient; see [Linux
+host](host-linux.qmd#raspberry-pi).
+:::
+
+All three host operating systems can run `arduino-io` and the language
+bindings, and all three are documented — macOS is a fine place to *develop*
+analysis code (nothing to install, and the Portenta H7's High-Speed USB
+quirk aside, it just works), but for acquisitions where timing matters, set
+up the bench on Linux.
+
+## Next
+
+Start with [Supported boards](boards.qmd) to pick a board, then
+[Flashing the UsbIo firmware](firmware.qmd).

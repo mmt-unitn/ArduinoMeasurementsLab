@@ -1,9 +1,67 @@
 ---
 title: "Windows host"
 description: "WinUSB with Zadig, and the Renesas limitation"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+`libusb` on Windows needs the WinUSB driver bound to a function of the
+device. On boards that expose a vendor interface (the mbed boards — Portenta
+H7, GIGA R1 WiFi, Nano 33 BLE, Nano RP2040 Connect — and the SAMD boards —
+Zero, MKR family, Nano 33 IoT) this is a one-time setup with
+[Zadig](https://zadig.akeo.ie/).
+
+## Install WinUSB with Zadig, on the `UsbIo` interface only
+
+1. Download and run [Zadig](https://zadig.akeo.ie/).
+2. Enable *Options ▸ List All Devices*.
+3. Select the entry named **UsbIo** — not the serial/COM port entry for the
+   same board.
+4. Click *Install Driver*.
+
+::: {.callout-important}
+## Bind WinUSB to `UsbIo` only
+
+The board exposes both a CDC serial interface and, where the core supports
+it, the dedicated vendor interface named **UsbIo** (class `FF`, subclass
+`49`, protocol `4F`). Bind WinUSB to the **UsbIo** entry only. The COM port
+keeps working exactly as before — `Serial.print()` debugging is unaffected —
+because `arduino-io` never touches the CDC interface.
 :::
+
+## UNO R4 Minima and Nano R4 cannot be used on Windows
+
+These two boards use the Renesas core, whose USB descriptors are fixed by the
+core itself (`UsbIo` hooks a weak `tud_vendor_control_xfer_cb()` in TinyUSB,
+with no `PluggableUSBModule` to add an interface through). There is no
+function on the device for Zadig to bind WinUSB to without breaking the
+serial port, so **Windows is not supported for these two boards at all** —
+not "supported with extra setup," simply not usable with `arduino-io` on
+Windows. Use [Linux](host-linux.qmd) or [macOS](host-macos.qmd) with one of
+these boards, or pick a different board for a Windows bench — see [Supported
+boards](boards.qmd).
+
+::: {.callout-note}
+## Automatic binding: planned, not available
+
+Automatic WinUSB binding through MS OS 2.0 descriptors — which would let
+Windows bind the driver itself, without running Zadig — is a planned
+follow-up in ArduinoDriver, not something available today. Zadig remains the
+supported route for now.
+:::
+
+## Building `arduino-io`
+
+Install Visual Studio 2022 with the *Desktop development with C++* workload,
+and CMake 3.24 or newer. The same build as any other platform, choosing any
+install prefix:
+
+```bash
+git clone https://github.com/pbosetti/ArduinoDriver.git
+cd ArduinoDriver
+cmake -B build -DARDUINODRIVER_BUILD_TESTS=OFF
+cmake --build build --config Release
+cmake --install build --config Release --prefix <your folder>
+```
+
+The host driver and CLI build with MSVC (Visual Studio 2022 or newer) using
+the same CMake project as Linux and macOS.

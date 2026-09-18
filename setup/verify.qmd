@@ -1,9 +1,124 @@
 ---
 title: "Verifying a bench"
 description: "arduino-io info and a short stream test"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
-:::
+Run through this once for every newly built bench, and again any time you
+suspect the board, the host setup or the firmware. The example output below
+is from a **Portenta H7** — expect different numbers on other boards, but the
+same shape of output.
+
+## 1. The board is found
+
+```bash
+arduino-io list
+```
+
+The board should appear in the main list. If it instead appears in a "Not
+probed" block, that is a permissions problem — see [Linux
+host](host-linux.qmd) or [Windows host](host-windows.qmd) — or another
+process already has it open.
+
+## 2. `arduino-io info`
+
+```bash
+$ arduino-io info
+board:            Portenta H7 (id 0x0201)
+protocol version: 0x0001
+pins:             26 (analog: 7)
+resolution:       adc 16 bits, pwm 12 bits, dac 12 bits
+voltages:         vref 3300 mV, io 3300 mV
+flags:            0x000F vendor-interface pulldown streaming events
+queue depth:      32
+stream channels:  up to 8
+stream period:    1 us or longer (up to 1000000 Hz, bounded by the sketch's loop() rate)
+event pins:       up to 8
+transport:        device recipient, interface 0 (claimed)
+```
+
+Read the **`flags`** line first: it is the quickest way to confirm *which*
+firmware is actually on the board. `streaming` and `events` appear only if
+the sketch was built from a `UsbIo` revision that has them — a board that
+answers `info` but is missing `streaming` either cannot stream at all (the
+two Renesas boards, UNO R4 Minima and Nano R4) or is running older firmware;
+see [Troubleshooting](troubleshooting.qmd) to tell the two apart.
+
+## 3. `arduino-io caps`
+
+```bash
+$ arduino-io caps
+PIN  CAPS  NOTES
+0    D-P-
+...
+15   -A--  analog #0 (analog-only pad)
+...
+21   DA-C  analog #6, DAC
+D digital I/O, A analog input, P PWM, C DAC
+```
+
+Confirms the pin capability table matches what [Supported
+boards](boards.qmd) documents for this board — in particular, which pin
+number is A0 on *this* board.
+
+## 4. Digital write
+
+```bash
+arduino-io mode 13 output && arduino-io write 13 1
+```
+
+should turn on an LED on pin 13 (or the equivalent on your board — check
+`caps`); `write 13 0` turns it off.
+
+## 5. Analog read
+
+```bash
+arduino-io mode 15 analog && arduino-io aread 15 --volts
+```
+
+(use A0's actual pin number for your board) should read a plausible voltage —
+0 V or the reference voltage on a floating pin, or a known voltage if you
+have wired a reference into it.
+
+## 6. Stream test {#stream-summary-fields}
+
+On a board that reports `streaming` in its `flags`:
+
+```bash
+arduino-io mode 15 analog && arduino-io mode 16 analog
+arduino-io stream 15,16 --hz 1000 --seconds 3 --volts --csv samples.csv
+```
+
+```
+stream: 3029 records (6058 samples) in 3.028 s (1000.4 Hz achieved per channel);
+device overruns 0, seq gaps 0, host drops 0, resyncs 0, stale records 0
+```
+
+Each field means:
+
+| Field | Meaning |
+|---|---|
+| `device overruns` | the board's own ring buffer overflowed because it could not send records fast enough |
+| `seq gaps` | records lost before reaching the host, detected as a gap in the device's per-record sequence number (includes device overruns) |
+| `host drops` | decoded records the host had to discard because the consumer was not reading fast enough (the queue filled) |
+| `resyncs` | times the driver lost synchronization on the stream's framing marker and had to resynchronize |
+| `stale records` | records sampled before *this* session's start, left over in the endpoint by an earlier session, and discarded |
+
+**All zeros is the AMLab acceptance criterion**: it means every sample
+requested was recorded, in order, with no loss anywhere in the chain. A
+recording with any nonzero field is not a complete recording — investigate
+before trusting the data (see [Troubleshooting](troubleshooting.qmd) for
+overruns specifically).
+
+## Checklist
+
+- [ ] `arduino-io list` shows the board (not in "Not probed")
+- [ ] `arduino-io info` reports the expected board name and pin counts
+- [ ] the `flags` line shows the firmware capabilities the experiment needs
+- [ ] `arduino-io caps` matches the board's documented pin table
+- [ ] a digital write toggles a visible LED
+- [ ] an analog read returns a plausible voltage
+- [ ] (streaming boards only) a stream test's summary line is all zeros at
+      the rate the experiment needs
+
+A bench that passes every item is ready for an experiment.

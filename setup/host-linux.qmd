@@ -1,9 +1,106 @@
 ---
 title: "Linux host"
 description: "udev rule, build, and the Raspberry Pi bench host"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+Linux is the [recommended lab host](index.qmd#host-operating-system): the
+jitter observed on the reference bench is typically 1–2 µs, against more
+frequent schedule restarts and device overruns on macOS. Setup takes two
+steps — a one-time udev rule, and building `arduino-io` from source — and
+both are the same whether the host is a desktop, a laptop or a Raspberry Pi.
+
+## Install the udev rule
+
+Without it, USB device nodes for the board are only writable by root, so
+`arduino-io` and the driver need `sudo` for every call. The rule grants
+access to the logged-in user instead. From a clone of ArduinoDriver:
+
+```bash
+sudo cp extras/driver/etc/99-arduino-usbio.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Then unplug and replug the board. The rule file itself:
+
+```
+SUBSYSTEM=="usb", ATTR{idVendor}=="2341", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="2e8a", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0666", TAG+="uaccess"
+```
+
+It grants access to every USB device carrying one of the three vendor IDs
+ArduinoDriver probes: Arduino (`2341`), Raspberry Pi Foundation (`2e8a` —
+this covers RP2040-based boards, not a Raspberry Pi single-board computer
+used as host) and Espressif (`303a`). `TAG+="uaccess"` gives the logged-in
+seat user an ACL through `systemd-logind`; `MODE="0666"` also covers systems
+without `logind`.
+
+::: {.callout-tip}
+## Skipping the rule
+
+Without the rule installed, every `arduino-io` invocation (and any program
+linking `arduino_driver`) needs `sudo` to open the board. That is fine for a
+one-off check but not for a lab bench a student runs unattended.
 :::
+
+## Build and install `arduino-io`
+
+You need `git`, CMake 3.24 or newer, and a C++ compiler (`g++` or `clang`,
+e.g. `sudo apt install build-essential`):
+
+```bash
+git clone https://github.com/pbosetti/ArduinoDriver.git
+cd ArduinoDriver
+cmake -B build -DARDUINODRIVER_BUILD_TESTS=OFF
+cmake --build build --config Release
+cmake --install build --config Release --prefix ~/.local
+```
+
+The first build fetches its dependencies (libusb, `fmt`, `cxxopts`) via
+CMake's `FetchContent`, so it takes a few minutes. `arduino-io` ends up in
+`~/.local/bin` — make sure that directory is on your `PATH`, or install to
+`/usr/local/bin` instead (needs `sudo`):
+
+```bash
+sudo cmake --install build --config Release
+```
+
+Confirm it works:
+
+```bash
+arduino-io list
+```
+
+## Using a Raspberry Pi as the bench host {#raspberry-pi}
+
+A Raspberry Pi is just a Linux machine with USB ports, so everything above
+applies unchanged: install the udev rule, install `build-essential` and
+`cmake` from the distribution's package manager, build `arduino-io` the same
+way. Because it is small, quiet and cheap enough to dedicate one per bench, a
+Raspberry Pi (or a similar single-board computer) is a practical way to give
+every bench a Linux host without a full desktop machine.
+
+::: {.callout-note}
+## Not independently verified on ARM
+
+ArduinoDriver's own continuous integration builds and tests the driver on
+Linux, macOS and Windows runners (all x86_64); it does not currently include
+an ARM/Raspberry Pi job. The CMake build is portable C++20 with no
+architecture-specific code in the parts a bench uses, so it is expected to
+build the same way — but treat a Raspberry Pi build as something to verify on
+your own bench with the [verification procedure](verify.qmd), not as
+independently confirmed by upstream CI.
+
+The specific Raspberry Pi model to standardize on for AMLab benches is
+[TODO (Paolo)]{.todo}.
+:::
+
+## Why Linux for AMLab
+
+The board samples from `loop()`, not a hardware timer, so the *host's* own
+USB scheduling is part of what determines the timestamps a stream actually
+records. Linux's USB stack gives the most consistent scheduling of the three
+host operating systems characterized so far, which is why it is the
+recommended host for any acquisition where timing matters — see [Setting up
+a bench](index.qmd#host-operating-system) for the numbers.

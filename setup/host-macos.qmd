@@ -1,9 +1,64 @@
 ---
 title: "macOS host"
 description: "No driver needed; High Speed link and USB hubs"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## Nothing to install
+
+macOS needs no permission setup and no driver install. `AppleUSBACM` holds
+the board's CDC (serial) interfaces, so `libusb` cannot open the whole device
+exclusively — its Darwin backend tolerates that and still sends control
+requests straight to the device's endpoint 0 (`dfu-util` programs the UNO R4
+through the same path). Claiming the `UsbIo` interface itself is optional on
+macOS; the driver does it by default anyway, for exclusivity between two
+processes that might both try to use the board.
+
+You still need to build `arduino-io` yourself: the Xcode command line tools
+(`xcode-select --install`) and CMake 3.24 or newer, then the same build as
+any other platform:
+
+```bash
+git clone https://github.com/pbosetti/ArduinoDriver.git
+cd ArduinoDriver
+cmake -B build -DARDUINODRIVER_BUILD_TESTS=OFF
+cmake --build build --config Release
+cmake --install build --config Release --prefix ~/.local
+```
+
+## High Speed link quality on the Portenta H7
+
+::: {.callout-warning}
+## Symptom: `LIBUSB_ERROR_IO` on a streaming Portenta H7
+
+The Portenta H7 enumerates at USB High Speed (480 Mbit/s), and its bulk
+streaming endpoint is only as reliable as that link. Plugged straight into a
+Mac's USB-C port (two different cables tried), streams died every few seconds
+with `bulk IN transfer failed: LIBUSB_ERROR_IO` — logged as `device not
+responding` (`0xe00002ed`) with `LIBUSB_DEBUG=2` — and now and then the board
+stopped answering control requests altogether until it was replugged, while
+the sketch itself kept running. Failures scaled with the number of bytes per
+packet, not with time or firmware activity, pointing at bit errors on the
+link itself rather than a software problem.
+
+**Fix:** put a USB hub between the computer and the board. The same board and
+firmware behind a hub ran 10×60 s at 10 kHz without a single failure, both
+with the hub's power adapter connected and without it. A hub receives and
+retransmits every High Speed packet, turning one marginal link into two short
+ones, and still runs at 480 Mbit/s. A USB 3 hub works too, because the board
+attaches to the USB 2.0 hub built into it. Prefer a short cable as well.
+:::
+
+This is specific to the Portenta H7's High Speed link on macOS's USB-C ports;
+it is not a general macOS limitation and has not been reported for the
+Full Speed boards.
+
+::: {.callout-tip}
+## Fine for analysis, not the acquisition host
+
+macOS needs nothing installed and streams reliably once the hub fix above is
+in place, which makes it a good place to develop and run the Python or R
+analysis code. For the acquisition itself, prefer a [Linux
+host](host-linux.qmd) — the timing is more consistent, as explained in
+[Setting up a bench](index.qmd#host-operating-system).
 :::

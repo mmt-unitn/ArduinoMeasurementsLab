@@ -1,9 +1,157 @@
 ---
 title: "Flashing the UsbIo firmware"
 description: "Arduino IDE, arduino-cli and CMake routes"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## The sketch
+
+The whole sketch is three lines — the `UsbIo` library does the rest:
+
+```cpp
+#include <UsbIo.h>
+void setup() { UsbIo.begin(); }
+void loop()  { UsbIo.poll(); }
+```
+
+`UsbIo.begin()` brings up the vendor USB interface; `UsbIo.poll()`, called
+every `loop()` iteration, drains queued commands from the host and refreshes
+the pin-state shadow that reads answer from. Nothing else needs to be in the
+sketch for the board to work as an AMLab bench — see [Adding your own
+code](#adding-your-own-code) if you want to add something.
+
+## Install the core, once per machine
+
+Install the Arduino core for your board before the first upload. With
+`arduino-cli` (see [Supported boards](boards.qmd#tbl-boards-detail) for every
+core name):
+
+```bash
+arduino-cli core install arduino:mbed_portenta   # Portenta H7
+arduino-cli core install arduino:mbed_giga       # GIGA R1 WiFi
+arduino-cli core install arduino:mbed_nano       # Nano 33 BLE, Nano RP2040 Connect
+arduino-cli core install arduino:renesas_uno     # UNO R4 Minima, Nano R4
+arduino-cli core install arduino:samd            # Zero, MKR family, Nano 33 IoT
+```
+
+In the Arduino IDE, the same cores install from *Tools ▸ Board ▸ Boards
+Manager*.
+
+## Three ways to flash
+
+### Arduino IDE
+
+Install *UsbIo* from the Library Manager (*Tools ▸ Manage Libraries*, search
+"UsbIo"), or clone/symlink the ArduinoDriver repository into your sketchbook's
+`libraries/` folder. Then open *File ▸ Examples ▸ UsbIo ▸ UsbIoDevice*, select
+your board and port, and press Upload.
+
+### `arduino-cli`, from a clone
+
+Find the port, then compile and upload in one step. `--library .` makes the
+repository itself the library, so nothing needs to be installed separately:
+
+```bash
+arduino-cli board list          # -> /dev/cu.usbmodem1102, arduino:mbed_portenta:envie_m7
+arduino-cli compile --fqbn arduino:mbed_portenta:envie_m7 --library . \
+  --warnings all -u -p /dev/cu.usbmodem1102 examples/UsbIoDevice
+```
+
+Drop `-u -p <port>` to compile without uploading.
+
+### CMake targets
+
+When `arduino-cli` is on `PATH`, the root `CMakeLists.txt` adds one target per
+board: `firmware-portenta`, `firmware-giga`, `firmware-nano33ble`,
+`firmware-nanorp2040`, `firmware-minima`, `firmware-nanor4`,
+`firmware-mkrzero`, `firmware-nano33iot`, `firmware-zero`, plus
+`firmware-all` for every core you have installed:
+
+```bash
+cmake -Bbuild -G Ninja
+cmake --build build --target firmware-portenta      # -> build/firmware/portenta
+```
+
+Uploading needs the port in the CMake cache, so it is a two-step affair:
+
+```bash
+cmake -Bbuild -DUSBIO_UPLOAD_PORT=/dev/cu.usbmodem1102
+cmake --build build --target upload-portenta
+```
+
+## Bootloader and the changing port
+
+::: {.callout-warning}
+## The port changes twice
+
+**If the upload fails to find the board**, put it in bootloader mode:
+double-tap the reset button on mbed boards (Portenta, GIGA, Nano 33 BLE) —
+the LED breathes — and on SAMD boards too. The board enumerates under a
+*different* port in bootloader mode, so re-run `arduino-cli board list` and
+use the new port.
+
+The port changes **again** after a successful upload, when the board
+re-enumerates running `UsbIo`. Re-run `arduino-cli board list` (or `arduino-io
+list` once the host driver is built) if you need the port a second time.
+:::
+
+## Check it worked
+
+This needs the host driver from [setting up a bench, step
+3](index.qmd#setup-order):
+
+```bash
+arduino-io info
+```
+
+should report the board's name, pin counts and resolutions, and its `flags`
+line tells you which firmware capabilities are present. See [Verifying a
+bench](verify.qmd) for the full procedure and the expected output.
+
+## Adding your own code {#adding-your-own-code}
+
+The sketch can do other things too, as long as it follows a few rules:
+
+```cpp
+#include <UsbIo.h>
+
+void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  UsbIo.begin();
+}
+
+void loop() {
+  UsbIo.poll(); // runs the commands from the computer: call it on every loop
+
+  // Your own code: keep it short, and never call delay().
+  static unsigned long last = 0;
+  if (millis() - last >= 500) {
+    last = millis();
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); // heartbeat
+  }
+}
+```
+
+::: {.callout-important}
+## Why these rules matter for AMLab
+
+- **Keep `loop()` fast.** Commands from the host wait until the next
+  `UsbIo.poll()`, and **streaming takes at most one sample per `poll()`** —
+  the sketch's loop rate is the hard ceiling on the achieved sampling rate
+  for every streaming experiment (S1–S3, M3). Slow code in your own part of
+  `loop()` lowers that ceiling for everyone using the board.
+- **Never call `delay()`.** It blocks `poll()` for its whole duration, which
+  both stalls host commands and, during a stream, shows up as a longer gap
+  in `t_us` rather than a burst of catch-up samples.
+- **Don't drive a pin from both sides.** `UsbIo` leaves every pin alone until
+  the host sets its mode, so your own `Serial1`, SPI or LED code keeps
+  working undisturbed — but do not have the sketch and the host both write
+  the same pin.
+- **A host reset puts every pin back to `INPUT`.** `arduino-io reset` (or
+  `reset()`/`dev$reset()` in the bindings) reconfigures *every* pin the host
+  can address, including ones your own code was using. If your sketch relies
+  on a pin staying in a particular mode, re-apply that mode after a reset, or
+  keep the host driver from resetting it.
+- **`Serial` stays yours.** The CDC serial port is untouched by `UsbIo`, so
+  `Serial.print()` remains available for your own debugging throughout.
 :::

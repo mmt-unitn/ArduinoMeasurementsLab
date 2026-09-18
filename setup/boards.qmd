@@ -1,9 +1,106 @@
 ---
 title: "Supported boards"
 description: "Capabilities, limits and cost per bench"
+toc: true
 ---
 
+`UsbIo` needs a microcontroller with **native USB** it can add a vendor
+control endpoint to. Every board below has been checked against ArduinoDriver's
+own board-support table; "compile-verified" means the example sketch builds
+warning-free for that board, not that it has been run on real hardware — only
+the Portenta H7 has.
+
+## Compile-verified boards
+
+@tbl-boards-detail gives the FQBN, pin layout and resolutions for every board
+ArduinoDriver currently supports.
+
+| Board | FQBN | Pins | Analog in (AIN) | DAC | PWM | ADC / PWM / DAC bits | Logic | Streaming | Windows |
+|---|---|---|---|---|---|---|---|---|---|
+| Portenta H7 (M7 core) | `arduino:mbed_portenta:envie_m7` | 26 (D0–D14, A0–A6, D22, LEDs 23–25) | A0–A6 = pins 15–21 (A0–A3 analog-only pads) | pin 21 (A6) | every core-PWM-capable pin | 16 / 12 / 12 | 3.3 V | yes | yes |
+| GIGA R1 WiFi | `arduino:mbed_giga:giga` | 103 (D0–D102) | A0–A7, A12, A13 = pins 76–85 | pins 84, 85 | core-PWM-capable pins | 16 / 12 / 12 | 3.3 V | yes | yes |
+| Nano 33 BLE | `arduino:mbed_nano:nano33ble` | 26 | pins 14–21 | none | every pin | 16 (12 significant) / 12 / – | 3.3 V | yes | yes |
+| Nano RP2040 Connect | `arduino:mbed_nano:nanorp2040connect` | 30 | pins 14–17 (GPIO26–29) | none | every pin | 16 (12 significant) / 12 / – | 3.3 V | yes | yes |
+| UNO R4 Minima | `arduino:renesas_uno:minima` | 20 | pins 14–19 | pin 14 (A0) | 0–13, 18, 19 | 14 / 12 / 12 | 5 V | no | no |
+| Nano R4 | `arduino:renesas_uno:nanor4` | 26 | pins 14–21 | pin 14 | 0–13, 18, 19 | 14 / 12 / 12 | 5 V | no | no |
+| Zero | `arduino:samd:arduino_zero_native` | 20 | pins 14–19 | pin 14 | 3–13, 15, 16 | 12 / 10 / 10 | 3.3 V | yes | yes |
+| MKR Zero (MKR family) | `arduino:samd:mkrzero` | 33 (LED = 32) | pins 15–21 (A0=15) | pin 15 (A0) | 0–8, 10, 18, 19 | 12 / 10 / 10 | 3.3 V | yes | yes |
+| Nano 33 IoT | `arduino:samd:nano_33_iot` | 31 | pins 14–21 | pin 14 | 2–6, 9–12, 16, 17, 19, 29, 30 | 12 / 10 / 10 | 3.3 V | yes | yes |
+
+: Per-board pin layout and resolutions, from the README's "Board support"
+table. {#tbl-boards-detail}
+
+A few boards have pins that are not on the header but are still addressable,
+because the core itself counts them as digital pins: the GIGA R1 WiFi's
+D89–D102 (SPI header, USB-host enable, Wi-Fi/BLE control, BOOT0, SCL1/SDA1)
+and the Nano RP2040 Connect's D24–D29 (the NINA module's reset/SPI/UART
+lines). A `RESET` (from `arduino-io reset` or the library) puts *all* of
+these back to `INPUT`, exactly as it does for header pins.
+
 ::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
+## Analog pin numbers are board-specific
+
+Pin numbers are the same numbers you would pass to `digitalRead()` or
+`analogRead()` in a sketch, and the analog pins do not have fixed numbers
+across boards: **A0 is pin 15 on a Portenta H7 and pin 14 on an UNO R4**.
+Always check the board you actually have, not another table.
+
+```bash
+arduino-io caps
+```
+
+lists every pin and what it can do:
+
+```
+PIN  CAPS  NOTES
+0    D-P-
+...
+15   -A--  analog #0 (analog-only pad)
+...
+21   DA-C  analog #6, DAC
+D digital I/O, A analog input, P PWM, C DAC
+```
 :::
+
+## Not supported
+
+- **UNO R3, Mega 2560, classic Nano** — not possible. Their USB port is a
+  separate chip (16U2 or CH340); the microcontroller that owns the pins has
+  no USB of its own for `UsbIo` to attach to.
+- **UNO R4 WiFi** — not supported. Its USB-C port belongs to the board's
+  ESP32-S3 co-processor, not the RA4M1 that runs the sketch; the RA4M1's own
+  USB is disabled (`-DNO_USB`) on this board.
+
+## Experimental and unverified
+
+- **RP2040/RP2350 boards** via the `arduino-pico` core (`rp2040:rp2040:*`) —
+  a transport shim is written but the core is not installed in
+  ArduinoDriver's own build, so it is untested.
+- **ESP32-S2/S3** via `arduino-esp32` (`esp32:esp32:*`) — a transport shim is
+  written; it needs *USB Mode: USB-OTG (TinyUSB)* and is likewise untested.
+- **Teensy 4.x, STM32duino** — deferred. Neither core exposes a
+  vendor-request hook the way mbed, SAMD and Renesas do; supporting them
+  would need a patched core.
+
+Do not build a bench around any of these three categories.
+
+## Which board for which experiment
+
+@tbl-board-experiments gives the rule the [recommendation
+matrix](index.qmd#board-recommendation) already applies.
+
+| Experiments | Requirement | Suitable boards |
+|---|---|---|
+| S2, M3 | streaming **and** a high loop rate | Portenta H7 is verified; other streaming-capable boards need their own rate check first (see the [stream verification](verify.qmd)) |
+| S1, S3 | streaming | any board with `streaming` in `arduino-io info`'s `flags` line — every board in @tbl-boards-detail except UNO R4 Minima and Nano R4 |
+| T1–T3, M1, M2 | any supported board | every board in @tbl-boards-detail |
+
+: Board requirements by AMLab experiment group. {#tbl-board-experiments}
+
+S2 (dynamic DAQ characterization) and M3 (vibration) push the sampling rate,
+so they need both a streaming-capable board *and* a loop fast enough to hit
+the target rate — currently only measured on the Portenta H7. S1 (static DAQ
+characterization) and S3 (aliasing and filtering) need streaming but not an
+extreme rate. Everything in the thermal strand and M1/M2 samples slowly
+enough that any supported board, streaming or not, works — including the two
+Renesas boards.

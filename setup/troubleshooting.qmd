@@ -1,9 +1,108 @@
 ---
 title: "Troubleshooting"
 description: "Symptoms, causes and fixes"
+toc: true
 ---
 
-::: {.callout-note}
-## Page not written yet
-This page is part of the AMLab scaffold and will be filled in.
-:::
+@tbl-troubleshooting collects the symptoms ArduinoDriver's own documentation
+names, with causes and fixes; the sections below give the detail behind each
+row.
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `no UsbIo device found` / device not found | the sketch is not running, or a permissions problem | check the sketch is uploaded and running; if `arduino-io list` shows it under "Not probed", complete [Linux](host-linux.qmd) or [Windows](host-windows.qmd) host setup |
+| `cannot claim UsbIo interface ... LIBUSB_ERROR_ACCESS` | another process already has the board open, or the OS permission setup is missing | close other `arduino-io`/driver processes; install the udev rule (Linux) or bind WinUSB (Windows) |
+| `bulk IN transfer failed: LIBUSB_ERROR_IO` while streaming | marginal USB High Speed link — seen on a Portenta H7 plugged straight into a Mac USB-C port | put a USB hub between the computer and the board (see [macOS host](host-macos.qmd)) |
+| `info` succeeds but `flags` has no `streaming` | board's core cannot add a streaming endpoint (Renesas: UNO R4 Minima, Nano R4), or firmware predates streaming support | check [Supported boards](boards.qmd); if the board should support it, reflash the current `UsbIo` ([Flashing the firmware](firmware.qmd)) |
+| `GET_INFO` answers with `n_pins == 0` | the sketch has enumerated but has not reached `UsbIo.begin()` yet | the driver already retries for up to 2 s; if it still fails, check for blocking code in `setup()` before `UsbIo.begin()` |
+| a call throws `DeviceBusy` | a stream is running on this device | stop the stream first (`stream.stop()` / `stream$stop()`, or Ctrl-C on `arduino-io stream`) |
+| upload cannot find the board | the board needs the bootloader | double-tap reset (mbed and SAMD boards), re-run `arduino-cli board list`, upload to the new port |
+| achieved stream rate far below the requested rate | the sketch samples at most one record per `loop()`; the loop rate is the ceiling | remove `delay()` and slow code from `loop()` ([Flashing the firmware](firmware.qmd#adding-your-own-code)), or accept the rate the summary line reports |
+| UNO R4 Minima / Nano R4 not usable from Windows | the Renesas core exposes no vendor interface for WinUSB to bind | use [Linux](host-linux.qmd) or [macOS](host-macos.qmd) with these boards, or pick a different board ([Supported boards](boards.qmd)) |
+
+: Symptom, cause and fix. {#tbl-troubleshooting}
+
+## Device not found
+
+If `arduino-io list` shows nothing at all for the board, first confirm the
+`UsbIo` sketch is actually running (a `Serial.print()` heartbeat, or the
+board's own activity LED, helps here). If the board shows up under a
+separate "Not probed" block instead of the main list, that is a permissions
+problem, not a missing device — see [Linux host](host-linux.qmd) for the
+udev rule or [Windows host](host-windows.qmd) for WinUSB.
+
+## `cannot claim UsbIo interface ... LIBUSB_ERROR_ACCESS`
+
+Two causes produce the same message: another program already has the board
+open (only one process can use a board at a time — close any other
+`arduino-io` invocation, including a leftover `stream`), or the host-level
+permission setup from [Linux host](host-linux.qmd) or [Windows
+host](host-windows.qmd) is missing or incomplete.
+
+## `LIBUSB_ERROR_IO` on a streaming board
+
+Seen specifically on the Portenta H7's USB High Speed link plugged straight
+into some computer ports (documented on a Mac's USB-C port). See [macOS
+host](host-macos.qmd) for the full symptom and the USB-hub fix; the fix
+applies regardless of host OS if the same symptom shows up elsewhere.
+
+## Board answers `info` but the `streaming` flag is missing
+
+Two different situations look the same in `arduino-io info`'s output:
+
+1. **The board cannot stream at all.** UNO R4 Minima and Nano R4 use the
+   Renesas core, whose fixed USB descriptors cannot add the bulk endpoint
+   streaming needs — `arduino-io info` never shows `streaming` for these two
+   boards, on any firmware version.
+2. **The firmware predates streaming support.** On a board that *should*
+   support streaming (any mbed or SAMD board), a missing `streaming` flag
+   means the sketch was built from an older `UsbIo` revision. Reflash the
+   current firmware — see [Flashing the firmware](firmware.qmd).
+
+Check [Supported boards](boards.qmd) to know which case applies to your
+board before assuming it needs reflashing.
+
+## `GET_INFO` with `n_pins == 0`
+
+This means the sketch has enumerated on USB but has not yet reached
+`UsbIo.begin()` in `setup()`. The driver already waits up to 2 seconds for
+this and normally never surfaces it. If it persists, look for blocking code
+(a `delay()`, a sensor that waits for a bus, a `while` loop) before
+`UsbIo.begin()` in your sketch.
+
+## `DeviceBusy` while a stream runs
+
+While a stream is running, the `Device` refuses every other call —
+`pin_mode()`, digital/analog/PWM/DAC I/O, `reset()` — with `DeviceBusy`. This
+is not a fault: stop the stream first (`stream.stop()` in Python,
+`stream$stop()` in R, or let the object go out of scope / use its context
+manager), or let a running `arduino-io stream` finish or be interrupted with
+Ctrl-C.
+
+## Upload cannot find the board
+
+Put the board in bootloader mode: double-tap the reset button on mbed boards
+(Portenta, GIGA, Nano 33 BLE — the LED breathes) and on SAMD boards. The
+board enumerates under a *different* port in bootloader mode, so re-run
+`arduino-cli board list` and upload to the new port. See [Flashing the
+firmware](firmware.qmd#bootloader-and-the-changing-port) for the full detail,
+including that the port changes again after a successful upload.
+
+## Achieved stream rate far below the requested rate
+
+The firmware samples at most one record per `loop()` iteration, so the
+achieved rate cannot exceed the sketch's loop rate — requesting more simply
+gets you the loop rate instead, and the summary line reports what was
+actually achieved. If your own code was added to the sketch (see [Adding
+your own code](firmware.qmd#adding-your-own-code)), remove `delay()` calls
+and slow operations from `loop()`; if the sketch is already the plain
+`UsbIoDevice` example, the board's own loop speed is the ceiling, and only
+the Portenta H7's has been measured (about 32 kHz on one channel, 23.5 kHz on
+two, with the unmodified example sketch).
+
+## Windows on Renesas boards
+
+UNO R4 Minima and Nano R4 cannot be used with `arduino-io` on Windows at all
+— not a missing driver, but no vendor interface on the device to bind one to.
+See [Windows host](host-windows.qmd) for why, and use Linux or macOS with
+these two boards instead.
