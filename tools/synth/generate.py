@@ -24,6 +24,12 @@ GENERATORS = {
     "s1": "s1_daq_static",
     "s2": "s2_daq_dynamic",
     "s3": "s3_aliasing_filtering",
+    "t1": "t1_temperature_static",
+    "t2": "t2_temperature_dynamic",
+    "t3": "t3_long_term",
+    "m1": "m1_strain_load",
+    "m2": "m2_hall_displacement",
+    "m3": "m3_vibration",
 }
 
 

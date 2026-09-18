@@ -1,0 +1,163 @@
+::: {.callout-warning}
+## Before you connect anything
+
+**Suspended masses.** Every reference mass in this experiment hangs, or
+presses, on the load cell or the beam tip. Never put a hand, a cable or an
+instrument underneath a suspended mass, and use a mass hanger or a clamp
+rated well above what you load — a mass that slips is a mass in free fall
+onto whatever is below it. Load and unload one mass at a time and keep the
+load path clear before you touch anything electrical.
+
+**The beam's elastic limit.** The beam is a spring, and springs that are
+pushed past their elastic limit do not return: a beam bent into yield stays
+bent, and the M1/M2 stiffness relations ([tip deflection and surface
+strain](../../hardware/beam-rig.qmd#sec-beam-relations)) become meaningless for it
+afterwards, because they assume linear elastic behaviour. Never exceed the
+working load $F_\mathrm{work}$ this bench specifies, never add masses faster
+than one at a time while watching the reading, and if a reading fails to
+return to zero after unloading, stop and inspect the beam before continuing
+— see @sec-m1-step-zero.
+
+**The amplifier, before the sensor.** Build and power the instrumentation
+amplifier stage first and verify its quiescent output with a DMM, exactly as
+[S3 verifies its conditioning stage](../S3-aliasing-filtering/handbook.qmd#sec-s3-step-condition),
+before the gauge or the load cell is connected to it. See [Before you connect
+anything](../S1-daq-static/handbook.qmd#sec-s1-hardware) in S1 for the pin
+tolerance warning, which applies unchanged.
+:::
+
+### 1. Identify the board and verify the amplifier {#sec-m1-step-identify}
+
+```bash
+arduino-io list
+arduino-io info
+```
+
+Write down `adc_bits`, `vref_mV` and the `flags` line, as in
+[S1](../S1-daq-static/handbook.qmd#sec-s1-step-identify). Then, with the
+amplifier built but **no sensor connected**, measure its quiescent (no-input)
+output with the DMM and compare it with the design offset from
+@eq-m1-required-gain. A discrepancy here is the amplifier's own offset error,
+and it is a component of the uncertainty budget in @sec-m1-budget — measure
+it before you need it, the same discipline S3 uses for its conditioning
+stage.
+
+### 2. Load cell: the loading and unloading sweep {#sec-m1-step-loadcell}
+
+Working from zero to the working load and back, one mass at a time:
+
+```bash
+arduino-io mode 15 analog
+# masses in increasing order: 0, then each reference mass in turn
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/load-loading-000.csv
+# ... repeat for each mass, then repeat in decreasing order for unloading
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/load-unloading-000.csv
+```
+
+::: {.callout-important}
+## Load and unload in the same order every time
+
+The hysteresis loop of @eq-m1-hysteresis is only meaningful if the loading
+sequence and the unloading sequence visit the *same* nominal forces. Decide
+the mass sequence before you start and do not skip a point in either
+direction, even if a reading looks unsurprising.
+:::
+
+Record each mass's value and its uncertainty (from the balance or the
+masses' own calibration) in `channels[].reference_value` and
+`.reference_u` — Newtons, from $F = mg$, not kilograms.
+
+### 3. Creep: one mass, held {#sec-m1-step-creep}
+
+Apply a mass at roughly 60–80 % of the load cell's working range and leave it
+in place, recording continuously for several minutes:
+
+```bash
+arduino-io stream 15 --hz 100 --seconds 60 --csv data/load-creep.csv
+```
+
+Do not touch the load, the cell or the bench for the whole hold — vibration
+or a bumped table shows up in @eq-m1-creep's residuals as noise, not as
+creep, and can hide the effect you are measuring.
+
+### 4. Zero return {#sec-m1-step-zero}
+
+Remove the last mass and record a short zero reading, **without** re-zeroing
+or re-taring the instrument:
+
+```bash
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/load-zero-return.csv
+```
+
+Compare this against the very first zero reading of @sec-m1-step-loadcell.
+If the beam or load cell shows a visible permanent set, or the zero has
+shifted by more than a few percent of full scale, stop: something in the
+loading sequence exceeded its elastic range, and no further reading from this
+session should be trusted without re-verifying the mechanics.
+
+### 5. On the beam: quarter, half and full bridge {#sec-m1-step-bridges}
+
+With the strain gauges wired as described in
+[bridge sensitivity](handbook.qmd#sec-m1-bridges), apply the same small set
+of reference masses at the beam tip for each of the three configurations in
+turn:
+
+```bash
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/bridge-quarter-000.csv
+# ... repeat the quarter-bridge sweep over all reference masses, then
+# rewire as a half bridge and repeat at the two endpoint masses, then
+# rewire as a full bridge and repeat at the two endpoint masses
+```
+
+Use *more* points for the quarter-bridge sweep than for half and full: the
+quarter-bridge points are also the load-to-strain calibration
+[M2](../M2-hall-displacement/index.qmd) reads back for the stiffness
+cross-check, and a sweep needs more than two points to give a fit a residual
+at all.
+
+### 6. Temperature compensation {#sec-m1-step-temp}
+
+With the beam **unloaded**, record the quarter bridge and the dummy-gauge
+half bridge at the bench's ambient temperature, then change the bench
+temperature by a known, moderate amount (a heat gun held at a safe distance,
+or a cold pack, whichever your bench provides) and repeat both:
+
+```bash
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/temp-quarter-cold.csv
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/temp-half-cold.csv
+# change the bench temperature, let it stabilize, measure it
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/temp-quarter-hot.csv
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/temp-half-hot.csv
+```
+
+Record the temperature change itself — measured, not assumed — in
+`environment.ambient_temperature_C` for each pair and in
+`channels[].applied_delta_t_c`, following the extension pattern
+[S3 uses](../S3-aliasing-filtering/handbook.qmd#sec-s3-step-sidecar) for its
+own generator-frequency and filter fields.
+
+::: {.callout-tip}
+## No heat source at the bench yet?
+
+The [reference data](index.qmd#sec-m1-index-data) models the same test
+numerically — an apparent strain per kelvin applied directly to each bridge
+configuration through the same amplifier and ADC model — so every analysis
+task below runs against it unmodified. Repeat with your own runs once a
+controlled heat source is available.
+:::
+
+### 7. Fill the sidecars {#sec-m1-step-sidecar}
+
+Beyond the fields [S1](../S1-daq-static/handbook.qmd#sec-s1-step-sidecar)
+already asks for:
+
+- [ ] `channels[].reference_value` / `.reference_u` — the applied force in
+      newtons, from the reference mass and its own uncertainty
+- [ ] `channels[].gauge_factor`, `.bridge_excitation_v` — for every
+      beam-mounted-gauge run
+- [ ] `channels[].bridge_type` — `quarter`, `half` or `full`, for the bridge
+      demonstration runs
+- [ ] `channels[].applied_delta_t_c` — for the temperature-compensation runs
+- [ ] `channels[].load_cell_capacity_n`, `.load_cell_sensitivity_mv_per_v` —
+      for the load-cell runs
+- [ ] `synthetic: false`

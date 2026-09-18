@@ -13,10 +13,103 @@ experiment:
   validated:
     usbio: "TODO (Paolo)"
     driver: "TODO (Paolo)"
+toc: true
 ---
 
-::: {.callout-note}
-## Experiment not written yet
-This folder is part of the AMLab scaffold. The overview, slides, handbook and
-the two analysis templates will be added.
+Two temperature sensors, an NTC thermistor and a Pt1000, go into the same
+stirred bath at the same instants and come out with two independent
+calibration curves fitted against the same reference thermometer. Neither
+curve is a straight line: the NTC's resistance is fit with the nonlinear
+Steinhart–Hart equation, the Pt1000's with the IEC 60751 Callendar–Van Dusen
+relation, and both fits turn out to be ordinary linear least squares once the
+right columns are built.
+
+This experiment is also where **self-heating** appears for the first time on
+this site: both sensors are read by passing a current through them, and that
+current warms the sensing element above the medium it is meant to be
+measuring. Changing the excitation and watching the reading shift is a
+systematic error the student creates and then measures — memorable in a way a
+quoted datasheet number never is. [T2](../T2-temperature-dynamic/index.qmd)
+uses the calibration curves fitted here to convert its own voltage records
+into temperature, which is why the two experiments share a rig and are built
+together.
+
+## Materials {#sec-t1-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — 20 minutes, before the bench
+- [Handbook](handbook.qmd) — theory, procedure, tasks, questions
+  ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd) — Jupyter engine
+- [R template](analysis-r.qmd) — knitr engine
+
+Both ship with reference data and produce the same numbers.
+:::
+
+:::
+
+## What you measure {#sec-t1-index-measure}
+
+| Quantity | How | Where it is used later |
+|---|---|---|
+| Steinhart–Hart coefficients $A,B,C$ | Linear least squares of $1/T$ on $(1,\ln R,(\ln R)^3)$ over six bath points | Converts every NTC voltage in T1 and T2 to a temperature |
+| Callendar–Van Dusen $R_0$ (and $A$) | Linear least squares with IEC 60751's $B$ fixed | Converts every Pt1000 voltage in T1 and T2 to a temperature |
+| Sensitivity, divider vs. bridge | Symbolic derivative of each front end, evaluated at an operating point | Combined with S1's noise floor into a resolution in kelvin |
+| Self-heating dissipation constant $\delta$ | Apparent temperature shift between a low- and a high-excitation reading of the same bath point | Bounds how hard either sensor can be driven without biasing the reading |
+
+: What T1 produces {#tbl-t1-index-outputs}
+
+## Bench {#sec-t1-index-bench}
+
+**Tier 2.** A supported board, [the conditioning board](../../hardware/conditioning-board.qmd)
+for the Pt1000's instrumentation amplifier, [the thermal rig](../../hardware/thermal-rig.qmd)
+— a stirred water bath, an ice bath and a reference thermometer — and the
+resistors for the NTC's divider and the Pt1000's bridge.
+
+**Board.** Any supported board works; nothing here needs streaming at a
+particular rate, only a stable analog input.
+
+**Host.** Any host is adequate; T1 makes no timing measurement and no host
+comparison, unlike S1 and S3.
+
+## Reference data {#sec-t1-index-data}
+
+Seven generated runs ship with the experiment, in `data/`:
+
+| File | Contents |
+|---|---|
+| `cal-ice`, `cal-t20`, `cal-t35`, `cal-t50`, `cal-t65`, `cal-t80` | 200 records each at 1 kHz, both sensors on separate pins in the same run, at a fixed point and five stirred-bath points |
+| `selfheat-high` | The `t50` bath point again, both sensors driven at a higher excitation |
+
+: Reference data shipped with T1 {#tbl-t1-index-data}
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+It is produced by a seeded generator (`tools/synth/t1_temperature_static.py`)
+whose parameters are plausible placeholders, not measurements — marked
+`TODO (Paolo)` in `tools/synth/params/t1.yaml`, with one exception: the
+Callendar–Van Dusen coefficients are the published IEC 60751 standard, not a
+placeholder. The generator exists so the analysis templates render, and are
+checked in continuous integration, with no bench attached. Every page that
+uses it says so.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+Four hours, tier 2, needs S1 as a prerequisite for the resolution comparison
+of @sec-t1-sensitivity — the two nonlinear calibration fits and the
+self-heating measurement are where the session earns its extra hour over S1.
+Full notes, expected values, common failures and the rubric are in the
+[handbook](handbook.qmd#sec-t1-instructor).
 :::

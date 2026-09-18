@@ -1,0 +1,129 @@
+### Session timing {#sec-t3-instructor-timing}
+
+T3 is unusual on this site: the data collection is 24 hours of unattended
+logging, bracketed by two short bench sessions.
+
+| Time | Activity | Watch for |
+|---|---|---|
+| Day 1, 0:00–0:45 | Slides, build the insulated box, start the log | A group that starts the stream before confirming records are landing |
+| Day 1 → Day 2 | (unattended) | Nothing to watch — this is the point |
+| Day 2, 0:00–0:30 | Recover the run, inspect it raw, fill the sidecar | A truncated run presented as a full 24 h without saying so |
+| Day 2, 0:30–2:00 | Analysis template: drift fit, Allan deviation, budget | See below |
+| Day 2, 2:00–2:00+ | Budget discussion | — |
+
+If a cohort cannot leave equipment running for 24 hours between sessions,
+hand out the shipped synthetic `log-24h` run and use the second session alone
+for the analysis — the lesson is in the Allan-deviation minimum, not in the
+act of waiting.
+
+### Expected results {#sec-t3-instructor-expected}
+
+On the reference bench, with the shipped synthetic data, the numbers come out
+as follows. [TODO (Paolo)]{.todo}: replace with bench-measured values once
+the rig exists — until then these are the generator's parameters, presented
+to students as "roughly what to expect."
+
+- Diurnal amplitude: order $0.1$–$0.2\ ^\circ$C, by construction the
+  **largest** single feature in the raw record — students who expect the
+  insulated box to remove it, rather than attenuate it, are surprised, which
+  is the point.
+- Drift: sub-millikelvin per hour, small next to the diurnal swing over one
+  day, and only separable from it because the fit removes both at once
+  (@eq-t3-fit).
+- Allan deviation minimum: around ten minutes of averaging, at a level of a
+  few tenths of a millikelvin — **this is the headline result**, and the
+  discussion of what happens if you average *past* it is worth the most time
+  in the session.
+- Comparing $s/\sqrt{n}$ over the whole record against $\sigma_y(\tau_\mathrm{opt})$
+  at the optimum: the two differ by a large factor, because $s/\sqrt n$ was
+  never a valid estimator for a 24-hour average of this record in the first
+  place (@sec-t3-typea).
+
+### Common failures, in the order they happen {#sec-t3-instructor-failures}
+
+1. **The stream is started but not confirmed.** A group that walks away
+   without seeing the first few records land discovers 24 hours later that
+   nothing was logged. Make "watch the first minute" a checked step, not a
+   suggestion.
+2. **The host sleeps or updates overnight.** The record has a multi-hour gap
+   or simply stops; treated naively, a plot of it looks like a shorter
+   experiment with a drop at the end rather than what it is: a host that
+   turned itself off. Insist the host's power and update settings are
+   checked *before* starting, not diagnosed after.
+3. **Allan deviation computed on the raw record, not the residual.** Skipping
+   the drift-and-diurnal fit of @eq-t3-fit before @eq-t3-allan lets the
+   diurnal cycle's own curvature masquerade as instrument random walk at long
+   $\tau$, and the "minimum" a group reports is really just where the diurnal
+   term starts to dominate — an artifact of the room, not a property of the
+   instrument. Ask a group with a suspiciously late minimum whether they
+   detrended first.
+4. **$s/\sqrt{n}$ used anyway.** Despite the theory section, some group will
+   default back to the standard-error-of-the-mean formula for the budget's
+   Type A term, because it is what every earlier experiment on this site
+   used. Ask them to justify the independence assumption behind it, given
+   what @sec-t3-allan just showed about this particular record.
+5. **Averaging time confused with sampling time.** $\tau$ is an *averaging*
+   window, built from many raw samples at spacing $\tau_0$; a group that
+   reports $\tau_\mathrm{opt}$ as though it were a sample rate has not
+   understood what the Allan deviation is a function of.
+
+### Discussion questions and where they should land {#sec-t3-instructor-discussion}
+
+**"Why does insulating the box not remove the diurnal cycle?"** Because
+insulation is a low-pass filter on heat flow, with its own time constant; a
+24-hour period is slow enough that a great deal of it still gets through
+however good the insulation is, whereas insulation is very effective against
+faster room disturbances (a door opening, a person walking past). Connect
+this to S3's aliasing/filtering vocabulary if the cohort has done S3: this is
+a real analogue thermal low-pass, not a digital one, but the "corner
+frequency versus content frequency" reasoning is identical.
+
+**"Past the optimum, why does more averaging make it worse?"** Because past
+$\tau_\mathrm{opt}$ the record is no longer behaving like independent noise
+averaging down — it is behaving like a random walk, which accumulates. Ask
+what physical process in a real sensor produces a random walk (slow
+electronic drift, a reference that itself wanders) as opposed to white noise
+(thermal noise in the front end), and why no amount of filtering removes
+the former, since it lives at exactly the low frequencies you are trying to
+extract your answer from.
+
+**"Could you get a better answer by averaging for a week instead of a day?"**
+Only up to the *next* feature in the noise spectrum — nothing in this
+experiment tells you the curve keeps rising past 24 hours; it might flatten
+again (another flicker floor) or fall (if the "random walk" component was
+itself bounded, e.g. by a thermostatted room). This is an honest answer, not
+a dodge: it is exactly why real frequency-standard laboratories run Allan
+deviation plots out to weeks or months, and it is a good place to mention
+that this experiment's record length sets a hard ceiling on how far the
+curve can be trusted (@sec-t3-instructor-extension).
+
+### Assessment rubric {#sec-t3-instructor-rubric}
+
+Out of 100, for the report:
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Sidecar and run integrity | 10 | Full 24 h accounted for; any gap explained, not hidden |
+| Drift and diurnal fit | 20 | @eq-t3-fit fit correctly; drift reported in mK/h with its uncertainty; diurnal amplitude identified as the room, not the instrument |
+| Allan deviation | 30 | @eq-t3-allan implemented correctly on the *detrended* residual; log-log plot with slopes identified against @tbl-t3-slopes; the minimum located and reported as $\tau_\mathrm{opt}$ |
+| Connection to S1 and to $s/\sqrt n$ | 15 | Explains why $s/\sqrt n$ over the whole record is the wrong Type A term here, with a number showing by how much |
+| Uncertainty budget | 25 | Type A term taken from $\sigma_y(\tau_\mathrm{opt})$, not $s/\sqrt n$; calibration, quantization and drift-bound terms present and correctly sized; dominant term named |
+
+Deduct for any Allan-deviation plot without both axes logarithmic, for any
+$\tau$ reported without units, and for a budget that uses $s/\sqrt{n}$
+without at least discussing why it might not apply.
+
+### If a group finishes early {#sec-t3-instructor-extension}
+
+- Split the 24-hour record into two 12-hour halves and compare their
+  Allan-deviation curves and fitted drift rates — do they agree within what
+  the budget would predict, and if not, what does that say about
+  stationarity?
+- Repeat the fit of @eq-t3-fit with the diurnal term removed entirely and
+  compare the residual's Allan deviation against the full model's: how much
+  of the long-$\tau$ rise was really the diurnal cycle bleeding through a
+  fit with too few harmonics, rather than instrument random walk?
+- If a second sensor or a second box is available, run them side by side and
+  compare optimum averaging times and their minima directly — a genuine
+  two-instrument comparison, rather than trusting one instrument's own
+  self-assessment.

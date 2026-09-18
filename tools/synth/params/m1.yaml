@@ -1,0 +1,106 @@
+# M1 - strain gauges and load cell.
+#
+# TODO (Paolo): placeholders throughout; replace with measured/designed values
+# once the load cell, the beam-mounted gauges and the beam rig itself
+# (hardware/beam-rig.qmd) are chosen and characterized. `beam:` in particular
+# must stay numerically identical to the `beam:` block in params/m2.yaml -- the
+# two experiments share one physical rig, and M2's stiffness cross-check
+# depends on that.
+
+seed: 20260918
+
+# The cantilever beam rig (hardware/beam-rig.qmd). None of this is decided;
+# these are internally-consistent placeholders used only so the generator can
+# produce plausible strain and force values. Every page that quotes a number
+# derived from this block says so.
+beam:
+  length_m: 0.220              # TODO (Paolo): L
+  width_m: 0.025                # TODO (Paolo): b
+  thickness_m: 0.003            # TODO (Paolo): h
+  youngs_modulus_pa: 70.0e+9    # TODO (Paolo): E (70 GPa placeholder, aluminium-like)
+  density_kg_m3: 2700.0         # TODO (Paolo): rho (not used by M1 directly)
+  gauge_position_m: 0.010       # TODO (Paolo): x_gauge, distance from the root
+
+# The strain gauges bonded to the beam (quarter/half/full bridge demo and the
+# temperature-compensation test). A generic metal-foil gauge factor is used,
+# not a specific part's datasheet value.
+gauge:
+  gauge_factor: 2.1             # TODO (Paolo): k, from the gauge's own datasheet
+  u_gauge_factor_rel: 0.005     # TODO (Paolo): manufacturer tolerance, fractional
+  excitation_v: 5.0             # TODO (Paolo): bridge excitation for the beam gauges
+  u_excitation_rel: 0.005       # TODO (Paolo): excitation source tolerance, fractional
+  full_scale_strain: 1.0e-4     # TODO (Paolo): strain this bench treats as full
+                                 # scale when sizing the beam-gauge amplifier
+
+# The instrumentation amplifier ahead of the beam-mounted gauges. Its gain and
+# offset are *derived* from `gauge` above and the board's vref, following
+# eq-m1-required-gain in _theory.qmd -- not stored numerically here, only the
+# design headroom and the amplifier's own uncertainty.
+beam_amplifier:
+  target_lo_frac: 0.05          # p_lo: fraction of vref left as low headroom
+  target_hi_frac: 0.95          # p_hi: fraction of vref used at full scale
+  u_gain_rel: 0.01              # TODO (Paolo): from the gain-resistor tolerance
+  u_offset_v: 0.01              # TODO (Paolo): from the amplifier's own offset spec
+
+# The standalone load cell used for the static-calibration section: linearity,
+# hysteresis, creep, zero drift. A small benchtop cell, deliberately run well
+# inside its capacity.
+load_cell:
+  capacity_n: 5.0                    # TODO (Paolo): from the load cell's datasheet
+  sensitivity_mv_per_v: 2.0          # TODO (Paolo): rated output at capacity
+  excitation_v: 10.0                 # TODO (Paolo): bridge excitation used
+  nonlinearity_frac: 0.02            # TODO (Paolo): non-linearity, fraction of FS output
+  hysteresis_frac: 0.02              # TODO (Paolo): peak hysteresis, fraction of FS output
+  zero_drift_v_per_step: 0.0004      # TODO (Paolo): amplifier-referred drift per bench step
+  masses_kg: [0.0, 0.1, 0.2, 0.3, 0.4]
+  mass_u_kg: 0.00005                 # TODO (Paolo): balance/reference-mass uncertainty
+  records_per_point: 200
+  period_us: 1000
+  creep:
+    hold_mass_kg: 0.32
+    tau_s: 25.0                      # TODO (Paolo): creep time constant
+    amplitude_frac: 0.05             # TODO (Paolo): creep amplitude, fraction of the held reading
+    duration_s: 60.0
+    period_us: 10000
+  zero_return:
+    records: 200
+    period_us: 1000
+
+# The instrumentation amplifier ahead of the load cell (a separate physical
+# stage from `beam_amplifier`). Gain chosen so the load cell's own full-scale
+# bridge output (sensitivity_mv_per_v * excitation_v) lands near target_hi_frac
+# of vref, symmetric headroom as beam_amplifier.
+load_amplifier:
+  target_lo_frac: 0.05
+  target_hi_frac: 0.95
+  u_gain_rel: 0.01                   # TODO (Paolo)
+  u_offset_v: 0.005                  # TODO (Paolo)
+
+# Quarter/half/full bridge demonstration on the beam, all at the same small
+# set of reference masses so quarter, half and full outputs are directly
+# comparable, and so the quarter-bridge points double as the load->strain
+# calibration used by M2's stiffness cross-check.
+bridge_demo:
+  quarter_masses_kg: [0.0, 0.010, 0.020, 0.030]
+  half_full_masses_kg: [0.0, 0.030]
+  mass_u_kg: 0.00005                 # TODO (Paolo)
+  records_per_point: 200
+  period_us: 1000
+
+# Temperature-compensation test: beam unloaded (F = 0), quarter bridge (bare)
+# against half bridge (with a dummy gauge on an unstrained part of the same
+# material), each at a "cold" and a "hot" bench temperature.
+temperature_test:
+  delta_t_c: 15.0                        # TODO (Paolo): temperature step applied
+  alpha_apparent_quarter_per_k: 2.0e-6    # TODO (Paolo): bare-gauge apparent strain / K
+  alpha_apparent_half_per_k: 1.0e-7       # TODO (Paolo): residual after dummy-gauge cancellation
+  records_per_point: 200
+  period_us: 1000
+
+# Reference instrument quoted in generated sidecars: the balance/masses used
+# to apply known forces.
+references:
+  masses:
+    instrument: "reference masses"
+    model: "TODO (Paolo)"
+    calibration: "TODO (Paolo)"

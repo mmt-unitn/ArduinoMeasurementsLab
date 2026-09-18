@@ -1,0 +1,607 @@
+---
+title: "T1 — Analysis template (Python)"
+subtitle: "Static calibration of temperature sensors"
+description: "NTC and Pt1000 calibration, sensitivity, resolution and self-heating, in Python"
+engine: jupyter
+jupyter: python3
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment, so you can read the whole analysis before you touch a board. To
+analyse your own measurements, replace the files in `data/` and change the
+paths in the first cell — nothing else.
+
+The R template [`analysis-r.qmd`](analysis-r.qmd) has the same sections, the
+same figure labels and the same output tables, and produces the same numbers
+from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the sensitivity derivatives are computed by finite difference
+
+Both sensor calibrations are genuinely nonlinear, and this template needs
+derivatives of the fitted curves at an operating point — for
+[the sensitivity comparison](handbook.qmd#sec-t1-sensitivity) and for
+[the budget's sensitivity coefficient](handbook.qmd#eq-t1-budget-sens). A hand-derived
+closed form, transcribed once into Python and once into R, is exactly the
+kind of place the two could silently disagree. Both templates instead take
+the same central difference of the same fitted function, which by
+construction computes the same number in both languages.
+:::
+
+## Setup
+
+```{python}
+#| label: setup
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd().parents[1] / "shared" / "python"))
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from labtools import (budget_table, enob, lsb_volts, read_run,
+                      synthetic_banner, validate_meta)
+
+plt.rcParams.update({
+    "figure.figsize": (7.0, 4.0),
+    "axes.grid": True,
+    "grid.alpha": 0.3,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+})
+
+DATA = Path("data")
+CAL_RUNS = {
+    "ice": DATA / "cal-ice.csv", "t20": DATA / "cal-t20.csv",
+    "t35": DATA / "cal-t35.csv", "t50": DATA / "cal-t50.csv",
+    "t65": DATA / "cal-t65.csv", "t80": DATA / "cal-t80.csv",
+}
+SELFHEAT_RUN = DATA / "selfheat-high.csv"
+S1_NOISE_RUN = Path("../S1-daq-static/data/noise-linux.csv")
+
+PIN_NTC = 15
+PIN_PT = 16
+OPERATING_POINT = "t50"      # the bath point reused for the self-heating run
+
+# IEC 60751 Callendar-Van Dusen coefficients, t >= 0 degC branch: the
+# published standard, fixed rather than fitted (see _theory.qmd).
+A_IEC = 3.9083e-3
+B_IEC = -5.775e-7
+```
+
+```{python}
+#| label: helpers
+def central_diff(f, x, eps):
+    """(f(x+eps) - f(x-eps)) / (2 eps) -- the one derivative rule both
+    templates share, so a fitted curve's local slope is the same number in
+    both languages regardless of how messy its closed form would be."""
+    return (f(x + eps) - f(x - eps)) / (2.0 * eps)
+
+
+def r_ntc_from_v(v, r_fixed, vcc):
+    """Inverts the divider of @eq-t1-divider for the NTC's resistance."""
+    return vcc * r_fixed / v - r_fixed
+
+
+def t_ntc_from_r(r, coef):
+    """Steinhart-Hart, @eq-t1-sh, evaluated from a fitted (A, B, C)."""
+    ln_r = np.log(r)
+    inv_t = coef[0] + coef[1] * ln_r + coef[2] * ln_r ** 3
+    return 1.0 / inv_t - 273.15
+
+
+def r_pt_from_v(v, r_bridge, v_exc, gain, offset):
+    """Inverts the bridge of @eq-t1-bridge for the Pt1000's resistance."""
+    deflection = (v - offset) / (gain * v_exc)
+    return r_bridge * (0.5 + deflection) / (0.5 - deflection)
+
+
+def r_pt_from_t(t, r0, a, b=B_IEC):
+    """Callendar-Van Dusen, @eq-t1-cvd, forward direction."""
+    return r0 * (1.0 + a * t + b * t ** 2)
+
+
+def t_pt_from_r(r, r0, a, b=B_IEC):
+    """Callendar-Van Dusen, positive root of the quadratic in t."""
+    c = 1.0 - r / r0
+    return (-a + np.sqrt(a ** 2 - 4.0 * b * c)) / (2.0 * b)
+```
+
+```{python}
+#| label: load
+cal = {name: read_run(path) for name, path in CAL_RUNS.items()}
+selfheat = read_run(SELFHEAT_RUN)
+primary = cal[OPERATING_POINT]
+board = primary.meta["board"]
+LSB = lsb_volts(primary.meta)
+FSR = board["vref_mV"] / 1000.0
+```
+
+```{python}
+#| label: banner
+#| echo: false
+#| output: asis
+print(synthetic_banner(primary.meta))
+```
+
+## Data quality
+
+```{python}
+#| label: quality
+#| echo: false
+#| output: asis
+all_runs = dict(cal)
+all_runs["selfheat-high"] = selfheat
+for name, run in all_runs.items():
+    problems = validate_meta(run.meta)
+    stats = run.meta.get("stream_stats", {})
+    lossy = {k: v for k, v in stats.items()
+             if k != "records" and isinstance(v, int) and v > 0}
+    print(f"\n**{name}** — {stats.get('records', '?')} records; "
+          + ("metadata complete" if not problems
+             else "metadata problems: " + "; ".join(problems))
+          + "; "
+          + ("no losses reported" if not lossy
+             else "losses: " + ", ".join(f"{k} = {v}" for k, v in lossy.items()))
+          + "\n")
+```
+
+## Correcting for the ADC's own offset and gain
+
+S1 measured this platform's own ADC offset and gain error directly, from a
+three-point calibration against a DMM
+([the calibration model](../S1-daq-static/handbook.qmd#eq-s1-fit)). That
+correction is not optional here: the front ends below produce voltages that
+differ by close to an order of magnitude between the coldest calibration
+point and the self-heating run's high excitation, so a *fixed* voltage error
+is a very different *fraction* of the reading at each one, and inverting an
+uncorrected voltage through either sensor's strongly nonlinear resistance
+relation turns that fraction into a resistance error that does not cancel
+between conditions. Every voltage used below is corrected with S1's own
+fitted offset and gain first.
+
+```{python}
+#| label: s1-correction
+s1_points = []
+for path in ["../S1-daq-static/data/cal-0v.csv",
+            "../S1-daq-static/data/cal-1v25.csv",
+            "../S1-daq-static/data/cal-2v50.csv"]:
+    run = read_run(path)
+    pin = run.meta["acquisition"]["pins"][0]
+    ch = next(c for c in run.meta["channels"] if c["pin"] == pin)
+    volts = run.data.loc[run.data["pin"] == pin, "volts"]
+    s1_points.append((ch["reference_value"], volts.mean()))
+x_s1 = np.array([p[0] for p in s1_points])
+y_s1 = np.array([p[1] for p in s1_points])
+sxx_s1 = ((x_s1 - x_s1.mean()) ** 2).sum()
+B_S1 = ((x_s1 - x_s1.mean()) * (y_s1 - y_s1.mean())).sum() / sxx_s1
+A_S1 = y_s1.mean() - B_S1 * x_s1.mean()
+
+
+def s1_correct(v):
+    """Removes S1's fitted ADC offset and gain error from a raw voltage."""
+    return (v - A_S1) / B_S1
+```
+
+## NTC calibration: Steinhart–Hart
+
+Each bath point gives a mean divider voltage on pin 15, corrected as above
+and inverted to a resistance with the design values from that run's own
+sidecar, then fit to [the Steinhart–Hart equation](handbook.qmd#eq-t1-sh-linear).
+
+```{python}
+#| label: ntc-calibration
+rows = []
+for name, run in cal.items():
+    ch = next(c for c in run.meta["channels"] if c["pin"] == PIN_NTC)
+    v = s1_correct(run.data.loc[run.data["pin"] == PIN_NTC, "volts"].mean())
+    r = r_ntc_from_v(v, ch["divider_r_fixed_ohm"], ch["excitation_v"])
+    rows.append({
+        "run": run.meta["run"], "bath_C": ch["reference_value"],
+        "u_bath_C": ch["reference_u"], "R_ohm": r, "mean_V": v,
+        "n": int((run.data["pin"] == PIN_NTC).sum()),
+    })
+ntc = pd.DataFrame(rows).sort_values("bath_C").reset_index(drop=True)
+
+# Ordinary least squares of 1/T on (1, ln R, (ln R)^3): @eq-t1-sh-linear.
+ln_r = np.log(ntc["R_ohm"].to_numpy())
+y = 1.0 / (ntc["bath_C"].to_numpy() + 273.15)
+X = np.column_stack([np.ones_like(ln_r), ln_r, ln_r ** 3])
+coef_sh, *_ = np.linalg.lstsq(X, y, rcond=None)
+
+ntc["T_fit_C"] = t_ntc_from_r(ntc["R_ohm"].to_numpy(), coef_sh)
+ntc["residual_K"] = ntc["T_fit_C"] - ntc["bath_C"]
+```
+
+```{python}
+#| label: out-ntc-cal
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.run} | {r.bath_C:.2f} | {r.u_bath_C:.3f} | {r.R_ohm:.2f} | "
+    f"{r.T_fit_C:.3f} | {r.residual_K * 1e3:+.1f} |"
+    for r in ntc.itertuples())
+print(f"""
+| Run | Bath [degC] | $u$(bath) [K] | $R$ [ohm] | Fitted $T$ [degC] | Residual [mK] |
+|---|---|---|---|---|---|
+{rows}
+
+: NTC calibration points and Steinhart-Hart fit residuals {{#tbl-t1-ntc-cal}}
+""")
+```
+
+```{python}
+#| label: out-ntc-cal-text
+#| echo: false
+#| output: asis
+print(f"""
+Fitted Steinhart-Hart coefficients $A = {coef_sh[0]:.6e}$,
+$B = {coef_sh[1]:.6e}$, $C = {coef_sh[2]:.6e}$. Largest residual
+${ntc['residual_K'].abs().max() * 1e3:.1f}$ mK — the bound that enters the
+budget as fit residual, because six points cannot correct a curve shape they
+did not sample.
+""")
+```
+
+```{python}
+#| label: fig-t1-ntc-cal
+#| echo: false
+#| fig-cap: "NTC calibration: bath temperature against resistance (top), with the fitted Steinhart-Hart curve, and fit residuals in millikelvin (bottom)."
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.2),
+                               gridspec_kw={"height_ratios": [2, 1]})
+r_grid = np.linspace(ntc["R_ohm"].min() * 0.95, ntc["R_ohm"].max() * 1.05, 200)
+ax1.plot(r_grid, t_ntc_from_r(r_grid, coef_sh), "-", lw=1.2, label="fit")
+ax1.plot(ntc["R_ohm"], ntc["bath_C"], "o", ms=7, label="bath points")
+ax1.set_xlabel("Resistance [ohm]")
+ax1.set_ylabel("Temperature [degC]")
+ax1.legend(loc="upper right", frameon=False)
+
+ax2.axhline(0.0, lw=0.8, color="0.4")
+ax2.plot(ntc["bath_C"], ntc["residual_K"] * 1e3, "o-", ms=7, lw=1.0)
+ax2.set_xlabel("Bath temperature [degC]")
+ax2.set_ylabel("Residual [mK]")
+fig.tight_layout()
+plt.show()
+```
+
+## Pt1000 calibration: Callendar–Van Dusen
+
+Same idea, pin 16, but the fit recovers $R_0$ and $A$ with
+[$B$ fixed at the IEC 60751 value](handbook.qmd#eq-t1-cvd-linear).
+
+```{python}
+#| label: pt-calibration
+rows = []
+for name, run in cal.items():
+    ch = next(c for c in run.meta["channels"] if c["pin"] == PIN_PT)
+    v = s1_correct(run.data.loc[run.data["pin"] == PIN_PT, "volts"].mean())
+    r = r_pt_from_v(v, ch["bridge_r_ohm"], ch["excitation_v"],
+                    ch["conditioning"]["gain"], ch["conditioning"]["offset"])
+    rows.append({
+        "run": run.meta["run"], "bath_C": ch["reference_value"],
+        "u_bath_C": ch["reference_u"], "R_ohm": r, "mean_V": v,
+        "n": int((run.data["pin"] == PIN_PT).sum()),
+    })
+pt = pd.DataFrame(rows).sort_values("bath_C").reset_index(drop=True)
+
+# Linear least squares of R on (1 + B t^2, t): @eq-t1-cvd-linear.
+t_bath = pt["bath_C"].to_numpy()
+basis1 = 1.0 + B_IEC * t_bath ** 2
+basis2 = t_bath
+Xp = np.column_stack([basis1, basis2])
+coef_p, *_ = np.linalg.lstsq(Xp, pt["R_ohm"].to_numpy(), rcond=None)
+R0_FIT = float(coef_p[0])
+A_FIT = float(coef_p[1] / coef_p[0])
+
+pt["T_fit_C"] = t_pt_from_r(pt["R_ohm"].to_numpy(), R0_FIT, A_FIT)
+pt["residual_K"] = pt["T_fit_C"] - pt["bath_C"]
+```
+
+```{python}
+#| label: out-pt-cal
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.run} | {r.bath_C:.2f} | {r.u_bath_C:.3f} | {r.R_ohm:.3f} | "
+    f"{r.T_fit_C:.3f} | {r.residual_K * 1e3:+.1f} |"
+    for r in pt.itertuples())
+print(f"""
+| Run | Bath [degC] | $u$(bath) [K] | $R$ [ohm] | Fitted $T$ [degC] | Residual [mK] |
+|---|---|---|---|---|---|
+{rows}
+
+: Pt1000 calibration points and Callendar-Van Dusen fit residuals {{#tbl-t1-pt-cal}}
+""")
+```
+
+```{python}
+#| label: out-pt-cal-text
+#| echo: false
+#| output: asis
+print(f"""
+Fitted $R_0 = {R0_FIT:.3f}\\ \\Omega$, fitted $A = {A_FIT:.6e}\\ ^\\circ\\mathrm{{C}}^{{-1}}$
+against the fixed IEC 60751 value $A_\\mathrm{{IEC}} = {A_IEC:.6e}$ — a
+difference of {(A_FIT / A_IEC - 1) * 100:+.2f} %. Largest residual
+${pt['residual_K'].abs().max() * 1e3:.1f}$ mK.
+""")
+```
+
+```{python}
+#| label: fig-t1-pt-cal
+#| echo: false
+#| fig-cap: "Pt1000 calibration: resistance against bath temperature (top), with the fitted Callendar-Van Dusen curve, and fit residuals in millikelvin (bottom)."
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.2),
+                               gridspec_kw={"height_ratios": [2, 1]})
+t_grid = np.linspace(pt["bath_C"].min(), pt["bath_C"].max(), 200)
+ax1.plot(t_grid, r_pt_from_t(t_grid, R0_FIT, A_FIT), "-", lw=1.2, label="fit")
+ax1.plot(pt["bath_C"], pt["R_ohm"], "o", ms=7, label="bath points")
+ax1.set_xlabel("Bath temperature [degC]")
+ax1.set_ylabel("Resistance [ohm]")
+ax1.legend(loc="upper left", frameon=False)
+
+ax2.axhline(0.0, lw=0.8, color="0.4")
+ax2.plot(pt["bath_C"], pt["residual_K"] * 1e3, "o-", ms=7, lw=1.0)
+ax2.set_xlabel("Bath temperature [degC]")
+ax2.set_ylabel("Residual [mK]")
+fig.tight_layout()
+plt.show()
+```
+
+## Sensitivity and resolution
+
+[S1](../S1-daq-static/index.qmd) measured this platform's own ADC noise
+floor with no sensor attached; the shorted channel of its long run is the
+converter's own floor, independent of either front end here. Dividing it by
+each front end's sensitivity at the operating point turns a voltage noise
+into [a temperature resolution](handbook.qmd#eq-t1-resolution).
+
+```{python}
+#| label: sensitivity
+op = cal[OPERATING_POINT]
+ch_ntc_op = next(c for c in op.meta["channels"] if c["pin"] == PIN_NTC)
+ch_pt_op = next(c for c in op.meta["channels"] if c["pin"] == PIN_PT)
+T_OP = ch_ntc_op["reference_value"]
+
+# The already-corrected resistances from the calibration tables above, not
+# recomputed, so the operating point used here is exactly the one that went
+# into the fit.
+r_ntc_op = float(ntc.loc[ntc["run"] == op.meta["run"], "R_ohm"].iloc[0])
+r_pt_op = float(pt.loc[pt["run"] == op.meta["run"], "R_ohm"].iloc[0])
+
+# dR/dT for the NTC: the reciprocal of the fitted model's own dT/dR, taken by
+# central difference so no cubic-in-ln(R) has to be inverted by hand.
+dT_dR_ntc = central_diff(lambda r: t_ntc_from_r(r, coef_sh), r_ntc_op, 1e-3)
+dR_dT_ntc = 1.0 / dT_dR_ntc
+# dV/dR (divider) times dR/dT: @eq-t1-divider-sens, Vcc*R*Rt/(R+Rt)^2*alpha
+# with alpha = dR/dT / Rt, which is the same thing as Vcc*R/(R+Rt)^2 * dR/dT.
+dV_dT_ntc = abs(ch_ntc_op["excitation_v"] * ch_ntc_op["divider_r_fixed_ohm"]
+               / (ch_ntc_op["divider_r_fixed_ohm"] + r_ntc_op) ** 2
+               * dR_dT_ntc)
+
+# dR/dT for the Pt1000: the CVD forward model, straightforwardly a function
+# of T already, differenced the same way for a consistent method.
+dR_dT_pt = central_diff(lambda t: r_pt_from_t(t, R0_FIT, A_FIT), T_OP, 1e-4)
+dV_dT_pt = abs(ch_pt_op["conditioning"]["gain"] * ch_pt_op["excitation_v"]
+              * ch_pt_op["bridge_r_ohm"]
+              / (r_pt_op + ch_pt_op["bridge_r_ohm"]) ** 2 * dR_dT_pt)
+
+s1_noise = read_run(S1_NOISE_RUN)
+PIN_S1_SHORTED = 16
+sigma_floor = s1_noise.data.loc[s1_noise.data["pin"] == PIN_S1_SHORTED,
+                                "volts"].std(ddof=1)
+
+resolution_ntc_mK = sigma_floor / dV_dT_ntc * 1e3
+resolution_pt_mK = sigma_floor / dV_dT_pt * 1e3
+```
+
+```{python}
+#| label: out-sensitivity
+#| echo: false
+#| output: asis
+print(f"""
+| Sensor | $\\mathrm{{d}}V/\\mathrm{{d}}T$ at {T_OP:.0f} degC [mV/K] | S1 noise floor $\\sigma$ [mV] | Resolution $\\delta T_\\mathrm{{res}}$ [mK] |
+|---|---|---|---|
+| NTC (divider) | {dV_dT_ntc * 1e3:.3f} | {sigma_floor * 1e3:.4f} | {resolution_ntc_mK:.1f} |
+| Pt1000 (bridge) | {dV_dT_pt * 1e3:.3f} | {sigma_floor * 1e3:.4f} | {resolution_pt_mK:.1f} |
+
+: Sensitivity and resolution, evaluated at the {T_OP:.0f} degC bath point {{#tbl-t1-sensitivity}}
+""")
+```
+
+```{python}
+#| label: out-sensitivity-text
+#| echo: false
+#| output: asis
+winner = "NTC" if resolution_ntc_mK < resolution_pt_mK else "Pt1000"
+print(f"""
+At {T_OP:.0f} degC, **{winner}** gives the better resolution against S1's own
+noise floor, even though the two sensors' raw sensitivity in mV/K may not
+rank the same way — the amplifier ahead of the Pt1000 changes both the
+sensitivity and, by the assumption stated in [the handbook](handbook.qmd#sec-t1-sensitivity),
+contributes no separately characterized noise of its own here, so the
+comparison is fair only to the extent that assumption holds.
+""")
+```
+
+```{python}
+#| label: fig-t1-sensitivity
+#| echo: false
+#| fig-cap: "Empirical sensitivity between consecutive bath points, both sensors, across the calibration sweep. The NTC's sensitivity varies markedly with temperature; the bridge-plus-amplifier stage is comparatively flat."
+# Empirical dV/dT between consecutive bath points -- a finite difference of
+# the calibration table itself, needing no fitted model to invert.
+t_mid_ntc = (ntc["bath_C"].to_numpy()[1:] + ntc["bath_C"].to_numpy()[:-1]) / 2.0
+dvdt_ntc = np.diff(ntc["mean_V"].to_numpy()) / np.diff(ntc["bath_C"].to_numpy())
+t_mid_pt = (pt["bath_C"].to_numpy()[1:] + pt["bath_C"].to_numpy()[:-1]) / 2.0
+dvdt_pt = np.diff(pt["mean_V"].to_numpy()) / np.diff(pt["bath_C"].to_numpy())
+
+fig, ax = plt.subplots(figsize=(7.0, 3.6))
+ax.plot(t_mid_ntc, dvdt_ntc * 1e3, "o-", label="NTC (divider)")
+ax.plot(t_mid_pt, dvdt_pt * 1e3, "s-", label="Pt1000 (bridge)")
+ax.set_xlabel("Bath temperature [degC]")
+ax.set_ylabel("Empirical dV/dT [mV/K]")
+ax.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+## Self-heating
+
+Both sensors were recorded at the `t50` bath point's temperature twice: once
+at the low excitation used throughout calibration, once at a higher
+excitation in `selfheat-high`. Reading both through the already-fitted
+curves and solving [the self-heating relation](handbook.qmd#eq-t1-selfheat-fit)
+recovers $\delta$ for each sensor.
+
+```{python}
+#| label: selfheat
+ch_ntc_low, ch_ntc_high = ch_ntc_op, next(
+    c for c in selfheat.meta["channels"] if c["pin"] == PIN_NTC)
+ch_pt_low, ch_pt_high = ch_pt_op, next(
+    c for c in selfheat.meta["channels"] if c["pin"] == PIN_PT)
+
+# The low-excitation point is the already-corrected voltage and resistance
+# from the calibration table -- not recomputed here either.
+v_ntc_low = float(ntc.loc[ntc["run"] == op.meta["run"], "mean_V"].iloc[0])
+r_ntc_low, r_pt_low = r_ntc_op, r_pt_op
+v_ntc_high = s1_correct(
+    selfheat.data.loc[selfheat.data["pin"] == PIN_NTC, "volts"].mean())
+v_pt_high = s1_correct(
+    selfheat.data.loc[selfheat.data["pin"] == PIN_PT, "volts"].mean())
+
+r_ntc_high = r_ntc_from_v(v_ntc_high, ch_ntc_high["divider_r_fixed_ohm"], ch_ntc_high["excitation_v"])
+t_ntc_low = t_ntc_from_r(r_ntc_low, coef_sh)
+t_ntc_high = t_ntc_from_r(r_ntc_high, coef_sh)
+p_ntc_low = (ch_ntc_low["excitation_v"] / (ch_ntc_low["divider_r_fixed_ohm"] + r_ntc_low)) ** 2 * r_ntc_low
+p_ntc_high = (ch_ntc_high["excitation_v"] / (ch_ntc_high["divider_r_fixed_ohm"] + r_ntc_high)) ** 2 * r_ntc_high
+dT_ntc = t_ntc_high - t_ntc_low
+delta_ntc_mw_k = (p_ntc_high - p_ntc_low) * 1e3 / dT_ntc
+
+r_pt_high = r_pt_from_v(v_pt_high, ch_pt_high["bridge_r_ohm"], ch_pt_high["excitation_v"],
+                        ch_pt_high["conditioning"]["gain"], ch_pt_high["conditioning"]["offset"])
+t_pt_low = t_pt_from_r(r_pt_low, R0_FIT, A_FIT)
+t_pt_high = t_pt_from_r(r_pt_high, R0_FIT, A_FIT)
+p_pt_low = (ch_pt_low["excitation_v"] / (ch_pt_low["bridge_r_ohm"] + r_pt_low)) ** 2 * r_pt_low
+p_pt_high = (ch_pt_high["excitation_v"] / (ch_pt_high["bridge_r_ohm"] + r_pt_high)) ** 2 * r_pt_high
+dT_pt = t_pt_high - t_pt_low
+delta_pt_mw_k = (p_pt_high - p_pt_low) * 1e3 / dT_pt
+```
+
+```{python}
+#| label: out-selfheat
+#| echo: false
+#| output: asis
+print(f"""
+| Sensor | $V$ low / high [V] | $P$ low / high [mW] | $\\Delta T_\\mathrm{{sh}}$ [K] | $\\delta$ [mW/K] |
+|---|---|---|---|---|
+| NTC | {ch_ntc_low['excitation_v']:.2f} / {ch_ntc_high['excitation_v']:.2f} | {p_ntc_low * 1e3:.4f} / {p_ntc_high * 1e3:.4f} | {dT_ntc:.4f} | {delta_ntc_mw_k:.2f} |
+| Pt1000 | {ch_pt_low['excitation_v']:.2f} / {ch_pt_high['excitation_v']:.2f} | {p_pt_low * 1e3:.4f} / {p_pt_high * 1e3:.4f} | {dT_pt:.4f} | {delta_pt_mw_k:.2f} |
+
+: Self-heating shift and recovered dissipation constant, at the {T_OP:.0f} degC bath point {{#tbl-t1-selfheat}}
+""")
+```
+
+```{python}
+#| label: out-selfheat-text
+#| echo: false
+#| output: asis
+print(f"""
+Raising the excitation shifted the NTC's apparent reading by
+{dT_ntc * 1e3:.0f} mK and the Pt1000's by {dT_pt * 1e3:.0f} mK — both well
+above either fit's own residual scatter of a few millikelvin, and both large
+enough to see clearly in a single {T_OP:.0f} degC reading, not only in a
+200-sample mean. Neither shift was corrected for; both enter the budget below
+as a bound on what a different excitation, or a different medium's
+dissipation constant, could cost.
+""")
+```
+
+## Uncertainty budget
+
+The measurand is the NTC's calibrated temperature at the `t50` bath point,
+$\hat T = f(V)$ with $f$ the
+composition of the divider inverse and the Steinhart-Hart curve, and the
+[local sensitivity coefficient](handbook.qmd#eq-t1-budget-sens) taken by
+central difference.
+
+```{python}
+#| label: budget
+def t_ntc_from_v_full(v):
+    r = r_ntc_from_v(v, ch_ntc_op["divider_r_fixed_ohm"], ch_ntc_op["excitation_v"])
+    return t_ntc_from_r(r, coef_sh)
+
+c_v = central_diff(t_ntc_from_v_full, v_ntc_low, 1e-6)
+
+# Corrected voltage's standard deviation: the affine correction scales it by
+# 1/B_S1, exactly as it scales the mean.
+sigma_v_op = op.data.loc[op.data["pin"] == PIN_NTC, "volts"].std(ddof=1) / abs(B_S1)
+n_op = len(op.data.loc[op.data["pin"] == PIN_NTC])
+
+enob_here = enob(FSR, sigma_floor)
+q_eff = FSR / 2 ** enob_here
+
+# TODO (Paolo): half-width, from the multi-point bath-uniformity check of
+# thermal-rig.qmd @sec-therm-bath -- not yet measured on any bench.
+BATH_UNIFORMITY_K = 0.05
+
+components = [
+    dict(quantity="Reference thermometer", value=T_OP, unit="degC",
+         distribution="normal", half_width=ch_ntc_op["reference_u"],
+         coverage=1.0, sensitivity=1.0),
+    dict(quantity="Fit residual (NTC)", value=0.0, unit="degC",
+         distribution="rectangular",
+         half_width=float(ntc["residual_K"].abs().max()), sensitivity=1.0),
+    dict(quantity="Effective ADC quantization", value=0.0, unit="degC",
+         distribution="rectangular", half_width=q_eff / 2, sensitivity=c_v),
+    dict(quantity="Repeatability of the mean", value=v_ntc_low, unit="degC",
+         distribution="type-a", std=sigma_v_op / np.sqrt(n_op),
+         sensitivity=c_v),
+    dict(quantity="Self-heating (uncorrected)", value=0.0, unit="degC",
+         distribution="rectangular", half_width=abs(dT_ntc), sensitivity=1.0),
+    dict(quantity="Bath spatial non-uniformity", value=0.0, unit="degC",
+         distribution="rectangular", half_width=BATH_UNIFORMITY_K,
+         sensitivity=1.0),
+]
+budget = budget_table(components, k=2, unit="degC")
+```
+
+```{python}
+#| label: out-budget
+#| echo: false
+#| output: asis
+print(budget.to_markdown(
+    caption=f"Uncertainty budget for the NTC's calibrated temperature at "
+            f"the {T_OP:.0f} degC bath point",
+    label="tbl-t1-budget"))
+```
+
+```{python}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant = budget.table.loc[budget.table["index_pct"].idxmax()]
+print(f"""
+Combined standard uncertainty $u_c = {budget.u_c * 1e3:.1f}$ mK, expanded
+$U = {budget.U * 1e3:.1f}$ mK at $k = 2$. The dominant component is
+**{dominant['quantity']}** at {dominant['index_pct']:.0f} % of the combined
+variance.
+""")
+```
+
+## What to report
+
+1. @tbl-t1-ntc-cal and @fig-t1-ntc-cal: the NTC's Steinhart-Hart fit, with
+   $A$, $B$, $C$ and the residuals in millikelvin.
+2. @tbl-t1-pt-cal and @fig-t1-pt-cal: the Pt1000's Callendar-Van Dusen fit,
+   with $R_0$, the recovered $A$ against the fixed IEC 60751 value, and the
+   residuals.
+3. @tbl-t1-sensitivity and @fig-t1-sensitivity: sensitivity and resolution
+   for both sensors, and which one wins against S1's own noise floor.
+4. @tbl-t1-selfheat: the self-heating shift and the recovered dissipation
+   constant for both sensors.
+5. @tbl-t1-budget: the budget, the dominant component, and what you would
+   change first to reduce it.

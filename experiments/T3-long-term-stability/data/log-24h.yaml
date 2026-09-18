@@ -1,0 +1,54 @@
+experiment: T3
+run: log-24h
+date: 2026-09-18
+operator: tools/synth (generated)
+synthetic: true
+board:
+  model: portenta-h7
+  serial: SYNTHETIC-0001
+  usbio_version: 0.4.0
+  adc_bits: 16
+  vref_mV: 3300
+host:
+  os: linux
+  os_version: '6.6'
+  machine: raspberry-pi-5
+  libusb_version: 1.0.27
+  hub: true
+driver_version: 0.4.0
+binding: python
+binding_version: 0.4.0
+acquisition:
+  pins:
+  - 15
+  requested_period_us: 5000000
+  achieved_rate_hz: 0.2
+  duration_s: 86395.002202
+stream_stats:
+  records: 17280
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+channels:
+- pin: 15
+  quantity: temperature
+  unit: degC
+  sensor: linear analog temperature sensor, direct to pin
+  conditioning:
+    gain: 1.0
+    offset: 0.0
+    filter: none
+  calibration_reference: see T1 (offset/gain against a reference thermometer)
+  sensor_offset_V: -1.7999999999999998
+  sensor_sensitivity_V_per_K: 0.15
+environment:
+  ambient_temperature_C: 23.0
+  notes: 24 h continuous log at 5 s intervals, insulated box, Linux host that stayed
+    on
+references: []
+generator:
+  tool: tools/synth
+  version: 0.1.0
+  note: Parameters are placeholders; see tools/synth/params/

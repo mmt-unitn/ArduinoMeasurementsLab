@@ -1,0 +1,244 @@
+---
+title: "T3 — Long-term stability and drift"
+subtitle: "Laboratory handbook"
+description: "A day of logging: drift, Allan deviation and the limits of averaging"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-t3-outcomes}
+
+By the end of this session you should be able to:
+
+1. Separate a linear drift from a diurnal environmental cycle in a single
+   least-squares fit, and explain why the two are only separable because the
+   diurnal period is known exactly.
+2. Define and compute the overlapping Allan deviation of a time series, and
+   read a noise process directly off the slope of its log-log plot.
+3. Locate the optimum averaging time from the minimum of an Allan-deviation
+   curve, and explain in concrete terms what happens to a measurement if it
+   is averaged for longer than that.
+4. Explain why $s/\sqrt{n}$ is not a valid Type A uncertainty for an average
+   taken over a correlated (non-white) record, and use the Allan deviation in
+   its place.
+5. Build a GUM uncertainty budget for a long-term mean that correctly
+   combines instrument repeatability, calibration, quantization and drift.
+
+## Prerequisites {#sec-t3-prerequisites}
+
+- [S1](../S1-daq-static/index.qmd), completed — its Type A/averaging result
+  is the one T3 generalizes and explains the limit of.
+- [T1](../T1-temperature-static/index.qmd), completed — its calibration is
+  the correction applied before this budget.
+- Least squares, and enough statistics to be comfortable with the idea that
+  successive samples of a signal can be correlated rather than independent.
+
+## Hardware and cost tier {#sec-t3-hardware}
+
+::: {.callout-note}
+## Tier 3 — cheap hardware, expensive time
+
+Nothing here costs more than the earlier thermal experiments. What tier 3
+means for T3 is duration: the bench is occupied, unattended, for over a day.
+:::
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Any supported board | The instrument under test | No streaming requirement — a few samples a minute is plenty |
+| Temperature sensor, calibrated in T1 | The measurand's instrument | Reused from T1's bench, not a new characterization |
+| Insulated box | Attenuates, does not remove, the room's diurnal cycle | Any enclosure with a long thermal time constant works |
+| Host computer that can run for 24+ h | Acquisition | **Linux required**; disable sleep and unattended updates |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+## Theory {#sec-t3-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-t3-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-t3-recording}
+
+One CSV and one sidecar for the whole 24-hour log, in the format specified in
+[Data format](../../data-format/index.qmd). The checklist in
+@sec-t3-step-sidecar is the version to work through at the bench.
+
+```{.yaml filename="data/log-24h.yaml"}
+experiment: T3
+run: log-24h
+date: 2026-09-18
+operator: "your name"
+synthetic: false
+
+board:
+  model: portenta-h7
+  adc_bits: 16
+  vref_mV: 3300
+
+host:
+  os: linux
+  machine: "which bench, and confirm it never slept"
+
+acquisition:
+  pins: [15]
+  requested_period_us: 5000000     # 5 s
+  achieved_rate_hz: 0.0            # from the stream summary
+  duration_s: 86400.0
+
+stream_stats:                       # all six, from the summary line
+  records: 0
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+
+channels:
+  - pin: 15
+    quantity: temperature
+    unit: degC
+    sensor: "sensor calibrated in T1"
+    conditioning: {gain: 1.0, offset: 0.0, filter: none}
+    sensor_offset_V: 0.0            # from the sensor's own linear model
+    sensor_sensitivity_V_per_K: 0.0 # from the sensor's own linear model
+
+environment:
+  ambient_temperature_C: 23.0
+  notes: "insulation used; anything unusual overnight"
+```
+
+::: {.callout-warning}
+## A gap is not a shorter experiment
+
+If the host slept, restarted, or the stream stopped early, the record has a
+discontinuity or is short of 24 hours. Either is fine to report — a shorter
+Allan-deviation curve is still valid, just over a smaller range of $\tau$ —
+but it must be stated in `environment.notes`, not smoothed over.
+:::
+
+## Analysis tasks {#sec-t3-tasks}
+
+Open one of the two templates — [Python](analysis-py.qmd) or
+[R](analysis-r.qmd) — point it at your file, and work through it. They
+contain the same sections and produce the same numbers.
+
+1. **Data quality.** Validate the sidecar and read the stream counters;
+   confirm the record's actual duration before analysing anything.
+2. **Drift and diurnal fit.** Fit @eq-t3-fit. Report the drift in mK/h with
+   its uncertainty, and the diurnal amplitude, and say which one is larger
+   and why that is expected.
+3. **Allan deviation.** Compute @eq-t3-allan on the detrended residual, plot
+   it log-log, and classify the slopes against @tbl-t3-slopes.
+4. **The optimum.** Locate $\tau_\mathrm{opt}$ and $\sigma_y(\tau_\mathrm{opt})$
+   at the minimum. State, in one sentence, what averaging for ten times
+   longer than $\tau_\mathrm{opt}$ would do to the answer.
+5. **Compare with $s/\sqrt n$.** Compute the ordinary standard error of the
+   mean over the whole record and compare it with $\sigma_y(\tau_\mathrm{opt})$.
+   Say which one is the honest answer and why.
+6. **Budget.** Build the budget of @sec-t3-budget.
+
+## Uncertainty budget {#sec-t3-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+**The measurand** is a mean temperature $\hat T$, quoted over an averaging
+window of length $\tau_\mathrm{opt}$ — the *best* window this record
+supports, per @sec-t3-typea — corrected for T1's calibration:
+
+$$
+\hat{T} = \bar{x}(\tau_\mathrm{opt}) - \Delta_\mathrm{cal}
+$$ {#eq-t3-that}
+
+with $\bar x(\tau_\mathrm{opt})$ the average temperature over that window and
+$\Delta_\mathrm{cal}$ the correction from [T1](../T1-temperature-static/index.qmd)'s
+calibration. Both sensitivity coefficients are $\pm 1$.
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| Repeatability at $\tau_\mathrm{opt}$ | A | — | $\sigma_y(\tau_\mathrm{opt})$ from @eq-t3-allan — **not** $s/\sqrt n$; see @sec-t3-typea | $1$ |
+| Calibration | B | — | [T1](../T1-temperature-static/index.qmd)'s offset/gain uncertainty | $-1$ |
+| Effective quantization | B | Rectangular | [S1](../S1-daq-static/index.qmd)'s effective ADC resolution, converted through the sensor's V/K sensitivity | $1$ |
+| Drift over the window | B | Rectangular | Half-width $\lvert\dot x\rvert\,\tau_\mathrm{opt}/2$, from the fitted drift rate | $1$ |
+
+: Components of the T3 budget {#tbl-t3-components}
+
+Report $u_c$ and $U = 2u_c$, the index $h_i$ of every component, and one
+sentence naming the dominant term.
+
+::: {.callout-important}
+## Why the quantization term uses S1's *effective* resolution
+
+As in S1, the nominal LSB is not the number that belongs here. The
+converter's own input-referred noise sets the resolution actually achieved,
+and @sec-t3-theory's sensor front end is deliberately built with enough gain
+that this noise — not the code width — is the limiting quantization-like
+term. Using the nominal LSB instead would understate this component, exactly
+as S1 warned.
+:::
+
+::: {.callout-note}
+## Why the drift term is a bound, not a correction
+
+The drift rate $\dot x$ is fitted over the *whole* 24-hour record, but the
+budget is for a mean taken over the much shorter window
+$\tau_\mathrm{opt}$. Correcting for drift *within* that short window would
+need to know where in the diurnal cycle the window sits, which this budget
+does not assume; instead, the maximum plausible drift over the window enters
+as a rectangular bound — conservative, and stated as such.
+:::
+
+## Questions {#sec-t3-questions}
+
+1. The Allan deviation falls, flattens, then rises. Name the noise process
+   responsible for each of the three regimes.
+2. Your fitted diurnal amplitude is ten times your fitted drift. Does that
+   mean the insulation failed? What would a *better* insulated box change
+   about this record, and what would it leave unchanged?
+3. A colleague averages the whole 24-hour record and reports $s/\sqrt{n}$ as
+   the uncertainty of the mean. By what factor is this wrong, using your own
+   numbers, and in which direction?
+4. Past $\tau_\mathrm{opt}$, the Allan deviation rises as $\tau^{+1/2}$. Name
+   a plausible physical mechanism in a real sensor or its electronics that
+   would produce a random walk rather than white noise.
+5. If this record were extended to a week instead of a day, is there
+   anything in the 24-hour data that tells you what the curve would do
+   beyond $\tau \approx 6$ h? Justify your answer from the data, not from
+   general principle.
+6. S1 found that averaging beyond a few hundred samples bought "essentially
+   nothing" because other terms dominated the budget. Restate that result
+   using T3's vocabulary: at what $\tau$ does *this* record's white-noise
+   floor stop being the limiting term?
+7. Your calibration correction from T1 and your Allan-deviation repeatability
+   term are roughly the same size. What would you improve first, and why?
+
+## Instructor notes {#sec-t3-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

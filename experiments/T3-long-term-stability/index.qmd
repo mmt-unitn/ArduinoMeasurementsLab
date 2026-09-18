@@ -13,10 +13,96 @@ experiment:
   validated:
     usbio: "TODO (Paolo)"
     driver: "TODO (Paolo)"
+toc: true
 ---
 
-::: {.callout-note}
-## Experiment not written yet
-This folder is part of the AMLab scaffold. The overview, slides, handbook and
-the two analysis templates will be added.
+A temperature sensor sits in an insulated box for 24 hours, measuring a
+quantity that barely moves. That is deliberate: with the measurand held as
+still as the rig allows, what the record actually shows is the *instrument*
+— its noise, its slow drift, and how the answer's precision changes with how
+long you are willing to average for.
+
+It is the experiment that finally answers a question every earlier session
+on this site has left open: averaging always helps, up to a point — where is
+that point, and what happens if you keep going past it anyway?
+
+## Materials {#sec-t3-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — 15 minutes, before starting the log
+- [Handbook](handbook.qmd) — theory, procedure, tasks, questions
+  ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd) — Jupyter engine
+- [R template](analysis-r.qmd) — knitr engine
+
+Both ship with a 24-hour reference log and produce the same numbers.
+:::
+
+:::
+
+## What you measure {#sec-t3-index-measure}
+
+| Quantity | How | Where it is used later |
+|---|---|---|
+| Drift | Least-squares fit of a linear term plus a 24 h sinusoid | The bound on any correction assumed constant over a long average |
+| Diurnal amplitude | The same fit | Separated from drift; shown to be the room, not the instrument |
+| Allan deviation $\sigma_y(\tau)$ | Overlapping estimator on the detrended residual | Identifies the noise process at each averaging time |
+| Optimum averaging time $\tau_\mathrm{opt}$ | The minimum of $\sigma_y(\tau)$ | The correct Type A term for the budget — not $s/\sqrt n$ |
+
+: What T3 produces {#tbl-t3-index-outputs}
+
+## Bench {#sec-t3-index-bench}
+
+**Tier 3.** Any supported board, an insulated box built from whatever is at
+hand, and — the one hard requirement — a Linux host that can be left running
+and connected for over 24 hours. No signal generator, no oscilloscope; the
+whole experiment is one long, slow, unattended recording followed by a
+compact analysis session.
+
+::: {.callout-warning}
+## Equipment left running unattended overnight
+
+This experiment leaves a board and a host running, unattended, for over a
+day. Read [the procedure's safety callout](handbook.qmd#sec-t3-procedure)
+before starting the log — it covers disabling host sleep, avoiding active
+heating elements that are not rated for unattended operation, and labelling
+equipment left on a shared bench.
+:::
+
+## Reference data {#sec-t3-index-data}
+
+One generated run ships with the experiment, in `data/`:
+
+| File | Contents |
+|---|---|
+| `log-24h` | 17280 records, one every 5 s, over 24 h, one channel |
+
+: Reference data shipped with T3 {#tbl-t3-index-data}
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+It is produced by a seeded generator (`tools/synth/t3_long_term.py`) whose
+parameters are plausible placeholders, not measurements — marked
+`TODO (Paolo)` in `tools/synth/params/t3.yaml`. It exists so the analysis
+templates render, and are checked in continuous integration, without 24
+hours of hardware time. Every page that uses it says so.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+Tier 3, postgraduate, and the only experiment on this site with a 24-hour
+unattended phase in the middle. Split it across two short bench sessions a
+day apart. Full notes, expected values, common failures and the rubric are in
+the [handbook](handbook.qmd#sec-t3-instructor).
 :::

@@ -1,0 +1,102 @@
+# T2 - dynamic response of temperature sensors (plunge and ramp tests).
+#
+# TODO (Paolo): placeholders throughout; replace with measured values once the
+# thermal rig exists. The sensor front ends (ntc, pt1000) reuse the same
+# "true" resistance-temperature models as tools/synth/params/t1.yaml -- same
+# sensors, same rig -- so the numbers below under `ntc` and `pt1000` must be
+# kept identical to T1's if either file changes.
+
+seed: 20260918
+
+# --- the sensors, reproduced from t1.yaml (must match) -----------------------
+ntc:
+  r25_ohm: 10000.0
+  beta_k: 3950.0
+  divider:
+    r_fixed_ohm: 1000.0
+    vcc_v: 0.9                 # the "low" excitation from T1, used throughout T2
+  pin: 15
+
+pt1000:
+  r0_ohm: 1000.3
+  a_iec: 3.9083e-3
+  b_iec: -5.775e-7
+  bridge:
+    r_bridge_ohm: 1000.0
+    inamp_gain: 15.0
+    bias_offset_v: 1.0
+    v_exc_v: 1.2                # the "low" excitation from T1, used throughout T2
+  pin: 16
+
+# --- the plunge tests: bare NTC, one medium each ------------------------------
+# Same step (room to bath, `initial_temperature_c` -> `target_temperature_c`)
+# in every medium, so tau is the only thing that differs between rows -- the
+# controlled comparison @sec-t2-medium asks for. `baseline_s` is recorded
+# before the plunge so T0 is estimated from data, not assumed; `plunge_time_s`
+# is where the step happens within the record.
+plunge:
+  initial_temperature_c: 23.0    # TODO (Paolo): typical room temperature
+  target_temperature_c: 70.0     # TODO (Paolo): the bath setpoint used
+  media:
+    - name: "still-air"
+      tau_s: 90.0                # TODO (Paolo): measured
+      baseline_s: 30.0
+      duration_s: 630.0
+      period_us: 2000000
+    - name: "forced-air"
+      tau_s: 25.0                # TODO (Paolo): measured
+      baseline_s: 10.0
+      duration_s: 185.0
+      period_us: 600000
+    - name: "still-water"
+      tau_s: 12.0                 # TODO (Paolo): measured
+      baseline_s: 5.0
+      duration_s: 89.0
+      period_us: 300000
+    - name: "stirred-water"
+      tau_s: 2.5                  # TODO (Paolo): measured
+      baseline_s: 2.0
+      duration_s: 19.5
+      period_us: 62500
+
+# --- the sheathed Pt1000: second-order plunge, stirred water -----------------
+# Two cascaded first-order stages -- the sheath, exposed to the bath, and the
+# sensing element inside it, exposed only to the sheath -- give the classic
+# two-time-constant step response with zero slope (an inflection, not a
+# corner) at t = 0; see _theory.qmd for the closed form.
+sheathed:
+  initial_temperature_c: 23.0
+  target_temperature_c: 70.0
+  tau_sheath_s: 3.0             # TODO (Paolo): measured, outer metal sheath
+  tau_element_s: 10.0           # TODO (Paolo): measured, sensing element inside it
+  baseline_s: 5.0
+  duration_s: 75.0
+  period_us: 62500
+
+# --- the ramp test: bare NTC, stirred water -----------------------------------
+# A linearly ramping bath temperature, starting after `baseline_s` at the
+# steady value `initial_temperature_c`. The theoretical steady-state lag is
+# e_inf = tau * ramp_rate_c_per_s (@eq-t2-ramp-lag), evaluated with the same
+# tau_s as the stirred-water plunge above, since it is the same sensor in the
+# same medium.
+ramp:
+  initial_temperature_c: 23.0
+  ramp_rate_c_per_s: 0.5         # TODO (Paolo): the controller setting used
+  tau_s: 2.5                     # the stirred-water tau, reused
+  baseline_s: 2.0
+  ramp_duration_s: 20.0
+  period_us: 62500
+
+# --- the finite transfer time between media -----------------------------------
+# thermal-rig.qmd's plunge-test requirement is t_transition << tau
+# (@eq-therm-plunge); this is what a manual plunge is estimated to take, used
+# only as a bound in the uncertainty budget -- the generator itself writes an
+# instantaneous step, so this number never enters the data.
+transition:
+  t_transition_s: 0.2            # TODO (Paolo): estimated from video or first deflection
+
+references:
+  thermometer:
+    instrument: "reference thermometer"
+    model: "TODO (Paolo)"
+    calibration: "TODO (Paolo)"

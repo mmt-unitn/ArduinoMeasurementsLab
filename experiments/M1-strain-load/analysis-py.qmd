@@ -1,0 +1,662 @@
+---
+title: "M1 — Analysis template (Python)"
+subtitle: "Strain gauges and load cell"
+description: "In-amp sizing, load-cell calibration, bridge configurations and temperature compensation, in Python"
+engine: jupyter
+jupyter: python3
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment, so you can read the whole analysis before you touch a bench. To
+analyse your own measurements, replace the files in `data/` and change the
+paths in the first cell — nothing else.
+
+The R template [`analysis-r.qmd`](analysis-r.qmd) has the same sections, the
+same figure labels and the same output tables, and produces the same numbers
+from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the creep fit is written out rather than called from a library
+
+The creep model of [the handbook](handbook.qmd#eq-m1-creep) is nonlinear in
+its time constant. Both templates fit it with an explicit two-parameter
+Gauss–Newton loop, the same discipline
+[S3 uses](../S3-aliasing-filtering/analysis-py.qmd) for its sine fit and its
+FIR filter: `scipy.optimize.curve_fit` and R's `nls` use different
+convergence criteria and can converge to slightly different parameter
+values on the same data, which breaks table-for-table agreement between the
+two languages.
+:::
+
+## Setup
+
+```{python}
+#| label: setup
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd().parents[1] / "shared" / "python"))
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from labtools import (budget_table, enob, lsb_volts, read_run,
+                      synthetic_banner, u_quantization, validate_meta)
+
+plt.rcParams.update({
+    "figure.figsize": (7.0, 4.0),
+    "axes.grid": True,
+    "grid.alpha": 0.3,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+})
+
+DATA = Path("data")
+LOAD_MASSES_G = [0, 100, 200, 300, 400]
+LOADING_RUNS = [DATA / f"load-loading-{m:03d}.csv" for m in LOAD_MASSES_G]
+UNLOADING_RUNS = [DATA / f"load-unloading-{m:03d}.csv" for m in reversed(LOAD_MASSES_G)]
+CREEP_RUN = DATA / "load-creep.csv"
+ZERO_RETURN_RUN = DATA / "load-zero-return.csv"
+
+BRIDGE_QUARTER_MASSES_G = [0, 10, 20, 30]
+BRIDGE_QUARTER_RUNS = [DATA / f"bridge-quarter-{m:03d}.csv" for m in BRIDGE_QUARTER_MASSES_G]
+BRIDGE_HALF_RUNS = [DATA / "bridge-half-000.csv", DATA / "bridge-half-030.csv"]
+BRIDGE_FULL_RUNS = [DATA / "bridge-full-000.csv", DATA / "bridge-full-030.csv"]
+
+TEMP_RUNS = {
+    "quarter_cold": DATA / "temp-quarter-cold.csv",
+    "quarter_hot": DATA / "temp-quarter-hot.csv",
+    "half_cold": DATA / "temp-half-cold.csv",
+    "half_hot": DATA / "temp-half-hot.csv",
+}
+```
+
+```{python}
+#| label: helpers
+def ols_fit(x, y):
+    """Ordinary least squares, y = a + b x, written out so the sensitivity
+    coefficients and the residual standard error match the handbook exactly
+    -- the same construction as S1's calibration fit."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = x.size
+    sxx = ((x - x.mean()) ** 2).sum()
+    b = ((x - x.mean()) * (y - y.mean())).sum() / sxx
+    a = y.mean() - b * x.mean()
+    resid = y - (a + b * x)
+    if n > 2:
+        s_res = np.sqrt((resid ** 2).sum() / (n - 2))
+        u_b = s_res / np.sqrt(sxx)
+        u_a = s_res * np.sqrt(1.0 / n + x.mean() ** 2 / sxx)
+    else:
+        u_b = u_a = float("nan")
+    return dict(a=a, b=b, u_a=u_a, u_b=u_b, resid=resid)
+
+
+def creep_fit(t_s, v, v0, n_iter=200):
+    """Gauss-Newton fit of y(t) = C (1 - exp(-t/tau)) to y = v/v0 - 1.
+
+    Two parameters only -- v0 is taken directly from the first samples of
+    the hold rather than fitted, which keeps the iteration well-conditioned
+    and gives Python and R the same starting point.
+    """
+    t_s = np.asarray(t_s, dtype=float)
+    y = np.asarray(v, dtype=float) / v0 - 1.0
+    c, tau = float(y[-1]), t_s[-1] / 3.0
+    for _ in range(n_iter):
+        e = np.exp(-t_s / tau)
+        model = c * (1.0 - e)
+        resid = y - model
+        d_c = 1.0 - e
+        d_tau = -c * e * (t_s / tau ** 2)
+        jac = np.column_stack([d_c, d_tau])
+        step, *_ = np.linalg.lstsq(jac, resid, rcond=None)
+        c += step[0]
+        tau += step[1]
+        if np.max(np.abs(step)) < 1e-12:
+            break
+    resid = y - c * (1.0 - np.exp(-t_s / tau))
+    return dict(c_inf=c, tau_s=tau, resid=resid)
+```
+
+```{python}
+#| label: load
+quarter_runs = [read_run(p) for p in BRIDGE_QUARTER_RUNS]
+primary = quarter_runs[-1]
+board = primary.meta["board"]
+ch0 = primary.meta["channels"][0]
+
+FSR = board["vref_mV"] / 1000.0
+LSB = lsb_volts(primary.meta)
+GAUGE_FACTOR = ch0["gauge_factor"]
+U_GAUGE_FACTOR_REL = ch0["u_gauge_factor_rel"]
+VEX = ch0["bridge_excitation_v"]
+U_EXCITATION_REL = ch0["u_excitation_rel"]
+GAIN_BEAM = ch0["conditioning"]["gain"]
+OFFSET_BEAM = ch0["conditioning"]["offset"]
+U_GAIN_REL = ch0["amplifier_u_gain_rel"]
+U_OFFSET_V = ch0["amplifier_u_offset_v"]
+```
+
+```{python}
+#| label: banner
+#| echo: false
+#| output: asis
+print(synthetic_banner(primary.meta))
+```
+
+## Data quality
+
+```{python}
+#| label: quality
+#| echo: false
+#| output: asis
+all_paths = (LOADING_RUNS + UNLOADING_RUNS + [CREEP_RUN, ZERO_RETURN_RUN]
+            + BRIDGE_QUARTER_RUNS + BRIDGE_HALF_RUNS + BRIDGE_FULL_RUNS
+            + list(TEMP_RUNS.values()))
+all_runs = {str(p): read_run(p) for p in all_paths}
+n_bad = sum(1 for r in all_runs.values() if validate_meta(r.meta))
+lossy = [name for name, r in all_runs.items()
+        if any(v for k, v in r.meta.get("stream_stats", {}).items()
+               if k != "records" and isinstance(v, int) and v > 0)]
+print(f"""
+{len(all_runs)} runs read.
+{'All sidecars are complete.' if n_bad == 0 else f'{n_bad} sidecar(s) have missing fields.'}
+{'No run reports a lost record.' if not lossy else 'Runs with losses: ' + ', '.join(lossy)}
+""")
+```
+
+## Why the amplifier: the arithmetic
+
+At a representative strain $\varepsilon = 10^{-4}$
+([the handbook](handbook.qmd#eq-m1-quarter-numeric)), the bare quarter-bridge
+signal, the LSB it would be read against with no amplifier, and the actual
+amplified signal this bench uses, computed from the sidecar's own recorded
+gauge factor, excitation and gain — not re-typed constants.
+
+```{python}
+#| label: inamp
+EPS_EXAMPLE = 1.0e-4
+raw_v = GAUGE_FACTOR * EPS_EXAMPLE * VEX / 4.0
+raw_lsb = raw_v / LSB
+amplified_v = GAIN_BEAM * raw_v
+amplified_frac_fs = amplified_v / FSR
+```
+
+```{python}
+#| label: out-inamp
+#| echo: false
+#| output: asis
+print(f"""
+| Quantity | Value |
+|---|---|
+| Representative strain $\\varepsilon$ | {EPS_EXAMPLE:.0e} |
+| Bare bridge signal, $k\\varepsilon V_\\mathrm{{ex}}/4$ | {raw_v * 1e3:.4f} mV |
+| One LSB on this board | {LSB * 1e6:.2f} µV |
+| Bare signal, in LSB | {raw_lsb:.2f} |
+| Amplifier gain actually used | {GAIN_BEAM:.1f} |
+| Amplified signal at the ADC | {amplified_v:.3f} V |
+| Amplified signal, fraction of full scale | {amplified_frac_fs * 100:.1f} % |
+
+: The case for the amplifier, in numbers {{#tbl-m1-inamp}}
+""")
+```
+
+```{python}
+#| label: out-inamp-text
+#| echo: false
+#| output: asis
+print(f"""
+Unamplified, this strain would produce **{raw_lsb:.1f} LSB** — the same
+order of magnitude as [S1's own noise floor](../S1-daq-static/handbook.qmd#sec-s1-enob),
+which on this board is of order 0.5 mV RMS, itself several LSB wide. A
+bridge signal that size is not a small measurement; it is not a measurement.
+Amplified by {GAIN_BEAM:.0f}, the same strain reaches
+**{amplified_frac_fs * 100:.0f} %** of the ADC's full-scale range, which is
+what [the required-gain design](handbook.qmd#eq-m1-required-gain) is for.
+""")
+```
+
+## Load cell: linearity and hysteresis
+
+The load cell's static calibration: a straight-line fit to the loading
+sweep, and the same sweep read backwards.
+
+```{python}
+#| label: linearity
+def load_frame(paths, direction):
+    rows = []
+    for p in paths:
+        run = read_run(p)
+        ch = run.meta["channels"][0]
+        rows.append({
+            "run": run.meta["run"], "direction": direction,
+            "F_N": ch["reference_value"], "u_F_N": ch["reference_u"],
+            "mean_V": run.data["volts"].mean(), "sd_V": run.data["volts"].std(ddof=1),
+            "n": len(run.data),
+            "capacity_N": ch["load_cell_capacity_n"],
+            "sensitivity_mv_per_v": ch["load_cell_sensitivity_mv_per_v"],
+            "excitation_v": ch["bridge_excitation_v"],
+            "gain": ch["conditioning"]["gain"],
+        })
+    return pd.DataFrame(rows)
+
+loading = load_frame(LOADING_RUNS, "loading")
+unloading = load_frame(UNLOADING_RUNS, "unloading")
+
+row0 = loading.iloc[0]
+V_FS = row0["gain"] * row0["sensitivity_mv_per_v"] * 1.0e-3 * row0["excitation_v"]
+
+fit = ols_fit(loading["F_N"], loading["mean_V"])
+loading["residual_V"] = fit["resid"]
+nonlinearity_pct = np.abs(loading["residual_V"]).max() / V_FS * 100.0
+```
+
+```{python}
+#| label: out-linearity
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.run} | {r.F_N:.4f} | {r.mean_V:.5f} | {r.sd_V * 1e3:.3f} | "
+    f"{r.n} | {r.residual_V * 1e3:+.3f} |"
+    for r in loading.itertuples())
+print(f"""
+| Run | Force [N] | Mean [V] | $s$ [mV] | $n$ | Residual [mV] |
+|---|---|---|---|---|---|
+{rows}
+
+: Loading sweep and the linear fit's residuals {{#tbl-m1-linearity}}
+""")
+```
+
+```{python}
+#| label: out-linearity-text
+#| echo: false
+#| output: asis
+print(f"""
+Fitted $a = {fit['a'] * 1e3:.2f}$ mV, $b = {fit['b'] * 1e3:.3f}$ mV/N, with
+$u(a) = {fit['u_a'] * 1e3:.3f}$ mV and $u(b) = {fit['u_b'] * 1e3:.4f}$ mV/N.
+Full-scale output $V_\\mathrm{{FS}} = {V_FS:.3f}$ V (at the load cell's rated
+capacity, from the sidecar). Non-linearity, from [the linearity definition in the handbook](handbook.qmd#eq-m1-linearity):
+**{nonlinearity_pct:.2f} %FS**.
+""")
+```
+
+```{python}
+#| label: fig-m1-linearity
+#| echo: false
+#| fig-cap: "Loading sweep: indication against force (top) and fit residuals (bottom)."
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.0), sharex=True,
+                               gridspec_kw={"height_ratios": [2, 1]})
+grid = np.linspace(0, loading["F_N"].max(), 100)
+ax1.plot(grid, fit["a"] + fit["b"] * grid, "-", lw=1.2, label="fit")
+ax1.plot(loading["F_N"], loading["mean_V"], "o", ms=7, label="loading")
+ax1.set_ylabel("Indicated voltage [V]")
+ax1.legend(loc="upper left", frameon=False)
+ax2.axhline(0.0, lw=0.8, color="0.4")
+ax2.plot(loading["F_N"], loading["residual_V"] * 1e3, "o-", ms=7, lw=1.0)
+ax2.set_xlabel("Force [N]")
+ax2.set_ylabel("Residual [mV]")
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: hysteresis
+hyst = loading[["run", "F_N", "mean_V"]].rename(columns={"mean_V": "loading_V"}).copy()
+hyst["unloading_V"] = unloading.sort_values("F_N")["mean_V"].to_numpy()
+hyst["diff_mV"] = (hyst["unloading_V"] - hyst["loading_V"]) * 1e3
+hysteresis_pct = hyst["diff_mV"].abs().max() / 1e3 / V_FS * 100.0
+```
+
+```{python}
+#| label: out-hysteresis
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.F_N:.4f} | {r.loading_V:.5f} | {r.unloading_V:.5f} | {r.diff_mV:+.3f} |"
+    for r in hyst.itertuples())
+print(f"""
+| Force [N] | Loading [V] | Unloading [V] | Difference [mV] |
+|---|---|---|---|
+{rows}
+
+: Loading against unloading at the same nominal force {{#tbl-m1-hysteresis}}
+""")
+```
+
+```{python}
+#| label: out-hysteresis-text
+#| echo: false
+#| output: asis
+print(f"""
+Maximum hysteresis, from [the hysteresis definition in the handbook](handbook.qmd#eq-m1-hysteresis): **{hysteresis_pct:.2f} %FS**,
+largest near mid-range and closing towards both ends, as the bell-shaped
+path dependence predicts.
+""")
+```
+
+```{python}
+#| label: fig-m1-hysteresis
+#| echo: false
+#| fig-cap: "Loading and unloading curves overlaid. The gap between them at each force is the hysteresis of @tbl-m1-hysteresis."
+fig, ax = plt.subplots(figsize=(6.5, 4.0))
+ax.plot(hyst["F_N"], hyst["loading_V"], "o-", label="loading")
+ax.plot(hyst["F_N"], hyst["unloading_V"], "s-", label="unloading")
+ax.set_xlabel("Force [N]")
+ax.set_ylabel("Indicated voltage [V]")
+ax.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+## Load cell: creep and zero drift
+
+```{python}
+#| label: creep
+creep_run = read_run(CREEP_RUN)
+t_s = (creep_run.data["t_us"].to_numpy() - creep_run.data["t_us"].iloc[0]) / 1.0e6
+v = creep_run.data["volts"].to_numpy()
+v0 = v[:10].mean()
+creep = creep_fit(t_s, v, v0)
+```
+
+```{python}
+#| label: out-creep
+#| echo: false
+#| output: asis
+print(f"""
+| Quantity | Value |
+|---|---|
+| $V(0)$ | {v0:.5f} V |
+| Fitted $C_\\infty$ | {creep['c_inf'] * 100:.2f} % |
+| Fitted $\\tau$ | {creep['tau_s']:.1f} s |
+| Residual RMS | {np.sqrt((creep['resid'] ** 2).mean()) * 1e3:.3f} mV (relative units) |
+| Hold duration | {t_s[-1]:.0f} s |
+
+: Creep fit of [the creep model in the handbook](handbook.qmd#eq-m1-creep) on the held load {{#tbl-m1-creep}}
+""")
+```
+
+```{python}
+#| label: fig-m1-creep
+#| echo: false
+#| fig-cap: "The held-load reading over time, with the fitted creep curve of [the creep model in the handbook](handbook.qmd#eq-m1-creep)."
+fig, ax = plt.subplots(figsize=(6.5, 3.6))
+ax.plot(t_s, v, lw=0.6, alpha=0.6, label="data")
+ax.plot(t_s, v0 * (1.0 + creep["c_inf"] * (1.0 - np.exp(-t_s / creep["tau_s"]))),
+       lw=1.4, label="fit")
+ax.set_xlabel("Time [s]")
+ax.set_ylabel("Indicated voltage [V]")
+ax.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: zero_drift
+first_zero = read_run(LOADING_RUNS[0]).data["volts"].mean()
+last_zero = read_run(ZERO_RETURN_RUN).data["volts"].mean()
+zero_drift_mV = (last_zero - first_zero) * 1e3
+zero_drift_pct = abs(zero_drift_mV) / 1e3 / V_FS * 100.0
+```
+
+```{python}
+#| label: out-zero
+#| echo: false
+#| output: asis
+print(f"""
+| Quantity | Value |
+|---|---|
+| First zero (start of session) | {first_zero:.5f} V |
+| Last zero (after the full sequence) | {last_zero:.5f} V |
+| Zero drift | {zero_drift_mV:+.3f} mV ({zero_drift_pct:.3f} %FS) |
+
+: Zero drift across the session {{#tbl-m1-zero}}
+""")
+```
+
+## Bridge configurations on the beam
+
+The same small reference masses, read through quarter, half and full
+bridge. The quarter-bridge points also give the load-to-strain calibration
+[M2](../M2-hall-displacement/index.qmd) reads back.
+
+```{python}
+#| label: bridges
+def bridge_points(paths):
+    rows = []
+    for p in paths:
+        run = read_run(p)
+        ch = run.meta["channels"][0]
+        rows.append({"F_N": ch["reference_value"], "mean_V": run.data["volts"].mean(),
+                    "sd_V": run.data["volts"].std(ddof=1), "n": len(run.data)})
+    return pd.DataFrame(rows).sort_values("F_N").reset_index(drop=True)
+
+quarter = bridge_points(BRIDGE_QUARTER_RUNS)
+half = bridge_points(BRIDGE_HALF_RUNS)
+full = bridge_points(BRIDGE_FULL_RUNS)
+
+fit_quarter = ols_fit(quarter["F_N"], quarter["mean_V"])
+slope_quarter = fit_quarter["b"]
+u_slope_quarter = fit_quarter["u_b"]
+slope_half = (half["mean_V"].iloc[1] - half["mean_V"].iloc[0]) / (half["F_N"].iloc[1] - half["F_N"].iloc[0])
+slope_full = (full["mean_V"].iloc[1] - full["mean_V"].iloc[0]) / (full["F_N"].iloc[1] - full["F_N"].iloc[0])
+
+ratio_half = slope_half / slope_quarter
+ratio_full = slope_full / slope_quarter
+
+# Strain sensitivity at the gauge, recovered from the quarter-bridge slope:
+# V_adc = GAIN_BEAM * (k eps Vex / 4) + offset, eps linear in F, so
+# d(eps)/dF = 4 * d(V_adc)/dF / (GAIN_BEAM k Vex).
+d_eps_d_f = 4.0 * slope_quarter / (GAIN_BEAM * GAUGE_FACTOR * VEX)
+u_d_eps_d_f = 4.0 * u_slope_quarter / (GAIN_BEAM * GAUGE_FACTOR * VEX)
+```
+
+```{python}
+#| label: out-bridges
+#| echo: false
+#| output: asis
+print(f"""
+| Configuration | $dV/dF$ [mV/N] | Ratio to quarter | Nominal ratio |
+|---|---|---|---|
+| Quarter | {slope_quarter * 1e3:.3f} | 1.00 | 1 |
+| Half | {slope_half * 1e3:.3f} | {ratio_half:.3f} | 2 |
+| Full | {slope_full * 1e3:.3f} | {ratio_full:.3f} | 4 |
+
+: Bridge sensitivity and the 1 : 2 : 4 ratio of [the bridge relations in the handbook](handbook.qmd#eq-m1-bridge-configs) {{#tbl-m1-bridges}}
+""")
+```
+
+```{python}
+#| label: out-bridges-text
+#| echo: false
+#| output: asis
+print(f"""
+Half and full bridge reproduce the {ratio_half:.2f}× and {ratio_full:.2f}×
+sensitivity [the bridge relations in the handbook](handbook.qmd#eq-m1-bridge-configs) predicts. The half- and full-bridge
+sensitivities come from only two points each — enough to confirm the ratio,
+not enough to give a fit its own residual, the same limitation
+[S1 notes](../S1-daq-static/handbook.qmd#sec-s1-instructor-failures) for a
+two-point calibration.
+
+From the quarter-bridge slope, the strain sensitivity to force at the gauge
+is $d\\varepsilon/dF = {d_eps_d_f * 1e6:.3f} \\times 10^{{-6}}$ /N, with
+$u(d\\varepsilon/dF) = {u_d_eps_d_f * 1e6:.4f} \\times 10^{{-6}}$ /N — the
+number [M2](../M2-hall-displacement/analysis-py.qmd) reads back for its
+stiffness cross-check.
+""")
+```
+
+```{python}
+#| label: fig-m1-bridges
+#| echo: false
+#| fig-cap: "Bridge output against applied force for the three configurations. The slopes are in the ratio 1 : 2 : 4."
+fig, ax = plt.subplots(figsize=(6.5, 4.0))
+for label, df in [("quarter", quarter), ("half", half), ("full", full)]:
+    ax.plot(df["F_N"], df["mean_V"], "o-", label=label)
+ax.set_xlabel("Force [N]")
+ax.set_ylabel("Indicated voltage [V]")
+ax.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+## Temperature compensation
+
+Beam unloaded, quarter bridge against a dummy-compensated half bridge, at
+two bench temperatures.
+
+```{python}
+#| label: temperature
+temp = {k: read_run(p) for k, p in TEMP_RUNS.items()}
+delta_t = temp["quarter_hot"].meta["channels"][0]["applied_delta_t_c"]
+
+def apparent_alpha(cold_key, hot_key, n_arm):
+    v_cold = temp[cold_key].data["volts"].mean()
+    v_hot = temp[hot_key].data["volts"].mean()
+    d_v_bridge = (v_hot - v_cold) / GAIN_BEAM   # offset cancels in the difference
+    return (4.0 * d_v_bridge / VEX) / (n_arm * GAUGE_FACTOR) / delta_t
+
+alpha_quarter = apparent_alpha("quarter_cold", "quarter_hot", 1.0)
+alpha_half = apparent_alpha("half_cold", "half_hot", 2.0)
+compensation_ratio = alpha_quarter / alpha_half
+```
+
+```{python}
+#| label: out-temp
+#| echo: false
+#| output: asis
+print(f"""
+| Configuration | Apparent strain / K |
+|---|---|
+| Quarter bridge (bare) | ${alpha_quarter * 1e6:.3f} \\times 10^{{-6}}$ /K |
+| Half bridge (dummy-compensated) | ${alpha_half * 1e6:.4f} \\times 10^{{-6}}$ /K |
+
+: Apparent strain per kelvin, from [the apparent-strain relation in the handbook](handbook.qmd#eq-m1-temp-apparent), $\\Delta T = {delta_t:g}$ C {{#tbl-m1-temp}}
+""")
+```
+
+```{python}
+#| label: out-temp-text
+#| echo: false
+#| output: asis
+print(f"""
+The dummy-compensated half bridge's apparent strain per kelvin is
+**{compensation_ratio:.1f} times smaller** than the bare quarter bridge's —
+compensation, not cancellation: the residual is real and belongs in any
+budget that uses the half-bridge configuration in a varying-temperature
+environment.
+""")
+```
+
+```{python}
+#| label: fig-m1-temp
+#| echo: false
+#| fig-cap: "Apparent strain per kelvin, quarter bridge against dummy-compensated half bridge."
+fig, ax = plt.subplots(figsize=(5.0, 3.6))
+ax.bar(["quarter", "half"], [alpha_quarter * 1e6, alpha_half * 1e6])
+ax.set_ylabel("Apparent strain / K  [$\\times 10^{-6}$]")
+fig.tight_layout()
+plt.show()
+```
+
+## Uncertainty budget
+
+The measurand is the beam-mounted quarter bridge's strain,
+$\hat\varepsilon$ from [the handbook](handbook.qmd#eq-m1-strain-recover), at
+the largest quarter-bridge reference point, with the [sensitivity
+coefficients](handbook.qmd#eq-m1-sensitivity) given there.
+
+```{python}
+#| label: budget
+row = quarter.iloc[-1]
+v_adc_mean, sigma_v_adc, n_pts = row["mean_V"], row["sd_V"], int(row["n"])
+delta_v = (v_adc_mean - OFFSET_BEAM) / GAIN_BEAM
+eps_hat = 4.0 * delta_v / (GAUGE_FACTOR * VEX)
+
+c_dv = 4.0 / (GAUGE_FACTOR * VEX)
+c_gain = -eps_hat / GAIN_BEAM
+c_offset = -4.0 / (GAUGE_FACTOR * VEX * GAIN_BEAM)
+c_k = -eps_hat / GAUGE_FACTOR
+c_vex = -eps_hat / VEX
+
+enob_here = enob(FSR, sigma_v_adc)
+q_eff_adc = FSR / 2 ** enob_here
+q_eff_bridge = q_eff_adc / GAIN_BEAM     # referred to Delta V, same units as delta_v
+
+components = [
+    dict(quantity="Repeatability of Delta V", value=delta_v, unit="strain",
+         distribution="type-a", std=(sigma_v_adc / GAIN_BEAM) / np.sqrt(n_pts),
+         sensitivity=c_dv),
+    dict(quantity="Effective quantization", value=0.0, unit="strain",
+         distribution="rectangular", half_width=q_eff_bridge / 2, sensitivity=c_dv),
+    dict(quantity="Amplifier gain G", value=GAIN_BEAM, unit="strain",
+         distribution="rectangular", half_width=U_GAIN_REL * GAIN_BEAM,
+         sensitivity=c_gain),
+    dict(quantity="Amplifier offset", value=OFFSET_BEAM, unit="strain",
+         distribution="rectangular", half_width=U_OFFSET_V, sensitivity=c_offset),
+    dict(quantity="Gauge factor k", value=GAUGE_FACTOR, unit="strain",
+         distribution="rectangular", half_width=U_GAUGE_FACTOR_REL * GAUGE_FACTOR,
+         sensitivity=c_k),
+    dict(quantity="Excitation voltage Vex", value=VEX, unit="strain",
+         distribution="rectangular", half_width=U_EXCITATION_REL * VEX,
+         sensitivity=c_vex),
+]
+budget = budget_table(components, k=2)
+```
+
+```{python}
+#| label: out-budget
+#| echo: false
+#| output: asis
+print(budget.to_markdown(
+    caption=f"Uncertainty budget for the recovered strain at "
+            f"$F = {row['F_N']:.3f}$ N",
+    label="tbl-m1-budget"))
+```
+
+```{python}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant = budget.table.loc[budget.table["index_pct"].idxmax()]
+print(f"""
+Recovered strain $\\hat\\varepsilon = {eps_hat * 1e6:.3f} \\times 10^{{-6}}$,
+with expanded uncertainty $U = {budget.U * 1e6:.3f} \\times 10^{{-6}}$ at
+$k = 2$ — a relative uncertainty of {budget.U / eps_hat * 100:.1f} %. The
+dominant component is **{dominant['quantity']}** at
+{dominant['index_pct']:.0f} % of the combined variance.
+""")
+```
+
+::: {.callout-note}
+## What this budget assumes
+
+Inputs are treated as uncorrelated, and the model is linear at the operating
+point — both standard simplifications, stated here as
+[the shared uncertainty-budget guidance](../../data-format/index.qmd#sec-budget)
+asks. The load cell's own hysteresis and creep are not included, because the
+measurand budgeted here is the beam-mounted gauge's strain, not the load
+cell's force; see [the handbook](handbook.qmd#sec-m1-budget) for why.
+:::
+
+## What to report
+
+1. @tbl-m1-inamp: the in-amp arithmetic, with your own sidecar's gauge
+   factor and gain.
+2. @tbl-m1-linearity and @fig-m1-linearity: the loading fit and its
+   residuals, with non-linearity as %FS.
+3. @tbl-m1-hysteresis and @fig-m1-hysteresis: the loading/unloading loop,
+   with maximum hysteresis as %FS.
+4. @tbl-m1-creep and @fig-m1-creep: the fitted creep curve.
+5. @tbl-m1-zero: zero drift across the session.
+6. @tbl-m1-bridges and @fig-m1-bridges: the 1 : 2 : 4 sensitivity ratio.
+7. @tbl-m1-temp and @fig-m1-temp: apparent strain per kelvin, both
+   configurations, and the compensation ratio between them.
+8. @tbl-m1-budget: the budget, the dominant component, and what you would
+   change first to reduce it.

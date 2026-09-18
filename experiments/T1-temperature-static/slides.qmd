@@ -1,0 +1,99 @@
+---
+title: "T1 — Static calibration of temperature sensors"
+subtitle: "Two sensors, one bath, at the same time"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    incremental: false
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before the bench {.center}
+
+### What you are about to measure
+
+Two sensors, an NTC and a Pt1000, go into the same stirred bath at the same
+instants.
+
+By the end of the session you will know:
+
+- how to fit a genuinely nonlinear calibration curve to each, as an ordinary
+  linear least squares problem;
+- which of the two gives better resolution, in **kelvin**, against this
+  platform's own measured noise floor;
+- how much your own excitation choice warms the sensor above the medium it is
+  supposed to be measuring.
+
+### The rule of the session
+
+::: {.callout-important}
+## A calibration curve is only as good as the reference it was checked against
+
+Both sensors are read against the **same** reference-thermometer value at
+each bath point. If the two fitted curves disagree, that is the sensors —
+not two baths that were never quite at the same temperature.
+:::
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will build
+
+An NTC in a resistive divider, a Pt1000 in a bridge with an instrumentation
+amplifier, both reading the same bath.
+
+::: {.smaller}
+| Point | Source |
+|---|---|
+| `cal-ice` | Crushed ice, distilled water |
+| `cal-t20` … `cal-t80` | Five stirred-water temperatures |
+| `selfheat-high` | The `t50` point again, both sensors at higher excitation |
+:::
+
+### Seven runs, seven sidecars
+
+```bash
+arduino-io mode 15 analog && arduino-io mode 16 analog
+arduino-io stream 15,16 --hz 1000 --seconds 0.2 --csv data/cal-t50.csv
+# ... re-wire nothing, re-read the reference thermometer, repeat
+```
+
+::: {.callout-warning}
+## Two things that ruin the session
+
+Read the reference thermometer **at each point**, not once at the start. And
+record the excitation actually used on the self-heating run — without it,
+$\delta$ cannot be recovered from the data at all.
+:::
+
+### Then
+
+Open [the handbook](handbook.qmd) for the full procedure, and one of the two
+analysis templates — [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+They have the same sections and produce the same numbers. Both ship with
+reference data, so you can read the whole analysis before you wire anything.
+
+## What you should come away with {.center}
+
+### Three sentences you should be able to defend
+
+1. "The NTC's Steinhart–Hart fit and the Pt1000's Callendar–Van Dusen fit are
+   both ordinary linear least squares, because $\dots$"
+2. "At $T = \dots\,^\circ$C, sensor $\dots$ gives a better temperature
+   resolution, $\delta T_\mathrm{res} = \dots$ K, because its sensitivity of
+   $\dots$ V/K divided by S1's noise floor of $\dots$ V is smaller than the
+   other sensor's."
+3. "Driving sensor $\dots$ harder shifted its apparent reading by $\dots$ K,
+   consistent with a dissipation constant of $\dots$ mW/K."
+
+If you can say those three with your own numbers in them, the session worked.

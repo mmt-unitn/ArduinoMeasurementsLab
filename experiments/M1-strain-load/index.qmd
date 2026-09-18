@@ -13,10 +13,105 @@ experiment:
   validated:
     usbio: "TODO (Paolo)"
     driver: "TODO (Paolo)"
+toc: true
 ---
 
-::: {.callout-note}
-## Experiment not written yet
-This folder is part of the AMLab scaffold. The overview, slides, handbook and
-the two analysis templates will be added.
+A strain-gauge bridge produces microvolts per unit strain, and an Arduino's
+ADC — even the well-characterized one [S1](../S1-daq-static/index.qmd)
+measured — cannot resolve microvolts on its own. This experiment starts from
+that arithmetic, sizes the instrumentation amplifier it demands, and then
+uses it twice: once on a standalone load cell, to characterize what a static
+mechanical calibration actually has to separate (linearity, hysteresis,
+creep, zero drift), and once on gauges bonded to [the cantilever
+beam](../../hardware/beam-rig.qmd), to compare quarter, half and full bridge
+wiring and to measure — not assume — what temperature compensation buys.
+
+The beam's own dimensions are not decided (see [the beam
+rig](../../hardware/beam-rig.qmd#sec-beam-design)); every relation here is
+symbolic in the same way, and the numbers the analysis templates print come
+from placeholder values in `tools/synth/params/m1.yaml`, clearly marked and
+disclosed by the synthetic-data banner on every page that uses them.
+
+## Materials {#sec-m1-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — 20 minutes, before the bench
+- [Handbook](handbook.qmd) — theory, procedure, tasks, questions
+  ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd) — Jupyter engine
+- [R template](analysis-r.qmd) — knitr engine
+
+Both ship with reference data and produce the same numbers.
+:::
+
+:::
+
+## What you measure {#sec-m1-index-measure}
+
+| Quantity | How | Where it is used later |
+|---|---|---|
+| Required amplifier gain | Arithmetic against S1's noise floor and quantization | Sizes both amplifiers built in this experiment |
+| Non-linearity, hysteresis | Loading/unloading sweep of reference masses on the load cell | Bounds on the load cell's own calibration |
+| Creep, zero drift | A held load, and a return to zero after the full sweep | Time-dependent terms no single calibration point can catch |
+| Bridge sensitivity ratio | The same masses read through quarter, half and full bridge on the beam | Confirms the [bridge sensitivity relations](handbook.qmd#eq-m1-bridge-configs) and which arrangement cancels what |
+| Apparent strain per kelvin | Quarter vs. dummy-compensated half bridge, beam unloaded, at two temperatures | Quantifies what temperature compensation actually buys |
+| Beam strain at the gauge, and its uncertainty | Quarter-bridge sweep at the beam tip | [M2](../M2-hall-displacement/index.qmd)'s stiffness cross-check |
+
+: What M1 produces {#tbl-m1-index-outputs}
+
+## Bench {#sec-m1-index-bench}
+
+**Tier 3.** [The cantilever beam rig](../../hardware/beam-rig.qmd), a
+standalone load cell, an instrumentation amplifier stage for each sensor (see
+[the conditioning board](../../hardware/conditioning-board.qmd#sec-cond-inamp)),
+strain gauges bonded to the beam in quarter/half/full-bridge wiring, a set of
+reference masses, and a way to change the beam's temperature by a known
+amount.
+
+**Board.** Any supported board works; nothing here needs streaming timing
+quality beyond what [S1](../S1-daq-static/index.qmd) already characterizes.
+
+**Host.** Any — this experiment does not depend on host-timing effects the
+way S1/S2/S3 do.
+
+## Reference data {#sec-m1-index-data}
+
+Twenty-four generated runs ship with the experiment, in `data/`:
+
+| File(s) | Contents |
+|---|---|
+| `load-loading-*`, `load-unloading-*` (10 runs) | Five reference masses, loaded then unloaded, through the standalone load cell |
+| `load-creep` | One mass held for 60 s |
+| `load-zero-return` | A zero reading taken after the full loading/unloading/creep sequence |
+| `bridge-quarter-*` (4), `bridge-half-*` (2), `bridge-full-*` (2) | The same small reference masses at the beam tip, read through each bridge configuration |
+| `temp-quarter-cold/-hot`, `temp-half-cold/-hot` (4) | Beam unloaded, quarter vs. half bridge, two bench temperatures |
+
+: Reference data shipped with M1 {#tbl-m1-index-data}
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+It is produced by a seeded generator (`tools/synth/m1_strain_load.py`) whose
+parameters — including every beam dimension — are plausible placeholders,
+not measurements, marked `TODO (Paolo)` in `tools/synth/params/m1.yaml`. It
+exists so the analysis templates render, and are checked in continuous
+integration, with no bench attached. Every page that uses it says so.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+Four hours, tier 3, needs S1 as a prerequisite — the in-amp sizing arithmetic
+and the four-way load-cell characterization are where the session earns its
+extra time over S1. Full notes, expected values, common failures and the
+rubric are in the [handbook](handbook.qmd#sec-m1-instructor).
 :::

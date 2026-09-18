@@ -1,0 +1,124 @@
+### Session timing {#sec-t1-instructor-timing}
+
+Four hours, for a pair of students who have already completed S1:
+
+| Time | Activity | Watch for |
+|---|---|---|
+| 0:00–0:20 | Slides, and reviewing the divider and bridge derivations | Starting to wire before checking the bridge's open/short outputs |
+| 0:20–0:50 | Building and verifying both front ends | Skipping the no-sensor bridge check and finding an amplifier wiring error mid-sweep |
+| 0:50–1:00 | Building the ice bath | Ice floating instead of packed to the bottom |
+| 1:00–2:10 | The six bath points | Reusing a reference-thermometer reading after the bath has visibly drifted |
+| 2:10–2:25 | The self-heating run | Forgetting to record the excitation actually used |
+| 2:25–3:35 | Analysis template | See below |
+| 3:35–3:50 | Sensitivity/resolution comparison worked with their own numbers | Comparing V/K directly instead of dividing by S1's noise floor first |
+| 3:50–4:00 | Budget discussion | — |
+
+If time is short, drop the fifth or sixth bath point rather than the
+self-heating run: four bath points still fit the Steinhart–Hart cubic (one
+residual degree of freedom), while self-heating is a result this experiment
+alone produces.
+
+### Expected results {#sec-t1-instructor-expected}
+
+On the shipped synthetic data. [TODO (Paolo)]{.todo}: replace with values
+from the reference bench once the thermal rig and conditioning board exist
+and have been characterized; until then these describe the generator's
+design parameters, not measurements.
+
+- Steinhart–Hart fit: residuals of a few hundredths of a kelvin across the
+  six-point sweep, with $C$ small but not necessarily indistinguishable from
+  zero at this sample size.
+- Callendar–Van Dusen fit: $R_0$ recovered within a fraction of an ohm of the
+  generator's design value, $A$ within about a percent of the IEC 60751
+  figure.
+- Sensitivity: the bridge's V/K is markedly flatter across the sweep than the
+  divider's, which is strongest near the middle of the bath range and
+  noticeably weaker at the cold end — a direct consequence of where
+  $R = R_t$ falls for the divider resistor chosen.
+- Self-heating: a shift of order two tenths of a kelvin for the NTC between
+  low and high excitation, about half that for the Pt1000 — both clearly
+  above the fit's
+  own residual scatter, both far below what either sensor's raw resolution
+  could detect from a single reading.
+
+### Common failures, in the order they happen {#sec-t1-instructor-failures}
+
+1. **The bridge is wired with a swapped sense of the differential pair.** The
+   output runs the wrong way with temperature (falling instead of rising, or
+   vice versa) and the Callendar–Van Dusen fit visibly fails to converge to
+   a sensible $R_0$. Check the sign against @eq-t1-bridge before assuming the
+   sensor is faulty.
+2. **The ice bath is built from cubed ice with visible water pockets.** The
+   "ice-point" reading drifts over the recording instead of sitting still;
+   compare against [the ice-bath construction](../../hardware/thermal-rig.qmd#sec-therm-ice)
+   and rebuild rather than average through the drift.
+3. **The reference thermometer is read once per bath and reused across a
+   settling period.** Exactly S1's DMM failure, restated: the calibration
+   residuals then look like sensor nonlinearity when they are a stale
+   reference.
+4. **Self-heating excitations differ by too little to see above the noise.**
+   If the apparent shift is smaller than the fit's own residual scatter, the
+   excitation ratio was too conservative; a larger ratio (more current at
+   "high") makes $\delta$ resolvable without changing anything else in the
+   procedure.
+5. **The divider resistor is chosen for sensitivity at the wrong end of the
+   range.** Comparing the fit residuals point by point against
+   @eq-t1-divider-sens shows this directly — the point nearest the divider's
+   matched-resistance temperature has the best residual, not necessarily the
+   ice point.
+
+### Discussion questions and where they should land {#sec-t1-instructor-discussion}
+
+**"Why does a three-parameter Steinhart–Hart fit reduce to ordinary linear
+least squares?"** Because the nonlinearity is entirely inside $\ln R$, which
+is data, not a parameter — once $\ln R$ and $(\ln R)^3$ are computed, the
+model is linear in $A$, $B$, $C$ exactly as S1's offset-and-gain fit is
+linear in $a$, $b$. This is the same idea T2 revisits, and fails, for the
+exponential — which is why T2 chooses a linearized fit instead.
+
+**"Why fix $A$ and $B$ for the Pt1000 instead of fitting all three
+coefficients?"** Because IEC 60751 already specifies them, to a tolerance far
+tighter than six bath points could ever resolve by fitting freely, and
+because the part-to-part variation this bench can actually see is in $R_0$.
+Fitting quantities you already know, from data too sparse to improve on them,
+adds noise to the estimate rather than information.
+
+**"Which sensor has the better resolution in kelvin?"** Push past "the
+bridge has a bigger V/K" to @eq-t1-resolution: the answer depends on S1's
+measured noise floor for *this specific front end*, not on sensitivity alone.
+An amplified front end that is also noisier can lose to a quiet unamplified
+one.
+
+**"Is a 0.1 K self-heating shift something to correct for?"** It depends on
+what the budget in @sec-t1-budget says about the other terms at that
+operating point — if self-heating is a small fraction of $u_c$, characterizing
+it (as this experiment does) is enough; if it dominates, a correction, or a
+lower operating excitation, is the next design step.
+
+### Assessment rubric {#sec-t1-instructor-rubric}
+
+Out of 100, for the report:
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Sidecar completeness | 10 | Both channels' `reference_value`/`reference_u` present at every point; excitation recorded on the self-heating pair |
+| NTC calibration | 20 | Steinhart–Hart fit shown as linear least squares with residuals; the beta-equation special case discussed |
+| Pt1000 calibration | 20 | Callendar–Van Dusen fit with IEC 60751 coefficients stated as fixed and why; $R_0$ (and optionally $A$) reported with uncertainty |
+| Sensitivity comparison | 15 | Both derivatives evaluated at an operating point; resolution in kelvin computed against S1's own noise floor, not asserted |
+| Self-heating | 15 | $\delta$ extracted for both sensors with the excitation and powers shown, not just the temperature shift |
+| Uncertainty budget | 20 | Correct sensitivity coefficients from the local (nonlinear) derivative; components identified as Type A or B; the dominant term named |
+
+Deduct across the board for the same three things S1 penalizes: a number
+without a unit, an uncertainty without a stated coverage, a plot without axis
+labels.
+
+### If a group finishes early {#sec-t1-instructor-extension}
+
+- Fit the Pt1000's $A$ as well as $R_0$ (@sec-t1-pt1000 already sets this up)
+  and quantify how much the fit's own uncertainty grows against the two-point
+  gain from doing so.
+- Build the optional thermocouple channel of @sec-t1-thermocouple and extend
+  the sensitivity and budget comparison to a third sensing principle.
+- Repeat the self-heating measurement at a second bath temperature and check
+  whether $\delta$ is itself temperature-dependent, which the single-point
+  measurement in the main procedure cannot see.

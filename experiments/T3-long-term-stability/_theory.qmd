@@ -1,0 +1,146 @@
+### A day of logging a quantity that barely moves {#sec-t3-why}
+
+Every other thermal experiment on this site asks "what temperature is it?"
+This one asks a different question: if you log the *same* sensor, in the
+*same* insulated box, for 24 hours, how much does the number wander even
+though nothing you would call "the temperature" has changed? What wanders is
+the instrument — its own noise, its own slow drift — and the room around the
+box, which does change, on a cycle you already know the period of.
+
+The box is insulated for the same reason S1 shorted an input to ground: to
+remove the source and look at what the measurement chain contributes on its
+own. Insulation does not remove the room's diurnal cycle, it *attenuates* it,
+which is why the diurnal cycle is still the largest feature in the record —
+see @sec-t3-drift — and is not a failure of the rig.
+
+### Separating drift from the diurnal cycle {#sec-t3-drift}
+
+The record is fit, by ordinary least squares, to a model with four
+parameters: a mean level, a linear drift, and a sinusoid at exactly the
+period of a day,
+
+$$
+x(t) = x_0 + \dot{x}\,t + A_d\sin\!\left(\frac{2\pi t}{P_d} + \phi_d\right) + \varepsilon(t)
+$$ {#eq-t3-fit}
+
+with $P_d = 24\ \mathrm{h}$ fixed (not fitted — it is a property of the
+Earth, not of the instrument), $\dot{x}$ the **drift**, reported in mK/h, and
+$\varepsilon(t)$ everything the deterministic model does not explain. Fitting
+$A_d$ and $\phi_d$ together with $\dot x$ in one least-squares problem, rather
+than fitting a line first and eyeballing the rest, is what keeps a slow part
+of the diurnal cycle from being absorbed into the drift estimate — the two
+are only cleanly separable because $P_d$ is known exactly and $\dot x$ is (for
+an insulated box, over one day) very small by comparison.
+
+::: {.content-hidden when-format="revealjs"}
+The four-parameter fit is linear in its parameters once $P_d$ is fixed — the
+design matrix has columns $[1,\ t,\ \cos(2\pi t/P_d),\ \sin(2\pi t/P_d)]$ —
+so it is solved in one step by ordinary least squares, exactly as S1's
+three-parameter calibration fit is. Nothing here is iterative, unlike S2's
+sine fit, because the frequency is known rather than estimated.
+:::
+
+What is left over, $\varepsilon(t)$, is what @sec-t3-allan characterizes. Fit
+and subtract the model *before* computing an Allan deviation on it: a
+diurnal cycle left in the record would show up as extra curvature at long
+averaging times and could be mistaken for the instrument's own random walk,
+which is a different mechanism with a different consequence (@sec-t3-slope).
+
+### The overlapping Allan deviation {#sec-t3-allan}
+
+The question this experiment exists to answer is: *if I average this signal
+for longer, does my answer get better, and for how long does that keep being
+true?* A plain standard deviation of the whole record answers a different
+question — how spread out the values are — and says nothing about *when* in
+time that spread accumulates. The Allan deviation [@allan1966] does: it is a
+function of the averaging time $\tau$, built from the second difference of
+the record at that averaging time, and its shape identifies the noise
+process responsible at each $\tau$.
+
+Take the residual $\varepsilon(t)$ as a stream of samples at spacing
+$\tau_0$ and form its **overlapping Allan variance** at averaging time
+$\tau = m\tau_0$ ($m = 1, 2, 3, \dots$):
+
+$$
+\sigma_y^2(\tau) = \frac{1}{2(N-2m)\,\tau^2}
+  \sum_{i=1}^{N-2m}\left(\bar{x}_{i+2m} - 2\bar{x}_{i+m} + \bar{x}_i\right)^2
+$$ {#eq-t3-allan}
+
+with $\bar{x}_i$ the **integrated** (phase-like) samples,
+$\bar{x}_i = \tau_0\sum_{k=1}^{i}\varepsilon_k$ — the running sum of the
+residual record, not the residual itself. This is the standard, numerically
+stable way to evaluate @eq-t3-allan from a record of *rate-like* samples
+(here, a temperature reading is the analogue of a fractional frequency
+$y$): integrate once to get a phase-like $\bar x$, then take the doubled,
+overlapping second difference. "Overlapping" means every valid starting index
+$i$ is used, not just every $m$-th one, which uses the record far more
+efficiently than the non-overlapping estimator and is why 24 h of data at a
+few-second sample interval is enough to see a clean curve.
+
+::: {.content-hidden when-format="revealjs"}
+Two things about @eq-t3-allan worth being deliberate about. First, computing
+it directly at every $i$ for every $m$ is $O(N \times M)$, which is entirely
+tractable here — the sums for a fixed $m$ are cheap vector operations, and
+neither language needs a library implementation. Second, the choice of which
+$m$ values to evaluate is free; a logarithmically spaced set from $m=1$ up to
+around $N/4$ gives an even spread of points on the log-log plot without
+computing $\sigma_y(\tau)$ at every possible $\tau$, most of which would be
+redundant this close together.
+:::
+
+### Reading the slope {#sec-t3-slope}
+
+On a log-log plot of $\sigma_y(\tau)$ against $\tau$, the slope identifies
+the noise process, because each one has its own, different power-law
+dependence on averaging time:
+
+| Slope | Noise process | What is happening |
+|:--:|---|---|
+| $\tau^{-1/2}$ | White (uncorrelated) noise | Independent samples average down exactly as $s/\sqrt{n}$ would predict |
+| $\tau^{0}$ | Flicker noise | Averaging buys nothing more; the noise has memory on every timescale |
+| $\tau^{+1/2}$ | Random walk | The instrument's own slow wander accumulates *faster* the longer you average |
+
+: Allan-deviation slopes and their causes {#tbl-t3-slopes}
+
+A record with both a white and a random-walk component — which is the
+plausible minimum for a real instrument, and what @sec-t3-why's synthetic
+data is built from — produces a curve that falls, flattens, and rises again:
+falling while averaging beats down the white noise, rising once the random
+walk starts to dominate. The **minimum of that curve is the optimum
+averaging time** $\tau_\mathrm{opt}$. Past it, more averaging makes the
+answer *worse* — this is the single most counter-intuitive, and most useful,
+result in the experiment, because it contradicts the assumption every
+earlier experiment on this site has quietly relied on: that longer is
+always better.
+
+### Connecting to S1 {#sec-t3-s1}
+
+[S1](../S1-daq-static/index.qmd) showed the Type A term of a static
+measurement falling as $1/\sqrt{n}$ and concluded that beyond a few hundred
+samples, more averaging bought essentially nothing — because by then the
+Type A term had dropped below the calibration and quantization terms. T3
+shows *why* $1/\sqrt{n}$ is only ever a short-averaging-time approximation in
+the first place: it is the white-noise slope of @tbl-t3-slopes, valid only
+up to $\tau_\mathrm{opt}$, and it shows where, in absolute averaging time,
+that approximation stops being merely dominated by other terms (S1's
+situation) and starts being **wrong on its own terms** (T3's).
+
+### Why the Type A term is not $s/\sqrt{n}$ {#sec-t3-typea}
+
+The ordinary formula $s/\sqrt{n}$ for the standard uncertainty of a mean
+assumes the $n$ samples averaged are independent. A record with a
+random-walk component is, by construction, *not* independent from one sample
+to the next — each value is the last one plus a small step — so
+$s/\sqrt{n}$, evaluated over the whole 24 h record, understates how much the
+mean can still move, sometimes by a large factor, because it is answering a
+question ("how spread out are individual samples?") that was never the
+question the budget needs answered ("how well is the mean of this particular
+average known?").
+
+The Allan deviation answers the right question directly: $\sigma_y(\tau)$ *is*
+the standard uncertainty of an average taken over a window of length $\tau$,
+correctly accounting for the correlation between samples inside that window.
+Evaluating it at $\tau_\mathrm{opt}$ therefore gives the best Type A term this
+record can support — and using any $\tau$ larger than $\tau_\mathrm{opt}$ in
+[the budget](handbook.qmd#sec-t3-budget) would be using a number the
+experiment has already shown to be pessimistic on purpose.

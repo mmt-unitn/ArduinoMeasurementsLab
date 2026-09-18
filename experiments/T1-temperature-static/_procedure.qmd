@@ -1,0 +1,122 @@
+::: {.callout-warning}
+## Before you connect anything
+
+- **Hot water and any hotplate stay in sight and within reach.** The stirred
+  bath is **never left unattended** while it is heated, or while a
+  mains-powered stirrer or hotplate is plugged in.
+- Check the lead and the plug of the stirrer or hotplate before every
+  session, keep the socket away from splashes, and switch off at the
+  **mains** — not just at the vessel — before adjusting anything in or near
+  the bath.
+- Ice, a glass reference thermometer and wet hands are a slip-and-drop
+  combination; keep the board and the rest of the electronics on a dry bench
+  well clear of the bath.
+- An analog input pin tolerates $0$ to $V_\mathrm{io}$ and nothing else — see
+  [Before you connect anything](../S1-daq-static/handbook.qmd#sec-s1-hardware)
+  in S1 for the same warning, which applies unchanged to both the divider and
+  the in-amp output here.
+:::
+
+### 1. Build and verify the two front ends {#sec-t1-step-build}
+
+```bash
+arduino-io list
+arduino-io info
+```
+
+Build the NTC's divider and the Pt1000's bridge plus instrumentation
+amplifier, following [the conditioning board](../../hardware/conditioning-board.qmd)
+for the amplifier stage. With the Pt1000 disconnected (open circuit) and
+again with it shorted, confirm the bridge output sits where
+@eq-t1-bridge predicts at the two extremes, before the sensor is ever put in
+a bath. A discrepancy here is the bridge or the amplifier's own gain and
+offset error, and it is one of the first components of the uncertainty budget
+in @sec-t1-budget — measure it before you need it.
+
+::: {.callout-tip}
+## No rig yet?
+
+The [reference data](index.qmd#sec-t1-index-data) models both front ends
+numerically — the divider and the bridge, through the same S1 ADC model — so
+every analysis task below runs against it unmodified. Build the hardware when
+it is available and repeat the tasks with your own runs; nothing in the
+templates changes.
+:::
+
+### 2. Build the ice bath {#sec-t1-step-ice}
+
+Follow [the ice bath](../../hardware/thermal-rig.qmd#sec-therm-ice): crushed
+ice, distilled water, packed to the bottom of the vessel, sensor and
+reference thermometer both embedded in the slush well below the surface.
+Give it a few minutes to settle before recording.
+
+### 3. The six bath points {#sec-t1-step-points}
+
+At each point — the ice bath, then five stirred-water temperatures spanning
+your available range — with **both sensors already wired and in the bath**,
+excited at their low (calibration) level:
+
+1. Wait for the bath to reach a steady temperature and confirm it is well
+   stirred, following [the check in the thermal rig
+   page](../../hardware/thermal-rig.qmd#sec-therm-bath): move the reference
+   thermometer to a few points in the bath and confirm they agree within its
+   own resolution.
+2. Read the reference thermometer and record it — this is the value that
+   goes in **both** channels' `reference_value`, because both sensors are in
+   the same bath at the same instant.
+3. Record both channels together:
+
+```bash
+arduino-io mode 15 analog && arduino-io mode 16 analog
+arduino-io stream 15,16 --hz 1000 --seconds 0.2 --csv data/cal-t50.csv
+```
+
+Name each file after its point (`cal-ice`, `cal-t20`, …), so the analysis
+can find them without a lookup table, and spread the five stirred points
+across as much of your bath's usable range as time allows — the fit in
+@sec-t1-tasks is only as good as the range it was given.
+
+::: {.callout-important}
+## Re-measure the reference every time
+
+Exactly as in [S1's calibration](../S1-daq-static/handbook.qmd#sec-s1-step-wire):
+do not reuse a reference-thermometer reading from a previous point. A bath
+that is still settling toward its target looks, in the data, exactly like a
+sensor with an offset error, and there is no way to tell the two apart after
+the fact.
+:::
+
+### 4. The self-heating run {#sec-t1-step-selfheat}
+
+At **one** of the stirred-bath points already recorded — the shipped
+reference data reuses the `t50` point — record one more file with both
+sensors driven at their **high** excitation instead, everything else
+unchanged: same bath, same wiring, same reference-thermometer reading.
+
+```bash
+arduino-io stream 15,16 --hz 1000 --seconds 0.2 --csv data/selfheat-high.csv
+```
+
+Record the excitation actually used (`channels[].excitation_v`, or the
+bridge's `channels[].excitation_v` for the Pt1000) in both this sidecar and
+the low-excitation point it is compared against — the shift between the two,
+read through the fitted calibration curve, is what @sec-t1-tasks turns into
+$\delta$.
+
+### 5. Fill the sidecars {#sec-t1-step-sidecar}
+
+Every run needs, beyond [S1's checklist](../S1-daq-static/handbook.qmd#sec-s1-step-sidecar):
+
+- [ ] `channels[].quantity: temperature`, `channels[].unit: degC`
+- [ ] `channels[].reference_value` and `.reference_u` — the reference
+      thermometer's reading and its uncertainty, **the same value on both
+      channels** at a given bath point
+- [ ] `channels[].excitation_v` — the divider's $V_{cc}$ or the bridge's
+      $V_\mathrm{exc}$ actually used for that run
+- [ ] `channels[].conditioning.gain` and `.offset` — the Pt1000 in-amp's
+      **fitted** gain and offset from step 1, not the design values
+- [ ] `synthetic: false`
+
+These are T1-specific extensions of the channel schema in
+[Data format](../../data-format/index.qmd#sec-fields); the general fields
+there are unchanged.

@@ -1,0 +1,97 @@
+# T1 - static calibration of temperature sensors.
+#
+# TODO (Paolo): placeholders throughout; replace with measured values once the
+# thermal rig and conditioning board exist and have been characterized. The
+# IEC 60751 Callendar-Van Dusen coefficients (pt1000.a_iec, pt1000.b_iec) are
+# the one exception: they are the published standard, not a placeholder.
+
+seed: 20260918
+
+# --- the reference thermometer -----------------------------------------------
+# Both sensors are calibrated against the same reading at the same instant, so
+# this single value/uncertainty pair is what channels[].reference_value and
+# .reference_u carry on every run, for both channels alike.
+reference_thermometer:
+  u_c: 0.02                   # TODO (Paolo): from the reference thermometer's own calibration
+
+# --- the NTC divider -----------------------------------------------------------
+# "True" resistance from the simplified beta equation (a physically motivated
+# two-parameter special case of Steinhart-Hart, C = 0); the analysis fits the
+# full three-parameter Steinhart-Hart model to it, which is the point of
+# carrying the theory's cubic term even though this particular sensor does not
+# need it. R_fixed was chosen for good sensitivity around the middle of the
+# bath sweep, not at the ice point -- see the sensitivity comparison in
+# _theory.qmd for what that costs at the cold end.
+ntc:
+  r25_ohm: 10000.0            # TODO (Paolo): measured at 25 degC
+  beta_k: 3950.0               # TODO (Paolo): from the datasheet or measured
+  divider:
+    r_fixed_ohm: 1000.0        # TODO (Paolo): the resistor actually used
+    vcc_low_v: 0.9              # excitation for every calibration run
+    vcc_high_v: 3.3             # excitation for the self-heating run only
+  self_heating:
+    dissipation_mw_per_k: 9.0  # TODO (Paolo): measured, dissipation constant in stirred water
+  pin: 15
+
+# --- the Pt1000 bridge + instrumentation amplifier -----------------------------
+# R0 is nominally 1000 ohm for a Pt1000 but never exactly that on a real part;
+# a_iec/b_iec are the IEC 60751 Callendar-Van Dusen coefficients for t >= 0 degC
+# (see @iec60751), fixed rather than fitted -- T1's task is to fit R0 (and
+# optionally A) from the bath data, not to rediscover the standard.
+pt1000:
+  r0_ohm: 1000.3               # TODO (Paolo): measured; the "true" value the fit should recover
+  a_iec: 3.9083e-3             # IEC 60751, fixed
+  b_iec: -5.775e-7             # IEC 60751, fixed (t >= 0 degC branch)
+  bridge:
+    r_bridge_ohm: 1000.0        # the three fixed arms, matched
+    inamp_gain: 15.0             # TODO (Paolo): the gain resistor actually fitted
+    bias_offset_v: 1.0           # TODO (Paolo): the in-amp's own output bias, as built
+    v_exc_low_v: 1.2              # excitation for every calibration run
+    v_exc_high_v: 2.4             # excitation for the self-heating run only
+  self_heating:
+    dissipation_mw_per_k: 11.0  # TODO (Paolo): measured, dissipation constant in stirred water
+  pin: 16
+
+# --- the bath points -----------------------------------------------------------
+# One ice-bath fixed point and five stirred-bath points. Both sensors are read
+# together at every point -- the same bath, the same instant -- which is the
+# whole reason for calibrating them side by side rather than separately.
+calibration:
+  records_per_point: 200
+  period_us: 1000
+  points:
+    - name: "ice"
+      bath_temperature_c: 0.0
+      label: "ice bath (fixed point)"
+    - name: "t20"
+      bath_temperature_c: 20.0
+      label: "stirred water bath"
+    - name: "t35"
+      bath_temperature_c: 35.0
+      label: "stirred water bath"
+    - name: "t50"
+      bath_temperature_c: 50.0
+      label: "stirred water bath"
+    - name: "t65"
+      bath_temperature_c: 65.0
+      label: "stirred water bath"
+    - name: "t80"
+      bath_temperature_c: 80.0
+      label: "stirred water bath"
+
+# --- self-heating run -----------------------------------------------------------
+# Re-occupies the "t50" bath point (both sensors already have a low-excitation
+# reading there from the calibration sweep above) with both sensors driven at
+# their high excitation instead. The apparent temperature shift between this
+# run and "cal-t50", read through the fitted calibration curves, is what
+# recovers the dissipation constants above.
+self_heating:
+  bath_point: "t50"
+  records: 200
+  period_us: 1000
+
+references:
+  thermometer:
+    instrument: "reference thermometer"
+    model: "TODO (Paolo)"
+    calibration: "TODO (Paolo)"

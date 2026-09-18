@@ -1,0 +1,66 @@
+# M3 - vibration and modal analysis.
+#
+# TODO (Paolo): placeholders throughout; replace with values measured on the
+# reference beam rig once its dimensions (hardware/beam-rig.qmd) are decided.
+# The one exception is the modal frequency *ratios*: those follow from
+# lambda_1, lambda_2, lambda_3 alone (roots of cos(lambda) cosh(lambda) = -1,
+# tabulated e.g. in Blevins) and do not depend on any beam dimension -- see
+# _theory.qmd.
+
+seed: 20260918
+
+# Cantilever eigenvalues (first three roots of the characteristic equation),
+# standard tabulated values. f_n / f_1 = (lambda_n / lambda_1)^2 -- dimension
+# independent, which is the theory check this experiment can actually make.
+eigenvalues:
+  lambda1: 1.875104069
+  lambda2: 4.694091133
+  lambda3: 7.854757438
+
+# The first natural frequency is the one quantity in this file that *would*
+# depend on L, b, h, E, rho if they were decided; since they are not
+# (hardware/beam-rig.qmd), it is a plausible placeholder for a small bench
+# cantilever, not a derived number. f2 and f3 follow from it exactly through
+# the eigenvalue ratios above.
+modal:
+  f1_hz: 42.0                        # TODO (Paolo): measured, pending beam design
+  # Mode-dependent damping RATIOS, but note the decay RATE is zeta_k * 2 pi
+  # f_k: because f_2, f_3 are 6.27x and 17.5x f_1, even a mode-independent
+  # zeta would make the higher modes die out in real time far faster than the
+  # first. These decrease with mode number so that every mode stays above
+  # the noise floor for a comparable fraction of the record -- a deliberate
+  # choice for a single tap-test recording to show all three modes cleanly,
+  # not a claim about the rig's real damping mechanism.
+  zeta: [0.012, 0.0030, 0.0016]      # TODO (Paolo): measured per-mode damping
+  # Peak modal amplitudes at the instant of release (t = 0), one placeholder
+  # per channel per mode. They are independent of each other -- each depends
+  # on the (undecided) mode shape at the gauge or sensor position -- and only
+  # the frequencies are tied to Euler-Bernoulli theory, which is the point of
+  # this experiment.
+  strain_amplitude: [6.0e-5, 1.5e-5, 6.0e-6]     # TODO (Paolo): strain, at the root
+  accel_amplitude_ms2: [4.0, 5.5, 3.0]           # TODO (Paolo): m/s^2, at the tip
+
+# The accelerometer's own mass lowers f1 when it is mounted (hardware/
+# beam-rig.qmd's note on tip mass); m_eff = 0.2427 rho A L cannot be
+# evaluated without L, b, h, rho, so the *outcome* ratio is given directly as
+# a placeholder rather than derived -- see _theory.qmd for the formula this
+# stands in for.
+mass_loading:
+  f1_ratio_loaded: 0.965             # TODO (Paolo): f1'/f1 = sqrt(m_eff/(m_eff+m_acc))
+
+# The tap-test recording: fast enough to resolve f3 with margin (Nyquist well
+# above it), and long enough for mode 1 (the slowest-damped) to decay by
+# several orders of magnitude and for the FFT bin width to resolve the
+# half-power bandwidth of the least-damped mode.
+acquisition:
+  fs_hz: 4000.0
+  duration_s: 4.0
+  pin_strain: 15
+  pin_accel: 16
+
+# Linear sensor transfer functions, V = offset_V + sensitivity * physical
+# quantity, direct to the ADC pin (no separate conditioning stage modelled).
+sensors:
+  strain_sensitivity_V_per_strain: 800.0    # TODO (Paolo): bridge + amplifier gain
+  accel_sensitivity_V_per_ms2: 0.030        # TODO (Paolo): ~0.3 V/g accelerometer
+  offset_V: 1.65

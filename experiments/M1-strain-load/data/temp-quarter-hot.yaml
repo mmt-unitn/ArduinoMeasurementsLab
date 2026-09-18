@@ -1,0 +1,60 @@
+experiment: M1
+run: temp-quarter-hot
+date: 2026-09-18
+operator: tools/synth (generated)
+synthetic: true
+board:
+  model: portenta-h7
+  serial: SYNTHETIC-0001
+  usbio_version: 0.4.0
+  adc_bits: 16
+  vref_mV: 3300
+host:
+  os: linux
+  os_version: '6.6'
+  machine: raspberry-pi-5
+  libusb_version: 1.0.27
+  hub: true
+driver_version: 0.4.0
+binding: python
+binding_version: 0.4.0
+acquisition:
+  pins:
+  - 15
+  requested_period_us: 1000
+  achieved_rate_hz: 996.964
+  duration_s: 0.199606
+stream_stats:
+  records: 200
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+channels:
+- pin: 15
+  quantity: force
+  unit: N
+  sensor: strain gauge, quarter bridge
+  conditioning:
+    gain: 11314.285714285712
+    offset: 0.165
+    filter: none
+  calibration_reference: beam unloaded (F = 0)
+  reference_value: 0.0
+  reference_u: 0.0
+  bridge_type: quarter
+  gauge_factor: 2.1
+  bridge_excitation_v: 5.0
+  applied_delta_t_c: 15.0
+environment:
+  ambient_temperature_C: 23.0
+  notes: quarter bridge, beam unloaded, delta_T = 15 C
+references:
+- instrument: reference masses
+  model: TODO (Paolo)
+  calibration: TODO (Paolo)
+generator:
+  tool: tools/synth
+  version: 0.1.0
+  note: Parameters are placeholders; see tools/synth/params/

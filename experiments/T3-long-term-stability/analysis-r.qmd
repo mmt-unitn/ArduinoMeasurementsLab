@@ -1,0 +1,398 @@
+---
+title: "T3 — Analysis template (R)"
+subtitle: "Long-term stability and drift"
+description: "Drift, diurnal cycle and the Allan-deviation optimum, in R"
+engine: knitr
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment, so you can read the whole analysis before your own 24-hour run
+finishes. To analyse your own measurement, replace the file in `data/` and
+change the path in the first chunk — nothing else.
+
+The Python template [`analysis-py.qmd`](analysis-py.qmd) has the same
+sections, the same figure labels and the same output tables, and produces the
+same numbers from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the Allan-deviation averaging times are a fixed list
+
+Both templates evaluate [the Allan deviation](handbook.qmd#eq-t3-allan) at the same 28 integer values of $m$,
+written out once as a literal list rather than regenerated from
+`logspace`/`round` in each language. `round()` is round-half-to-even in both
+Python and R, so the two would very likely agree anyway — but "very likely"
+is not "identical," and a table-for-table comparison needs identical, not
+merely close.
+:::
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+library(ggplot2)
+library(patchwork)
+
+source("../../shared/R/labtools.R")
+
+theme_set(theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25)))
+
+LOG_RUN <- "data/log-24h.csv"
+DIURNAL_PERIOD_S <- 86400.0
+
+# The averaging times at which the overlapping Allan deviation is evaluated,
+# m = tau / tau0 -- see the callout above for why this is a fixed list
+# instead of a freshly generated one in each language.
+M_LIST <- c(1, 2, 3, 4, 6, 8, 10, 13, 18, 24, 32, 43, 57, 76, 101, 135, 181,
+           241, 322, 429, 573, 764, 1020, 1362, 1817, 2425, 3237, 4320)
+```
+
+```{r}
+#| label: helpers
+# Overlapping Allan deviation of a rate-like series `y`, at spacing `tau0`,
+# evaluated at averaging times `tau = m * tau0`. `y` is integrated once into
+# a phase-like `x` (a running sum, scaled by `tau0`), exactly as [the Allan deviation](handbook.qmd#eq-t3-allan)
+# is written in the handbook; the doubled, overlapping second difference of
+# `x` is then formed for each `m`.
+allan_deviation <- function(y, tau0, ms) {
+  x <- c(0.0, cumsum(y) * tau0)
+  out <- numeric(length(ms))
+  for (j in seq_along(ms)) {
+    m <- ms[j]
+    n2m <- length(x) - 2 * m
+    d <- x[(2 * m + 1):(2 * m + n2m)] - 2 * x[(m + 1):(m + n2m)] + x[1:n2m]
+    out[j] <- sqrt(sum(d^2) / (2 * n2m * (m * tau0)^2))
+  }
+  out
+}
+
+# The sensor's own linear transduction, V = a + b * T_celsius.
+volts_to_celsius <- function(volts, channel) {
+  a <- channel$sensor_offset_V
+  b <- channel$sensor_sensitivity_V_per_K
+  (volts - a) / b
+}
+```
+
+```{r}
+#| label: load
+run <- read_run(LOG_RUN)
+board <- run$meta$board
+channel <- run$meta$channels[[1]]
+
+t_us <- run$data$t_us
+t_s <- (t_us - t_us[1]) / 1e6
+temp_c <- volts_to_celsius(run$data$volts, channel)
+
+tau0 <- timing_summary(run$data)$stats$period_us / 1e6
+n <- length(temp_c)
+```
+
+```{r}
+#| label: banner
+#| echo: false
+#| output: asis
+cat(synthetic_banner(run$meta))
+```
+
+## Data quality
+
+```{r}
+#| label: quality
+#| echo: false
+#| output: asis
+problems <- validate_meta(run$meta)
+stats <- run$meta$stream_stats
+counters <- stats[setdiff(names(stats), "records")]
+lossy <- counters[vapply(counters, function(v) is.numeric(v) && v > 0, logical(1))]
+duration_h <- (t_s[n] - t_s[1]) / 3600.0
+cat(sprintf('
+**%s** — %d records over
+%.2f h, sample spacing $\\tau_0 = %.3f$ s;
+%s;
+%s.
+', run$meta$run, stats$records, duration_h, tau0,
+   if (length(problems) == 0) "metadata complete"
+   else paste0("metadata problems: ", paste(problems, collapse = "; ")),
+   if (length(lossy) == 0) "no losses reported"
+   else paste0("losses: ",
+               paste(names(lossy), unlist(lossy), sep = " = ", collapse = ", "))))
+```
+
+## Drift and the diurnal cycle
+
+The record is fit to [the four-parameter model](handbook.qmd#eq-t3-fit): a
+mean, a linear drift, and a sinusoid fixed at exactly 24 hours.
+
+```{r}
+#| label: fit
+w <- 2 * pi / DIURNAL_PERIOD_S
+D <- cbind(1, t_s, cos(w * t_s), sin(w * t_s))
+coef <- solve(crossprod(D), crossprod(D, temp_c))
+resid <- as.vector(temp_c - D %*% coef)
+
+drift_K_per_h <- coef[2] * 3600
+diurnal_amp_K <- sqrt(coef[3]^2 + coef[4]^2)
+
+# Standard errors of the fit, from the residuals (n - 4 degrees of freedom).
+dof <- max(n - 4, 1)
+s_res <- sqrt(sum(resid^2) / dof)
+cov <- s_res^2 * solve(crossprod(D))
+u_drift_K_per_h <- sqrt(cov[2, 2]) * 3600
+```
+
+```{r}
+#| label: fig-t3-fit
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 5.0
+#| fig-cap: "The 24-hour record (grey) with the fitted drift-plus-diurnal model (top), and the residual left over (bottom) -- what [the Allan deviation](handbook.qmd#eq-t3-allan) is computed on."
+t_h <- t_s / 3600
+p_fit <- ggplot() +
+  geom_line(data = data.frame(t = t_h, v = temp_c), aes(t, v),
+            colour = "grey60", linewidth = 0.3) +
+  geom_line(data = data.frame(t = t_h, v = as.vector(D %*% coef)), aes(t, v),
+            linewidth = 0.5) +
+  labs(x = NULL, y = "Temperature [°C]")
+
+p_res <- ggplot(data.frame(t = t_h, r = resid * 1e3), aes(t, r)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.2) +
+  labs(x = "Time [h]", y = "Residual [mK]")
+
+p_fit / p_res
+```
+
+```{r}
+#| label: out-fit
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| Drift $\\dot x$ | $%+.3f \\pm %.3f$ mK/h |
+| Diurnal amplitude $A_d$ | $%.1f$ mK |
+| Residual RMS after the fit | $%.3f$ mK |
+| Record length | $%.2f$ h |
+
+: Drift and diurnal fit of [the drift-plus-diurnal model](handbook.qmd#eq-t3-fit) {#tbl-t3-fit}
+', drift_K_per_h * 1e3, u_drift_K_per_h * 1e3, diurnal_amp_K * 1e3,
+   s_res * 1e3, duration_h))
+```
+
+```{r}
+#| label: out-fit-text
+#| echo: false
+#| output: asis
+ratio_diurnal <- if (drift_K_per_h != 0) diurnal_amp_K / abs(drift_K_per_h * duration_h) else NaN
+cat(sprintf('
+The diurnal amplitude is %.0f
+times the total drift accumulated over the record -- the room, attenuated by
+the box, is still the largest feature, exactly as [why the box is insulated](handbook.qmd#sec-t3-why) says it should
+be. What the Allan deviation below characterizes is the residual left after
+removing both.
+', ratio_diurnal))
+```
+
+## The Allan deviation
+
+[the Allan deviation](handbook.qmd#eq-t3-allan) is evaluated on the detrended residual at the fixed averaging
+times of `M_LIST`.
+
+```{r}
+#| label: allan
+tau <- M_LIST * tau0
+adev <- allan_deviation(resid, tau0, M_LIST)
+
+# The *first* local minimum, not the global one: fitting and removing a
+# deterministic trend over the whole record (the drift-plus-diurnal model
+# above) systematically suppresses the residual's own variance at the
+# longest averaging times -- an edge effect of detrending, not a second,
+# better optimum. Scanning from short tau upward finds the genuine
+# white-noise/random-walk crossover instead.
+i_opt <- NA
+for (i in 2:(length(adev) - 1)) {
+  if (adev[i] <= adev[i - 1] && adev[i] <= adev[i + 1]) {
+    i_opt <- i
+    break
+  }
+}
+if (is.na(i_opt)) i_opt <- which.min(adev)
+tau_opt <- tau[i_opt]
+sigma_opt <- adev[i_opt]
+```
+
+```{r}
+#| label: fig-t3-allan
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 4.4
+#| fig-cap: "Overlapping Allan deviation of the detrended residual. Dashed lines: the two slopes of [the slope table](handbook.qmd#tbl-t3-slopes) that bound the curve on either side of the minimum. The marker is the optimum averaging time."
+white_line <- adev[1] * sqrt(tau[1] / tau)
+rw_line <- adev[length(adev)] * sqrt(tau / tau[length(tau)])
+ggplot() +
+  geom_line(data = data.frame(tau = tau, s = white_line),
+            aes(tau, s), linetype = "dashed", linewidth = 0.4, colour = "grey50") +
+  geom_line(data = data.frame(tau = tau, s = rw_line),
+            aes(tau, s), linetype = "dashed", linewidth = 0.4, colour = "grey70") +
+  geom_line(data = data.frame(tau = tau, s = adev), aes(tau, s), linewidth = 0.4) +
+  geom_point(data = data.frame(tau = tau, s = adev), aes(tau, s), size = 1.6) +
+  geom_vline(xintercept = tau_opt, linetype = "dotted", linewidth = 0.3, colour = "grey30") +
+  annotate("point", x = tau_opt, y = sigma_opt, shape = 0, size = 4, stroke = 1.1) +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(x = expression("Averaging time " * tau * " [s]"),
+       y = expression(sigma[y](tau) * " [K]"))
+```
+
+```{r}
+#| label: out-allan
+#| echo: false
+#| output: asis
+rows <- sprintf("| %.1f | %.4f |", tau, adev * 1e3)
+cat(sprintf('
+| $\\tau$ [s] | $\\sigma_y(\\tau)$ [mK] |
+|---|---|
+%s
+
+: Overlapping Allan deviation of the detrended residual {#tbl-t3-allan}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: out-allan-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+The minimum is at $\\tau_\\mathrm{opt} = %.0f$ s
+(%.1f min), where $\\sigma_y(\\tau_\\mathrm{opt}) =
+%.4f$ mK. Below this the curve falls as white noise averages
+down; above it, the random walk of [reading the slope](handbook.qmd#sec-t3-slope) takes over and averaging
+longer makes the estimate of the mean *worse*.
+', tau_opt, tau_opt / 60, sigma_opt * 1e3))
+```
+
+## $s/\sqrt{n}$ against the Allan deviation
+
+The ordinary standard error of the mean, computed the way S1 computes it,
+compared with the Allan deviation at the optimum.
+
+```{r}
+#| label: compare
+s_naive <- sd(resid) / sqrt(n)
+ratio <- s_naive / sigma_opt
+```
+
+```{r}
+#| label: out-compare
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Estimator | Value |
+|---|---|
+| $s/\\sqrt{n}$ over the whole record ($n = %d$) | %.4f mK |
+| $\\sigma_y(\\tau_\\mathrm{opt})$ | %.4f mK |
+| Ratio | %.2f |
+
+: The naive estimator against the Allan-deviation optimum {#tbl-t3-compare}
+', n, s_naive * 1e3, sigma_opt * 1e3, ratio))
+```
+
+```{r}
+#| label: out-compare-text
+#| echo: false
+#| output: asis
+verdict <- if (s_naive < sigma_opt) "understates" else "overstates"
+cat(sprintf('
+$s/\\sqrt n$ %s the true uncertainty of a long average of this record
+by a factor of %.1f, because it assumes every one of the
+$n$ samples is independent -- which [the Allan-deviation theory](handbook.qmd#sec-t3-allan) already showed is false at
+long $\\tau$. $\\sigma_y(\\tau_\\mathrm{opt})$ is the honest number, and it
+is the one the budget below uses.
+', verdict, max(ratio, 1 / ratio)))
+```
+
+## Uncertainty budget
+
+The measurand is [the mean temperature](handbook.qmd#eq-t3-that)
+$\hat T = \bar x(\tau_\mathrm{opt}) - \Delta_\mathrm{cal}$, over the optimum
+averaging window.
+
+```{r}
+#| label: effective-q
+# S1's "effective quantization" idea, applied to this sensor chain: the
+# Allan deviation at the shortest averaging time (tau0) is, by construction,
+# an estimator of the single-sample (white) noise floor -- reusing @tbl-t3-allan
+# rather than a fresh standard deviation, which would also pick up the
+# random walk's contribution and overstate this term.
+FSR_K <- (board$vref_mV / 1000) / channel$sensor_sensitivity_V_per_K
+sigma_1 <- adev[1]
+enob_eff <- enob(FSR_K, sigma_1)
+q_eff_K <- FSR_K / 2^enob_eff
+```
+
+```{r}
+#| label: budget
+u_cal_K <- 0.05                    # TODO (Paolo): from T1, once run -- placeholder bound
+drift_bound_K <- abs(drift_K_per_h / 3600) * tau_opt  # half-width, full drift over the window
+
+components <- list(
+  list(quantity = "Repeatability at the optimum", value = 0, unit = "K",
+       distribution = "type-a", std = sigma_opt, sensitivity = 1.0),
+  list(quantity = "Calibration (T1)", value = 0, unit = "K",
+       distribution = "rectangular", half_width = u_cal_K, sensitivity = -1.0),
+  list(quantity = "Effective quantization", value = 0, unit = "K",
+       distribution = "rectangular", half_width = q_eff_K / 2, sensitivity = 1.0),
+  list(quantity = "Drift over the window", value = 0, unit = "K",
+       distribution = "rectangular", half_width = drift_bound_K / 2, sensitivity = 1.0)
+)
+budget <- budget_table(components, k = 2)
+```
+
+```{r}
+#| label: out-budget
+#| echo: false
+#| output: asis
+cat(budget_to_markdown(
+  budget,
+  caption = sprintf("Uncertainty budget for the mean temperature, $\\tau_\\mathrm{opt} = %.0f$ s", tau_opt),
+  label = "tbl-t3-budget"))
+```
+
+```{r}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant <- budget$table[which.max(budget$table$index_pct), ]
+cat(sprintf('
+Expanded uncertainty $U = %.3f$ mK at $k = 2$. The dominant
+component is **%s** at %.0f %% of
+the combined variance.
+', budget$U * 1e3, dominant$quantity, dominant$index_pct))
+```
+
+::: {.callout-note}
+## What this budget assumes
+
+The calibration term uses a placeholder bound pending T1; replace
+`u_cal_K` with T1's own reported uncertainty once that experiment has been
+run. The drift term is a bound, not a correction, for the reason given in the
+handbook: it would need to know where in the diurnal cycle the averaging
+window sits, which is not assumed here.
+:::
+
+## What to report
+
+1. @tbl-t3-fit and @fig-t3-fit: drift and diurnal amplitude, and which one
+   dominates.
+2. @fig-t3-allan and @tbl-t3-allan: the Allan-deviation curve, its slopes
+   classified against [the slope table](handbook.qmd#tbl-t3-slopes), and the optimum averaging time.
+3. @tbl-t3-compare: $s/\sqrt n$ against $\sigma_y(\tau_\mathrm{opt})$, and by
+   how much they disagree.
+4. @tbl-t3-budget: the budget, the dominant component, and what you would
+   change first to improve it.

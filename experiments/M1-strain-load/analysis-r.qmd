@@ -1,0 +1,667 @@
+---
+title: "M1 — Analysis template (R)"
+subtitle: "Strain gauges and load cell"
+description: "In-amp sizing, load-cell calibration, bridge configurations and temperature compensation, in R"
+engine: knitr
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment, so you can read the whole analysis before you touch a bench. To
+analyse your own measurements, replace the files in `data/` and change the
+paths in the first chunk — nothing else.
+
+The Python template [`analysis-py.qmd`](analysis-py.qmd) has the same
+sections, the same figure labels and the same output tables, and produces
+the same numbers from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the creep fit is written out rather than called from a library
+
+The creep model of [the handbook](handbook.qmd#eq-m1-creep) is nonlinear in
+its time constant. Both templates fit it with an explicit two-parameter
+Gauss–Newton loop, the same discipline
+[S3 uses](../S3-aliasing-filtering/analysis-r.qmd) for its sine fit and its
+FIR filter: `scipy.optimize.curve_fit` and R's `nls` use different
+convergence criteria and can converge to slightly different parameter
+values on the same data, which breaks table-for-table agreement between the
+two languages.
+:::
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+library(ggplot2)
+library(patchwork)
+
+source("../../shared/R/labtools.R")
+
+theme_set(theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25)))
+
+LOAD_MASSES_G <- c(0, 100, 200, 300, 400)
+LOADING_RUNS <- sprintf("data/load-loading-%03d.csv", LOAD_MASSES_G)
+UNLOADING_RUNS <- sprintf("data/load-unloading-%03d.csv", rev(LOAD_MASSES_G))
+CREEP_RUN <- "data/load-creep.csv"
+ZERO_RETURN_RUN <- "data/load-zero-return.csv"
+
+BRIDGE_QUARTER_MASSES_G <- c(0, 10, 20, 30)
+BRIDGE_QUARTER_RUNS <- sprintf("data/bridge-quarter-%03d.csv", BRIDGE_QUARTER_MASSES_G)
+BRIDGE_HALF_RUNS <- c("data/bridge-half-000.csv", "data/bridge-half-030.csv")
+BRIDGE_FULL_RUNS <- c("data/bridge-full-000.csv", "data/bridge-full-030.csv")
+
+TEMP_RUNS <- list(
+  quarter_cold = "data/temp-quarter-cold.csv",
+  quarter_hot = "data/temp-quarter-hot.csv",
+  half_cold = "data/temp-half-cold.csv",
+  half_hot = "data/temp-half-hot.csv"
+)
+```
+
+```{r}
+#| label: helpers
+# Ordinary least squares, y = a + b x, written out so the sensitivity
+# coefficients and the residual standard error match the handbook exactly --
+# the same construction as S1's calibration fit.
+ols_fit <- function(x, y) {
+  n <- length(x)
+  sxx <- sum((x - mean(x))^2)
+  b <- sum((x - mean(x)) * (y - mean(y))) / sxx
+  a <- mean(y) - b * mean(x)
+  resid <- y - (a + b * x)
+  if (n > 2) {
+    s_res <- sqrt(sum(resid^2) / (n - 2))
+    u_b <- s_res / sqrt(sxx)
+    u_a <- s_res * sqrt(1 / n + mean(x)^2 / sxx)
+  } else {
+    u_b <- NA_real_
+    u_a <- NA_real_
+  }
+  list(a = a, b = b, u_a = u_a, u_b = u_b, resid = resid)
+}
+
+# Gauss-Newton fit of y(t) = C (1 - exp(-t/tau)) to y = v/v0 - 1. Two
+# parameters only -- v0 is taken directly from the first samples of the
+# hold rather than fitted, which keeps the iteration well-conditioned and
+# gives Python and R the same starting point.
+creep_fit <- function(t_s, v, v0, n_iter = 200) {
+  y <- v / v0 - 1
+  c_par <- y[length(y)]
+  tau <- t_s[length(t_s)] / 3
+  for (i in seq_len(n_iter)) {
+    e <- exp(-t_s / tau)
+    model <- c_par * (1 - e)
+    resid <- y - model
+    d_c <- 1 - e
+    d_tau <- -c_par * e * (t_s / tau^2)
+    jac <- cbind(d_c, d_tau)
+    step <- qr.solve(jac, resid)
+    c_par <- c_par + step[1]
+    tau <- tau + step[2]
+    if (max(abs(step)) < 1e-12) break
+  }
+  resid <- y - c_par * (1 - exp(-t_s / tau))
+  list(c_inf = c_par, tau_s = tau, resid = resid)
+}
+```
+
+```{r}
+#| label: load
+quarter_runs <- lapply(BRIDGE_QUARTER_RUNS, read_run)
+primary <- quarter_runs[[length(quarter_runs)]]
+board <- primary$meta$board
+ch0 <- primary$meta$channels[[1]]
+
+FSR <- board$vref_mV / 1000
+LSB <- lsb_volts(primary$meta)
+GAUGE_FACTOR <- ch0$gauge_factor
+U_GAUGE_FACTOR_REL <- ch0$u_gauge_factor_rel
+VEX <- ch0$bridge_excitation_v
+U_EXCITATION_REL <- ch0$u_excitation_rel
+GAIN_BEAM <- ch0$conditioning$gain
+OFFSET_BEAM <- ch0$conditioning$offset
+U_GAIN_REL <- ch0$amplifier_u_gain_rel
+U_OFFSET_V <- ch0$amplifier_u_offset_v
+```
+
+```{r}
+#| label: banner
+#| echo: false
+#| output: asis
+cat(synthetic_banner(primary$meta))
+```
+
+## Data quality
+
+```{r}
+#| label: quality
+#| echo: false
+#| output: asis
+all_paths <- c(LOADING_RUNS, UNLOADING_RUNS, CREEP_RUN, ZERO_RETURN_RUN,
+               BRIDGE_QUARTER_RUNS, BRIDGE_HALF_RUNS, BRIDGE_FULL_RUNS,
+               unlist(TEMP_RUNS))
+all_runs <- lapply(all_paths, read_run)
+names(all_runs) <- all_paths
+n_bad <- sum(vapply(all_runs, function(r) length(validate_meta(r$meta)) > 0, logical(1)))
+lossy <- Filter(function(name) {
+  stats <- all_runs[[name]]$meta$stream_stats
+  counters <- stats[setdiff(names(stats), "records")]
+  any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))
+}, names(all_runs))
+cat(sprintf('
+%d runs read.
+%s
+%s
+', length(all_runs),
+   if (n_bad == 0) "All sidecars are complete."
+   else sprintf("%d sidecar(s) have missing fields.", n_bad),
+   if (length(lossy) == 0) "No run reports a lost record."
+   else paste0("Runs with losses: ", paste(lossy, collapse = ", "))))
+```
+
+## Why the amplifier: the arithmetic
+
+At a representative strain $\varepsilon = 10^{-4}$
+([the handbook](handbook.qmd#eq-m1-quarter-numeric)), the bare quarter-bridge
+signal, the LSB it would be read against with no amplifier, and the actual
+amplified signal this bench uses, computed from the sidecar's own recorded
+gauge factor, excitation and gain — not re-typed constants.
+
+```{r}
+#| label: inamp
+EPS_EXAMPLE <- 1e-4
+raw_v <- GAUGE_FACTOR * EPS_EXAMPLE * VEX / 4
+raw_lsb <- raw_v / LSB
+amplified_v <- GAIN_BEAM * raw_v
+amplified_frac_fs <- amplified_v / FSR
+```
+
+```{r}
+#| label: out-inamp
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| Representative strain $\\varepsilon$ | %.0e |
+| Bare bridge signal, $k\\varepsilon V_\\mathrm{ex}/4$ | %.4f mV |
+| One LSB on this board | %.2f µV |
+| Bare signal, in LSB | %.2f |
+| Amplifier gain actually used | %.1f |
+| Amplified signal at the ADC | %.3f V |
+| Amplified signal, fraction of full scale | %.1f %% |
+
+: The case for the amplifier, in numbers {#tbl-m1-inamp}
+', EPS_EXAMPLE, raw_v * 1e3, LSB * 1e6, raw_lsb, GAIN_BEAM, amplified_v,
+   amplified_frac_fs * 100))
+```
+
+```{r}
+#| label: out-inamp-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+Unamplified, this strain would produce **%.1f LSB** — the same
+order of magnitude as [S1\'s own noise floor](../S1-daq-static/handbook.qmd#sec-s1-enob),
+which on this board is of order 0.5 mV RMS, itself several LSB wide. A
+bridge signal that size is not a small measurement; it is not a measurement.
+Amplified by %.0f, the same strain reaches
+**%.0f %%** of the ADC\'s full-scale range, which is
+what [the required-gain design](handbook.qmd#eq-m1-required-gain) is for.
+', raw_lsb, GAIN_BEAM, amplified_frac_fs * 100))
+```
+
+## Load cell: linearity and hysteresis
+
+The load cell's static calibration: a straight-line fit to the loading
+sweep, and the same sweep read backwards.
+
+```{r}
+#| label: linearity
+load_frame <- function(paths, direction) {
+  rows <- lapply(paths, function(p) {
+    run <- read_run(p)
+    ch <- run$meta$channels[[1]]
+    data.frame(run = run$meta$run, direction = direction,
+               F_N = ch$reference_value, u_F_N = ch$reference_u,
+               mean_V = mean(run$data$volts), sd_V = sd(run$data$volts),
+               n = nrow(run$data), capacity_N = ch$load_cell_capacity_n,
+               sensitivity_mv_per_v = ch$load_cell_sensitivity_mv_per_v,
+               excitation_v = ch$bridge_excitation_v, gain = ch$conditioning$gain)
+  })
+  do.call(rbind, rows)
+}
+
+loading <- load_frame(LOADING_RUNS, "loading")
+unloading <- load_frame(UNLOADING_RUNS, "unloading")
+
+row0 <- loading[1, ]
+V_FS <- row0$gain * row0$sensitivity_mv_per_v * 1e-3 * row0$excitation_v
+
+fit <- ols_fit(loading$F_N, loading$mean_V)
+loading$residual_V <- fit$resid
+nonlinearity_pct <- max(abs(loading$residual_V)) / V_FS * 100
+```
+
+```{r}
+#| label: out-linearity
+#| echo: false
+#| output: asis
+rows <- sprintf("| %s | %.4f | %.5f | %.3f | %d | %+.3f |",
+                loading$run, loading$F_N, loading$mean_V, loading$sd_V * 1e3,
+                loading$n, loading$residual_V * 1e3)
+cat(sprintf('
+| Run | Force [N] | Mean [V] | $s$ [mV] | $n$ | Residual [mV] |
+|---|---|---|---|---|---|
+%s
+
+: Loading sweep and the linear fit\'s residuals {#tbl-m1-linearity}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: out-linearity-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+Fitted $a = %.2f$ mV, $b = %.3f$ mV/N, with
+$u(a) = %.3f$ mV and $u(b) = %.4f$ mV/N.
+Full-scale output $V_\\mathrm{FS} = %.3f$ V (at the load cell\'s rated
+capacity, from the sidecar). Non-linearity, from [the linearity definition in the handbook](handbook.qmd#eq-m1-linearity):
+**%.2f %%FS**.
+', fit$a * 1e3, fit$b * 1e3, fit$u_a * 1e3, fit$u_b * 1e3, V_FS,
+   nonlinearity_pct))
+```
+
+```{r}
+#| label: fig-m1-linearity
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 5.0
+#| fig-cap: "Loading sweep: indication against force (top) and fit residuals (bottom)."
+p_fit <- ggplot(loading, aes(F_N, mean_V)) +
+  geom_abline(intercept = fit$a, slope = fit$b, linewidth = 0.5) +
+  geom_point(size = 2.4) +
+  labs(x = NULL, y = "Indicated voltage [V]")
+
+p_res <- ggplot(loading, aes(F_N, residual_V * 1e3)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.4) +
+  geom_point(size = 2.4) +
+  labs(x = "Force [N]", y = "Residual [mV]")
+
+p_fit / p_res + plot_layout(heights = c(2, 1))
+```
+
+```{r}
+#| label: hysteresis
+unloading_sorted <- unloading[order(unloading$F_N), ]
+hyst <- data.frame(F_N = loading$F_N, loading_V = loading$mean_V,
+                   unloading_V = unloading_sorted$mean_V)
+hyst$diff_mV <- (hyst$unloading_V - hyst$loading_V) * 1e3
+hysteresis_pct <- max(abs(hyst$diff_mV)) / 1e3 / V_FS * 100
+```
+
+```{r}
+#| label: out-hysteresis
+#| echo: false
+#| output: asis
+rows <- sprintf("| %.4f | %.5f | %.5f | %+.3f |",
+                hyst$F_N, hyst$loading_V, hyst$unloading_V, hyst$diff_mV)
+cat(sprintf('
+| Force [N] | Loading [V] | Unloading [V] | Difference [mV] |
+|---|---|---|---|
+%s
+
+: Loading against unloading at the same nominal force {#tbl-m1-hysteresis}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: out-hysteresis-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+Maximum hysteresis, from [the hysteresis definition in the handbook](handbook.qmd#eq-m1-hysteresis): **%.2f %%FS**,
+largest near mid-range and closing towards both ends, as the bell-shaped
+path dependence predicts.
+', hysteresis_pct))
+```
+
+```{r}
+#| label: fig-m1-hysteresis
+#| echo: false
+#| fig-width: 6.5
+#| fig-height: 4.0
+#| fig-cap: "Loading and unloading curves overlaid. The gap between them at each force is the hysteresis of @tbl-m1-hysteresis."
+trace <- rbind(
+  data.frame(F_N = hyst$F_N, V = hyst$loading_V, case = "loading"),
+  data.frame(F_N = hyst$F_N, V = hyst$unloading_V, case = "unloading"))
+ggplot(trace, aes(F_N, V, colour = case)) +
+  geom_line(linewidth = 0.4) +
+  geom_point(size = 2.2) +
+  labs(x = "Force [N]", y = "Indicated voltage [V]", colour = NULL)
+```
+
+## Load cell: creep and zero drift
+
+```{r}
+#| label: creep
+creep_run <- read_run(CREEP_RUN)
+t_s <- (creep_run$data$t_us - creep_run$data$t_us[1]) / 1e6
+v <- creep_run$data$volts
+v0 <- mean(v[1:10])
+creep <- creep_fit(t_s, v, v0)
+```
+
+```{r}
+#| label: out-creep
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| $V(0)$ | %.5f V |
+| Fitted $C_\\infty$ | %.2f %% |
+| Fitted $\\tau$ | %.1f s |
+| Residual RMS | %.3f mV (relative units) |
+| Hold duration | %.0f s |
+
+: Creep fit of [the creep model in the handbook](handbook.qmd#eq-m1-creep) on the held load {#tbl-m1-creep}
+', v0, creep$c_inf * 100, creep$tau_s, sqrt(mean(creep$resid^2)) * 1e3,
+   t_s[length(t_s)]))
+```
+
+```{r}
+#| label: fig-m1-creep
+#| echo: false
+#| fig-width: 6.5
+#| fig-height: 3.6
+#| fig-cap: "The held-load reading over time, with the fitted creep curve of [the creep model in the handbook](handbook.qmd#eq-m1-creep)."
+fit_curve <- data.frame(t_s = t_s,
+                        v = v0 * (1 + creep$c_inf * (1 - exp(-t_s / creep$tau_s))))
+ggplot() +
+  geom_line(data = data.frame(t_s = t_s, v = v), aes(t_s, v),
+            linewidth = 0.25, alpha = 0.6) +
+  geom_line(data = fit_curve, aes(t_s, v), linewidth = 0.6, colour = "#c0392b") +
+  labs(x = "Time [s]", y = "Indicated voltage [V]")
+```
+
+```{r}
+#| label: zero_drift
+first_zero <- mean(read_run(LOADING_RUNS[1])$data$volts)
+last_zero <- mean(read_run(ZERO_RETURN_RUN)$data$volts)
+zero_drift_mV <- (last_zero - first_zero) * 1e3
+zero_drift_pct <- abs(zero_drift_mV) / 1e3 / V_FS * 100
+```
+
+```{r}
+#| label: out-zero
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| First zero (start of session) | %.5f V |
+| Last zero (after the full sequence) | %.5f V |
+| Zero drift | %+.3f mV (%.3f %%FS) |
+
+: Zero drift across the session {#tbl-m1-zero}
+', first_zero, last_zero, zero_drift_mV, zero_drift_pct))
+```
+
+## Bridge configurations on the beam
+
+The same small reference masses, read through quarter, half and full
+bridge. The quarter-bridge points also give the load-to-strain calibration
+[M2](../M2-hall-displacement/index.qmd) reads back.
+
+```{r}
+#| label: bridges
+bridge_points <- function(paths) {
+  rows <- lapply(paths, function(p) {
+    run <- read_run(p)
+    ch <- run$meta$channels[[1]]
+    data.frame(F_N = ch$reference_value, mean_V = mean(run$data$volts),
+               sd_V = sd(run$data$volts), n = nrow(run$data))
+  })
+  df <- do.call(rbind, rows)
+  df[order(df$F_N), ]
+}
+
+quarter <- bridge_points(BRIDGE_QUARTER_RUNS)
+half <- bridge_points(BRIDGE_HALF_RUNS)
+full <- bridge_points(BRIDGE_FULL_RUNS)
+
+fit_quarter <- ols_fit(quarter$F_N, quarter$mean_V)
+slope_quarter <- fit_quarter$b
+u_slope_quarter <- fit_quarter$u_b
+slope_half <- (half$mean_V[2] - half$mean_V[1]) / (half$F_N[2] - half$F_N[1])
+slope_full <- (full$mean_V[2] - full$mean_V[1]) / (full$F_N[2] - full$F_N[1])
+
+ratio_half <- slope_half / slope_quarter
+ratio_full <- slope_full / slope_quarter
+
+# Strain sensitivity at the gauge, recovered from the quarter-bridge slope:
+# V_adc = GAIN_BEAM * (k eps Vex / 4) + offset, eps linear in F, so
+# d(eps)/dF = 4 * d(V_adc)/dF / (GAIN_BEAM k Vex).
+d_eps_d_f <- 4 * slope_quarter / (GAIN_BEAM * GAUGE_FACTOR * VEX)
+u_d_eps_d_f <- 4 * u_slope_quarter / (GAIN_BEAM * GAUGE_FACTOR * VEX)
+```
+
+```{r}
+#| label: out-bridges
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Configuration | $dV/dF$ [mV/N] | Ratio to quarter | Nominal ratio |
+|---|---|---|---|
+| Quarter | %.3f | 1.00 | 1 |
+| Half | %.3f | %.3f | 2 |
+| Full | %.3f | %.3f | 4 |
+
+: Bridge sensitivity and the 1 : 2 : 4 ratio of [the bridge relations in the handbook](handbook.qmd#eq-m1-bridge-configs) {#tbl-m1-bridges}
+', slope_quarter * 1e3, slope_half * 1e3, ratio_half, slope_full * 1e3, ratio_full))
+```
+
+```{r}
+#| label: out-bridges-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+Half and full bridge reproduce the %.2f× and %.2f×
+sensitivity [the bridge relations in the handbook](handbook.qmd#eq-m1-bridge-configs) predicts. The half- and full-bridge
+sensitivities come from only two points each — enough to confirm the ratio,
+not enough to give a fit its own residual, the same limitation
+[S1 notes](../S1-daq-static/handbook.qmd#sec-s1-instructor-failures) for a
+two-point calibration.
+
+From the quarter-bridge slope, the strain sensitivity to force at the gauge
+is $d\\varepsilon/dF = %.3f \\times 10^{-6}$ /N, with
+$u(d\\varepsilon/dF) = %.4f \\times 10^{-6}$ /N — the
+number [M2](../M2-hall-displacement/analysis-r.qmd) reads back for its
+stiffness cross-check.
+', ratio_half, ratio_full, d_eps_d_f * 1e6, u_d_eps_d_f * 1e6))
+```
+
+```{r}
+#| label: fig-m1-bridges
+#| echo: false
+#| fig-width: 6.5
+#| fig-height: 4.0
+#| fig-cap: "Bridge output against applied force for the three configurations. The slopes are in the ratio 1 : 2 : 4."
+bridges_long <- rbind(
+  data.frame(F_N = quarter$F_N, V = quarter$mean_V, config = "quarter"),
+  data.frame(F_N = half$F_N, V = half$mean_V, config = "half"),
+  data.frame(F_N = full$F_N, V = full$mean_V, config = "full"))
+ggplot(bridges_long, aes(F_N, V, colour = config)) +
+  geom_line(linewidth = 0.4) +
+  geom_point(size = 2.2) +
+  labs(x = "Force [N]", y = "Indicated voltage [V]", colour = NULL)
+```
+
+## Temperature compensation
+
+Beam unloaded, quarter bridge against a dummy-compensated half bridge, at
+two bench temperatures.
+
+```{r}
+#| label: temperature
+temp <- lapply(TEMP_RUNS, read_run)
+delta_t <- temp$quarter_hot$meta$channels[[1]]$applied_delta_t_c
+
+apparent_alpha <- function(cold_key, hot_key, n_arm) {
+  v_cold <- mean(temp[[cold_key]]$data$volts)
+  v_hot <- mean(temp[[hot_key]]$data$volts)
+  d_v_bridge <- (v_hot - v_cold) / GAIN_BEAM   # offset cancels in the difference
+  (4 * d_v_bridge / VEX) / (n_arm * GAUGE_FACTOR) / delta_t
+}
+
+alpha_quarter <- apparent_alpha("quarter_cold", "quarter_hot", 1)
+alpha_half <- apparent_alpha("half_cold", "half_hot", 2)
+compensation_ratio <- alpha_quarter / alpha_half
+```
+
+```{r}
+#| label: out-temp
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Configuration | Apparent strain / K |
+|---|---|
+| Quarter bridge (bare) | $%.3f \\times 10^{-6}$ /K |
+| Half bridge (dummy-compensated) | $%.4f \\times 10^{-6}$ /K |
+
+: Apparent strain per kelvin, from [the apparent-strain relation in the handbook](handbook.qmd#eq-m1-temp-apparent), $\\Delta T = %g$ C {#tbl-m1-temp}
+', alpha_quarter * 1e6, alpha_half * 1e6, delta_t))
+```
+
+```{r}
+#| label: out-temp-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+The dummy-compensated half bridge\'s apparent strain per kelvin is
+**%.1f times smaller** than the bare quarter bridge\'s —
+compensation, not cancellation: the residual is real and belongs in any
+budget that uses the half-bridge configuration in a varying-temperature
+environment.
+', compensation_ratio))
+```
+
+```{r}
+#| label: fig-m1-temp
+#| echo: false
+#| fig-width: 5.0
+#| fig-height: 3.6
+#| fig-cap: "Apparent strain per kelvin, quarter bridge against dummy-compensated half bridge."
+bar_data <- data.frame(config = factor(c("quarter", "half"), levels = c("quarter", "half")),
+                       alpha = c(alpha_quarter, alpha_half) * 1e6)
+ggplot(bar_data, aes(config, alpha)) +
+  geom_col(fill = "#2a7fa8") +
+  labs(x = NULL, y = "Apparent strain / K  [x 1e-6]")
+```
+
+## Uncertainty budget
+
+The measurand is the beam-mounted quarter bridge's strain,
+$\hat\varepsilon$ from [the handbook](handbook.qmd#eq-m1-strain-recover), at
+the largest quarter-bridge reference point, with the [sensitivity
+coefficients](handbook.qmd#eq-m1-sensitivity) given there.
+
+```{r}
+#| label: budget
+row <- quarter[nrow(quarter), ]
+v_adc_mean <- row$mean_V
+sigma_v_adc <- row$sd_V
+n_pts <- row$n
+delta_v <- (v_adc_mean - OFFSET_BEAM) / GAIN_BEAM
+eps_hat <- 4 * delta_v / (GAUGE_FACTOR * VEX)
+
+c_dv <- 4 / (GAUGE_FACTOR * VEX)
+c_gain <- -eps_hat / GAIN_BEAM
+c_offset <- -4 / (GAUGE_FACTOR * VEX * GAIN_BEAM)
+c_k <- -eps_hat / GAUGE_FACTOR
+c_vex <- -eps_hat / VEX
+
+enob_here <- enob(FSR, sigma_v_adc)
+q_eff_adc <- FSR / 2^enob_here
+q_eff_bridge <- q_eff_adc / GAIN_BEAM     # referred to Delta V, same units as delta_v
+
+components <- list(
+  list(quantity = "Repeatability of Delta V", value = delta_v, unit = "strain",
+       distribution = "type-a", std = (sigma_v_adc / GAIN_BEAM) / sqrt(n_pts),
+       sensitivity = c_dv),
+  list(quantity = "Effective quantization", value = 0, unit = "strain",
+       distribution = "rectangular", half_width = q_eff_bridge / 2, sensitivity = c_dv),
+  list(quantity = "Amplifier gain G", value = GAIN_BEAM, unit = "strain",
+       distribution = "rectangular", half_width = U_GAIN_REL * GAIN_BEAM,
+       sensitivity = c_gain),
+  list(quantity = "Amplifier offset", value = OFFSET_BEAM, unit = "strain",
+       distribution = "rectangular", half_width = U_OFFSET_V, sensitivity = c_offset),
+  list(quantity = "Gauge factor k", value = GAUGE_FACTOR, unit = "strain",
+       distribution = "rectangular", half_width = U_GAUGE_FACTOR_REL * GAUGE_FACTOR,
+       sensitivity = c_k),
+  list(quantity = "Excitation voltage Vex", value = VEX, unit = "strain",
+       distribution = "rectangular", half_width = U_EXCITATION_REL * VEX,
+       sensitivity = c_vex)
+)
+budget <- budget_table(components, k = 2)
+```
+
+```{r}
+#| label: out-budget
+#| echo: false
+#| output: asis
+cat(budget_to_markdown(
+  budget,
+  caption = sprintf("Uncertainty budget for the recovered strain at $F = %.3f$ N", row$F_N),
+  label = "tbl-m1-budget"))
+```
+
+```{r}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant <- budget$table[which.max(budget$table$index_pct), ]
+cat(sprintf('
+Recovered strain $\\hat\\varepsilon = %.3f \\times 10^{-6}$,
+with expanded uncertainty $U = %.3f \\times 10^{-6}$ at
+$k = 2$ — a relative uncertainty of %.1f %%. The
+dominant component is **%s** at
+%.0f %% of the combined variance.
+', eps_hat * 1e6, budget$U * 1e6, budget$U / eps_hat * 100, dominant$quantity,
+   dominant$index_pct))
+```
+
+::: {.callout-note}
+## What this budget assumes
+
+Inputs are treated as uncorrelated, and the model is linear at the operating
+point — both standard simplifications, stated here as
+[the shared uncertainty-budget guidance](../../data-format/index.qmd#sec-budget)
+asks. The load cell's own hysteresis and creep are not included, because the
+measurand budgeted here is the beam-mounted gauge's strain, not the load
+cell's force; see [the handbook](handbook.qmd#sec-m1-budget) for why.
+:::
+
+## What to report
+
+1. @tbl-m1-inamp: the in-amp arithmetic, with your own sidecar's gauge
+   factor and gain.
+2. @tbl-m1-linearity and @fig-m1-linearity: the loading fit and its
+   residuals, with non-linearity as %FS.
+3. @tbl-m1-hysteresis and @fig-m1-hysteresis: the loading/unloading loop,
+   with maximum hysteresis as %FS.
+4. @tbl-m1-creep and @fig-m1-creep: the fitted creep curve.
+5. @tbl-m1-zero: zero drift across the session.
+6. @tbl-m1-bridges and @fig-m1-bridges: the 1 : 2 : 4 sensitivity ratio.
+7. @tbl-m1-temp and @fig-m1-temp: apparent strain per kelvin, both
+   configurations, and the compensation ratio between them.
+8. @tbl-m1-budget: the budget, the dominant component, and what you would
+   change first to reduce it.

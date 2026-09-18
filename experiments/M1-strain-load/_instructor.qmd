@@ -1,0 +1,126 @@
+### Session timing {#sec-m1-instructor-timing}
+
+Four hours, for a pair of students who have already completed S1 (and
+ideally have a working conditioning-board build from S3):
+
+| Time | Activity | Watch for |
+|---|---|---|
+| 0:00–0:20 | Slides, and the in-amp arithmetic of @sec-m1-inamp worked with their own numbers | Skipping straight to "of course you need a gain stage" without the arithmetic |
+| 0:20–0:50 | Building and verifying both amplifiers (load cell, beam gauges) | Connecting the sensor before verifying the quiescent output |
+| 0:50–1:30 | Load cell: loading and unloading sweep | Skipping a point in one direction, breaking the hysteresis comparison |
+| 1:30–1:50 | Creep hold | Bumping the bench during the hold |
+| 1:50–2:20 | Bridge configurations on the beam | Forgetting to record `bridge_type` and the gauge factor per run |
+| 2:20–2:45 | Temperature compensation | Changing the temperature too fast to stabilize before recording |
+| 2:45–3:35 | Analysis template | See below |
+| 3:35–4:00 | Budget discussion, and the M2 cross-check if M2 has also been run | — |
+
+If time is short, drop the temperature-compensation step
+(@sec-m1-step-temp) and hand out the shipped `temp-*` reference runs instead:
+the comparison between the two apparent-strain-per-kelvin figures is the
+lesson, and the shipped data makes it just as well as a bench run would.
+
+### Expected results {#sec-m1-instructor-expected}
+
+On the shipped synthetic data. [TODO (Paolo)]{.todo}: replace with values
+from the reference bench once the load cell, the beam-mounted gauges and the
+amplifiers exist and have been characterized; until then these describe the
+generator's design parameters (`tools/synth/params/m1.yaml`), not
+measurements.
+
+- Non-linearity: a couple of percent of full scale — deliberately large
+  enough in the reference data to be unmistakable in a residual plot, larger
+  than most real load cells; the point is the method, not the magnitude.
+- Hysteresis: a loop clearly visible between the loading and unloading
+  curves, largest at mid-range and closing at both ends, as
+  @eq-m1-hysteresis predicts.
+- Creep: a visible rise over the hold, asymptoting well before the hold ends,
+  with a fitted $\tau$ recoverable to reasonable precision from 60 s of data.
+- Zero drift: a few millivolts between the first and the last zero of the
+  session — small compared with the full-scale span, but well above the
+  noise floor of a single reading.
+- Bridge sensitivities: outputs in almost exactly the ratio 1 : 2 : 4 for
+  quarter : half : full at the same applied force, to within the noise of a
+  single run.
+- Temperature compensation: the bare quarter bridge shows an apparent strain
+  per kelvin roughly ten times the dummy-compensated half bridge's — the
+  half bridge does not cancel to zero, and should not be expected to.
+
+### Common failures, in the order they happen {#sec-m1-instructor-failures}
+
+1. **The in-amp gain is guessed rather than derived.** A group wires up a
+   convenient off-the-shelf gain (say ×100) without working through
+   @eq-m1-required-gain, and either clips the ADC or wastes most of its
+   range. Send them back to the arithmetic of @sec-m1-inamp before they wire
+   anything.
+2. **Loading and unloading use different masses or a different order.** The
+   hysteresis comparison of @eq-m1-hysteresis then compares two different
+   experiments, not one loop, and the "hysteresis" reported is partly just
+   the two sweeps not agreeing.
+3. **The creep hold is interrupted.** Touching the bench, or a draught moving
+   the mass, injects a step into what should be a smooth exponential and
+   ruins the $\tau$ fit. Ask what the residuals of @eq-m1-creep look like
+   before accepting the fit.
+4. **`bridge_type` is not recorded**, or the three configurations are
+   confused in the sidecar. Then the 1:2:4 ratio check in the analysis
+   template silently compares the wrong pairs.
+5. **The temperature change is not actually measured**, only assumed from
+   "we turned the heat gun on for 30 seconds." @eq-m1-temp-apparent needs a
+   real $\Delta T$; an assumed one turns a measurement into a guess with a
+   number attached.
+
+### Discussion questions and where they should land {#sec-m1-instructor-discussion}
+
+**"Non-linearity and hysteresis are both percentages of full scale. Are they
+the same kind of error?"** No — non-linearity is correctable (fit a
+higher-order curve and the residual shrinks); hysteresis is path-dependent
+and no single-valued curve, of any order, removes it. This is worth stopping
+on: it is the reason hysteresis, not non-linearity, is usually the harder
+spec to improve on a real load cell.
+
+**"Why does the half-bridge temperature test not read exactly zero?"**
+Because compensation depends on the dummy gauge matching the active gauge's
+temperature coefficient, which is a manufacturing tolerance, not an identity.
+Connect this to @sec-m1-inamp's arithmetic: the residual apparent strain
+after compensation is still a real term in the budget, just a much smaller
+one.
+
+**"We measured the beam-mounted quarter bridge's strain. Could we have
+budgeted the load cell's force instead?"** Yes, and the sensitivity
+coefficients would look like [S1's calibration
+budget](../S1-daq-static/handbook.qmd#eq-s1-sensitivity) rather than
+@eq-m1-sensitivity. Have a fast group redo @sec-m1-budget for the load cell
+and compare which terms dominate.
+
+### Assessment rubric {#sec-m1-instructor-rubric}
+
+Out of 100, for the report:
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Sidecar completeness | 10 | Every run reconstructible from its metadata; gauge factor, bridge type and applied forces all present |
+| In-amp justification | 15 | @eq-m1-quarter-numeric worked with the group's own numbers against S1's noise floor; @eq-m1-required-gain used to size the amplifier, not guessed |
+| Linearity and hysteresis | 20 | Both reported as %FS with the correct definitions; residuals plotted, not just quoted |
+| Creep and zero drift | 15 | @eq-m1-creep fitted with a stated $\tau$; zero drift distinguished from hysteresis, not conflated with it |
+| Bridge configurations | 15 | The 1:2:4 ratio checked against data, and the cancellation logic (temperature vs. axial load) correctly stated for each wiring |
+| Temperature compensation | 10 | Apparent strain per kelvin reported for both configurations, with the half bridge's non-zero residual explained, not hidden |
+| Uncertainty budget | 15 | Correct sensitivity coefficients from @eq-m1-sensitivity; the chosen measurand justified; dominant term named |
+
+Deduct across the board for any percentage reported without stating what it
+is a percentage *of* (full scale? the local reading?), and for any claim of
+"good agreement" between the three bridge configurations without a number
+attached to it.
+
+### If a group finishes early {#sec-m1-instructor-extension}
+
+- Fit a second-order polynomial instead of a straight line to the loading
+  curve and quantify how much of @eq-m1-linearity's residual it removes —
+  and confirm the hysteresis loop of @eq-m1-hysteresis is unchanged by doing
+  so.
+- Repeat the creep hold at a different fraction of full scale and check
+  whether $\tau$ in @eq-m1-creep is load-dependent, which the single-hold
+  procedure here cannot distinguish from a coincidence.
+- If [M2](../M2-hall-displacement/index.qmd) has also been run on the same
+  beam, work through its stiffness cross-check and discuss what a
+  disagreement between the two independently-derived Young's moduli would
+  imply about the clamp (see [the beam
+  rig's clamp discussion](../../hardware/beam-rig.qmd#sec-beam-clamp)).

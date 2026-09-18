@@ -1,0 +1,98 @@
+::: {.callout-warning}
+## Before you leave it running overnight
+
+This experiment leaves a board, a host computer and (if used) a mains-powered
+insulated enclosure running, unattended, for over 24 hours. That is not a
+detail — it is the one thing about T3 that is different from every earlier
+experiment on this site, and it carries its own risks:
+
+- **Fire and overheating.** Any mains-powered heater, incubator or heat mat
+  used to add a small controlled offset must be rated for continuous
+  unattended operation, fused appropriately, and placed on a
+  non-flammable surface away from anything that can fall onto it. If in doubt,
+  do not add active heating — an insulated box at ambient temperature is a
+  perfectly good T3 rig on its own.
+- **The host must be allowed to stay on.** Disable automatic sleep, suspend
+  and unattended OS updates that could reboot the machine mid-run; a
+  restart part-way through the log is a lost 24 hours, not a recoverable
+  error.
+- **Tell people it is running.** A board and a host left on a bench overnight
+  in a shared space should be labelled with what it is, when it started, when
+  it is expected to finish, and a contact — so nobody unplugs it, moves it, or
+  "helpfully" shuts it down.
+- **Check it before you leave, and as soon as you are back.** Confirm the
+  stream has actually started and is writing records before you walk away;
+  confirm it is still running, and did not silently stop hours ago, before
+  you trust the file at the end.
+:::
+
+### 1. Build the insulated box {#sec-t3-step-box}
+
+Any enclosure that meaningfully slows heat exchange with the room works:
+a cooler box, an expanded-polystyrene box, or several layers of insulating
+foam around the sensor. There is no fixed design here — what matters is that
+the box's own time constant is long compared with the room's own temperature
+fluctuations on the timescale of minutes, not that it reaches any particular
+insulation figure.
+
+Mount the sensor near the centre of the enclosed volume, away from the walls
+and away from any electronics inside the box that could add its own
+self-heating (@doebelin) close to the sensing element.
+
+### 2. Identify the board and the host {#sec-t3-step-identify}
+
+```bash
+arduino-io list
+arduino-io info
+```
+
+As in every other experiment, write `board.adc_bits`, `board.vref_mV` and the
+firmware version into the sidecar. T3 additionally needs the **host**
+confirmed as one that will stay powered and awake for the whole run — see the
+callout above.
+
+### 3. Start the log {#sec-t3-step-start}
+
+A sample every few seconds is plenty; there is no dynamic content in this
+signal, only a slow drift and a slower diurnal cycle, and a fast sampling
+rate only makes the file larger for no benefit:
+
+```bash
+arduino-io mode 15 analog
+arduino-io stream 15 --hz 0.2 --seconds 86400 --csv data/log-24h.csv
+```
+
+`--hz 0.2` is one sample every 5 seconds; adjust to match the sensor and
+board actually in use, and record whatever period was actually used in the
+sidecar's `acquisition.requested_period_us`.
+
+### 4. Watch it start, then leave it {#sec-t3-step-watch}
+
+Confirm the first few records are landing before you walk away — a stream
+that fails to start looks, from across the room, identical to one that is
+quietly logging 24 hours of nothing. Check back periodically if that is
+practical; do not adjust the box, the sensor or its wiring while it is
+running, since any disturbance shows up in the record indistinguishable from
+a real event.
+
+### 5. Recover and close out the run {#sec-t3-step-recover}
+
+After at least 24 hours, stop the stream, copy the full summary line into
+`stream_stats`, and inspect the record before doing anything else: plot it
+raw, and confirm there are no obvious gaps, resets or a truncated final
+segment. A run that stopped early is still useful, but it must be labelled as
+shorter than 24 hours, not padded or extrapolated to look like one that
+finished.
+
+### 6. Fill the sidecar {#sec-t3-step-sidecar}
+
+- [ ] `board.adc_bits`, `board.vref_mV` — from `arduino-io info`
+- [ ] `host.os`, `host.machine` — the host that stayed on, and whether it was
+      ever asleep or restarted during the run (if it was, say so; do not
+      silently ship a discontinuous record as if it were continuous)
+- [ ] `acquisition.requested_period_us` **and** `acquisition.achieved_rate_hz`
+- [ ] all six `stream_stats` counters
+- [ ] `environment.notes` — what the insulation was, roughly how the box was
+      built, and anything unusual overnight (a door left open nearby, a
+      heating system cycling, direct sun reaching the bench)
+- [ ] `synthetic: false`

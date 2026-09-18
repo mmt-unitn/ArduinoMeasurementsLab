@@ -1,0 +1,270 @@
+---
+title: "M1 — Strain gauges and load cell"
+subtitle: "Laboratory handbook"
+description: "Static calibration with reference masses; bridge configurations on the beam"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-m1-outcomes}
+
+By the end of this session you should be able to:
+
+1. Derive, from arithmetic against a measured noise floor and quantization
+   step, why a strain-gauge bridge needs an instrumentation amplifier and how
+   much gain it needs.
+2. Separate the four things a static mechanical calibration has to tell
+   apart — linearity, hysteresis, creep, zero drift — and measure each one
+   with the right procedure.
+3. Explain, with the bridge equation, why quarter, half and full bridge
+   wiring differ in sensitivity and in what they cancel, and choose between
+   them for a stated goal.
+4. Design and run a temperature-compensation test, and quantify — not just
+   assert — what a dummy gauge buys.
+5. Build a GUM uncertainty budget for a measured strain, with correct
+   sensitivity coefficients for a chain of gauge, amplifier and converter.
+
+## Prerequisites {#sec-m1-prerequisites}
+
+- [S1](../S1-daq-static/index.qmd), completed: this experiment uses its
+  noise floor and effective-quantization results directly, without
+  re-deriving them.
+- [The beam rig](../../hardware/beam-rig.qmd) and [the conditioning
+  board](../../hardware/conditioning-board.qmd), read once: this handbook
+  uses their symbols and equations without repeating the derivations.
+- Statistics: mean, standard deviation, least squares. No more.
+
+## Hardware and cost tier {#sec-m1-hardware}
+
+::: {.callout-note}
+## Tier 3 — a bench with a mechanical rig and two amplifier stages
+
+Everything below either was already on the bench for S1 or is specific to
+the mechanical rig and its two instrumentation amplifiers.
+:::
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Supported board with `UsbIo` | The instrument under test | See [Supported boards](../../setup/boards.qmd) |
+| Host computer | Acquisition | Any host; this experiment does not depend on host-timing effects |
+| [The cantilever beam rig](../../hardware/beam-rig.qmd) | The mechanical specimen | Dimensions not yet decided, see [the dimensions table](../../hardware/beam-rig.qmd#dimensions-to-be-decided) there |
+| A standalone load cell | Static calibration reference | [TODO (Paolo)]{.todo}: part |
+| Strain gauges, quarter/half/full bridge wiring | On-beam measurement | See [Strain gauge technology](../../hardware/beam-rig.qmd) [@window] |
+| Two instrumentation amplifier stages | Bring both bridge signals above the noise floor | See [the conditioning board](../../hardware/conditioning-board.qmd#sec-cond-inamp) |
+| Reference masses | Known forces | Calibrated, with a stated uncertainty |
+| A controlled heat source | The temperature-compensation test | A heat gun or a cold pack is enough |
+| Digital multimeter | Verifying both amplifiers at DC | Same DMM as S1 |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+## Theory {#sec-m1-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-m1-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-m1-recording}
+
+Twenty-four runs, twenty-four CSV files, twenty-four sidecars. The format is
+specified in [Data format](../../data-format/index.qmd); the checklist in
+@sec-m1-step-sidecar is the version to work through at the bench. M1 extends
+the channel schema with a few extra keys, the same way [S3
+does](../S3-aliasing-filtering/handbook.qmd#sec-s3-recording):
+
+```{.yaml filename="data/bridge-quarter-010.yaml"}
+experiment: M1
+run: bridge-quarter-010
+date: 2026-09-18
+operator: "your name"
+synthetic: false
+
+board:
+  model: portenta-h7
+  serial: "from arduino-io list"
+  usbio_version: "from arduino-io info"
+  adc_bits: 16
+  vref_mV: 3300
+
+host:
+  os: linux
+  os_version: "from uname -a"
+  machine: "which bench"
+  hub: true
+
+driver_version: "0.4.0"
+binding: cli
+
+acquisition:
+  pins: [15]
+  requested_period_us: 1000
+  achieved_rate_hz: 0.0      # from the stream summary
+  duration_s: 0.2
+
+stream_stats:                 # all six, from the summary line
+  records: 0
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+
+channels:
+  - pin: 15
+    quantity: force
+    unit: N
+    sensor: "strain gauge, quarter bridge"
+    conditioning:
+      gain: 11314.3            # measured, from the DC verification of @sec-m1-step-identify
+      offset: 0.165
+      filter: none
+    calibration_reference: "reference mass at the beam tip"
+    reference_value: 0.0980665  # F = m g, from the applied mass
+    reference_u: 0.00049        # from the mass/balance uncertainty
+    bridge_type: quarter        # M1 extension: quarter, half or full
+    gauge_factor: 2.1           # M1 extension: from the gauge's datasheet
+    u_gauge_factor_rel: 0.005   # M1 extension
+    bridge_excitation_v: 5.0    # M1 extension
+    u_excitation_rel: 0.005     # M1 extension
+    amplifier_u_gain_rel: 0.01  # M1 extension
+    amplifier_u_offset_v: 0.01  # M1 extension
+
+environment:
+  ambient_temperature_C: 23.0
+  notes: ""
+
+references:
+  - instrument: "reference masses"
+    model: "the model you used"
+    calibration: "certificate or none"
+```
+
+::: {.callout-warning}
+## Record the mass in newtons, not kilograms
+
+`reference_value` is in the channel's declared `unit`, which for every
+mechanical run here is `N`. Convert with $F = mg$ before writing it down —
+writing the mass in kilograms into a field documented as newtons breaks
+every downstream calculation silently.
+:::
+
+## Analysis tasks {#sec-m1-tasks}
+
+Open one of the two templates —
+[Python](analysis-py.qmd) or [R](analysis-r.qmd) — point it at your files,
+and work through it. They contain the same sections and produce the same
+numbers.
+
+1. **Data quality.** Run `validate_meta()` on every sidecar, as in S1.
+2. **In-amp arithmetic.** Reproduce @eq-m1-quarter-numeric and
+   @eq-m1-required-gain with the sidecar's own gauge factor, excitation and
+   amplifier gain, and confirm the amplifier actually built matches what the
+   arithmetic demands.
+3. **Load cell.** Fit @eq-m1-linearity to the loading sweep; compute
+   @eq-m1-hysteresis from the loading/unloading pair; fit @eq-m1-creep to
+   the held-load run; compare the first and last zero for zero drift.
+4. **Bridge configurations.** Compute the sensitivity of quarter, half and
+   full bridge from the beam-tip sweep and check the 1 : 2 : 4 ratio of
+   @eq-m1-bridge-configs.
+5. **Temperature compensation.** Apply @eq-m1-temp-apparent to both
+   configurations and report the apparent strain per kelvin for each.
+6. **Budget.** Build the budget of @sec-m1-budget below.
+
+## Uncertainty budget {#sec-m1-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+M1's budget is built for the **beam-mounted quarter bridge's strain**,
+$\hat\varepsilon$ from @eq-m1-strain-recover, at the reference point of the
+quarter-bridge sweep — see @sec-m1-budget-choice for why this measurand
+rather than the load cell's force.
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| Repeatability of $\Delta V$ | A | — | $\sigma/\sqrt{n}$ from the sweep point's own repeats | $4/(kV_\mathrm{ex})$ |
+| Effective quantization | B | Rectangular | Half-width $q_\mathrm{eff}/2$ from [S1's ENOB method](../S1-daq-static/handbook.qmd#eq-s1-enob), applied locally | $4/(kV_\mathrm{ex})$ |
+| Amplifier gain $G$ | B | Rectangular | `amplifier_u_gain_rel` in the sidecar | $-\hat\varepsilon/G$ |
+| Amplifier offset | B | Rectangular | `amplifier_u_offset_v` | $-4/(kV_\mathrm{ex}G)$ |
+| Gauge factor $k$ | B | Rectangular | `u_gauge_factor_rel` | $-\hat\varepsilon/k$ |
+| Excitation voltage $V_\mathrm{ex}$ | B | Rectangular | `u_excitation_rel` | $-\hat\varepsilon/V_\mathrm{ex}$ |
+
+: Components of the M1 budget {#tbl-m1-components}
+
+Report $u_c$ and $U = 2u_c$, the index $h_i$ of every component, and one
+sentence naming the dominant term and what you would change to reduce it.
+
+::: {.callout-important}
+## What this budget leaves out, and why
+
+The load cell's own hysteresis and creep are real uncertainty sources for a
+*force* measurement, but this budget's measurand is strain from the
+beam-mounted quarter bridge, a physically different sensor with negligible
+mechanical hysteresis of its own (a bonded foil gauge, unlike a load cell's
+internal spring element). Building the load cell's own force budget instead
+— with hysteresis and creep as Type B bounds, following [the conditioning
+board's treatment](../../hardware/conditioning-board.qmd#sec-cond-budget) —
+is a direct and instructive extension.
+:::
+
+## Questions {#sec-m1-questions}
+
+1. @eq-m1-quarter-numeric used $\varepsilon = 10^{-4}$. Recompute it for
+   $\varepsilon = 10^{-5}$ (ten times smaller, still a realistic strain) and
+   say whether the amplifier sized by @eq-m1-required-gain for the original
+   strain would clip, under-use the range, or still be about right.
+2. Your loading and unloading curves cross at $F = 0$ and at
+   $F = F_\mathrm{cap}$ by construction (@eq-m1-hysteresis). Explain, from
+   the bridge physics, why a real load cell's hysteresis loop should also
+   close at both ends, and what it would mean physically if it did not.
+3. The half-bridge temperature test does not read exactly zero. Using your
+   own $\alpha_\mathrm{apparent}$ figures, express the half bridge's
+   compensation as a percentage reduction relative to the bare quarter
+   bridge, and say what would improve it further.
+4. A colleague wires a half bridge with both gauges on the beam (top and
+   bottom surfaces at the same $x$) instead of one active gauge and one
+   dummy. Does this configuration cancel temperature, axial load, both or
+   neither? Justify from @eq-m1-bridge-configs and @sec-m1-bridges.
+5. Your creep fit gives $\tau$ and $C_\infty$ from @eq-m1-creep. If the hold
+   had been half as long, would you expect $\tau$ to change? Would you
+   expect your estimate of $C_\infty$ to be as reliable? Explain the
+   difference.
+6. In @tbl-m1-components, which component's sensitivity coefficient would
+   change if you had budgeted the load cell's force instead of the
+   beam-mounted gauge's strain? Which would stay essentially the same?
+7. Using your fitted quarter-bridge sensitivity $d\varepsilon/dF$ and the
+   placeholder beam dimensions your reference data was generated with, what
+   additional information would you need to recover Young's modulus $E$
+   alone? (See [the beam rig's stiffness
+   cross-check](../../hardware/beam-rig.qmd#sec-beam-relations) and
+   [M2](../M2-hall-displacement/index.qmd).)
+
+## Instructor notes {#sec-m1-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

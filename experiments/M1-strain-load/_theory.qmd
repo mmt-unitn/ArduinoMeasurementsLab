@@ -1,0 +1,197 @@
+### Four things a load cell calibration has to separate {#sec-m1-loadcell}
+
+A load cell is a strain-gauge bridge bonded inside a metal body shaped so
+that a known force $F$ produces a repeatable bridge output. "Repeatable" is
+doing a lot of work in that sentence, and static calibration against
+reference masses is where you find out how much:
+
+- **Linearity.** Fit a straight line $V = a + bF$ to the indication against
+  the applied force and look at the residuals. Report **non-linearity** as
+  the largest residual expressed as a percentage of the full-scale output,
+  $$
+  \mathrm{NL} = \frac{\max_i \lvert V_i - (a+bF_i)\rvert}{V_\mathrm{FS}}\times 100\,\%
+  $$ {#eq-m1-linearity}
+  exactly the same construction as [S1's calibration
+  residual](../S1-daq-static/handbook.qmd#sec-s1-calibration), now against a
+  mechanical reference instead of a voltage one.
+- **Hysteresis.** Load the cell up through a sequence of masses, then unload
+  through the same sequence in reverse, and compare the two readings at each
+  nominal force:
+  $$
+  \mathrm{H} = \frac{\max_i \lvert V_\mathrm{loading}(F_i) -
+  V_\mathrm{unloading}(F_i)\rvert}{V_\mathrm{FS}}\times 100\,\%
+  $$ {#eq-m1-hysteresis}
+  Unlike non-linearity, hysteresis cannot be removed by a better fit: it is a
+  path dependence, not a curvature, and it sets a floor under how well any
+  single calibration curve can predict either direction of loading.
+- **Creep.** Hold one mass constant and keep recording. A bridge bonded with
+  an imperfect adhesive, or a body with viscoelastic behaviour under
+  sustained stress, drifts even though $F$ has not changed. A single
+  exponential is the usual first model,
+  $$
+  V(t) = V(0)\left[1 + C_\infty\left(1 - e^{-t/\tau}\right)\right]
+  $$ {#eq-m1-creep}
+  with $C_\infty$ the fractional drift as $t\to\infty$ and $\tau$ a time
+  constant; fitting @eq-m1-creep to a long hold is what turns "the reading
+  seems to wander" into a number you can put a bound on.
+- **Zero drift.** Return to zero force and compare the reading with the zero
+  you started from. Because @eq-m1-hysteresis is built to close to zero at
+  both ends of the sweep by construction (loading and unloading agree at
+  $F=0$ and at $F=F_\mathrm{cap}$), a non-zero difference between the
+  *first* zero of the session and the *last* one — taken after the whole
+  loading/unloading/creep sequence — is evidence of something else: thermal
+  drift of the bridge or the amplifier, not the hysteresis loop.
+
+### Why the instrumentation amplifier is not optional {#sec-m1-inamp}
+
+A quarter bridge with gauge factor $k$ at strain $\varepsilon$, excited at
+$V_\mathrm{ex}$, produces a differential output
+$$
+\frac{\Delta V}{V_\mathrm{ex}} = \frac{k\varepsilon}{4}
+$$ {#eq-m1-quarter}
+— see [Strain gauge technology](../../hardware/beam-rig.qmd) [@window] for
+the derivation from the four-arm bridge equation. Work through what that is
+in volts. Taking the reference data's own placeholders (see
+`tools/synth/params/m1.yaml`) of $k = 2.1$ and $V_\mathrm{ex} = 5$ V, at a
+representative strain $\varepsilon = 10^{-4}$ — a typical order of magnitude
+for an elastic metal structure well inside yield —
+$$
+\Delta V = \frac{k\varepsilon V_\mathrm{ex}}{4}
+        = \frac{2.1 \times 10^{-4} \times 5}{4}\ \mathrm{V}
+        \approx 0.26\ \mathrm{mV}
+$$ {#eq-m1-quarter-numeric}
+
+Compare that with [S1](../S1-daq-static/handbook.qmd#sec-s1-enob): on this
+same board's ADC, one LSB is about $50\ \mu$V and the measured noise floor is
+of the order of $0.5$ mV RMS. @eq-m1-quarter-numeric is a handful of LSB —
+comparable to a single sample of S1's own noise — before the signal has
+travelled any further than the gauge leads. Unamplified, the bridge signal is
+not distinguishable from the converter's own noise; this is arithmetic, not
+an assumption, and it is the reason every strain-gauge measurement on this
+site goes through an instrumentation amplifier before the ADC (see [the
+conditioning board](../../hardware/conditioning-board.qmd#sec-cond-inamp) for
+why an in-amp specifically, rather than a single op-amp, is the right part:
+CMRR against a bridge sitting at several volts of common mode).
+
+**Sizing the gain.** Design the amplifier so a chosen full-scale strain
+$\varepsilon_\mathrm{fs}$ drives the ADC input to $V_\mathrm{hi}$, leaving the
+same kind of headroom as [S3's conditioning
+stage](../S3-aliasing-filtering/handbook.qmd#sec-s3-conditioning) —
+$[p_\mathrm{lo}, p_\mathrm{hi}]$ of $V_\mathrm{ref}$, not the full rail:
+$$
+G = \frac{(p_\mathrm{hi}-p_\mathrm{lo})\,V_\mathrm{ref}}
+       {k\,\varepsilon_\mathrm{fs}\,V_\mathrm{ex}/4}
+$$ {#eq-m1-required-gain}
+With $\varepsilon_\mathrm{fs} = 10^{-4}$ (the same strain used above,
+now doing double duty as the design target), $p_\mathrm{lo}=0.05$,
+$p_\mathrm{hi}=0.95$ and $V_\mathrm{ref}=3.3$ V, @eq-m1-required-gain gives
+$G \approx 1.13\times 10^4$ — a gain in the tens of thousands, not tens, is
+what a bare micro-strain signal needs; the reference generator uses exactly
+this value (`tools/synth/m1_strain_load.py` computes it from
+`tools/synth/params/m1.yaml` at generation time, so the theory and the
+reference data never disagree).
+
+### On the beam: quarter, half and full bridge {#sec-m1-bridges}
+
+A single active gauge (quarter bridge) gives @eq-m1-quarter. Replacing one of
+the bridge's fixed resistors with a second active gauge (half bridge), or all
+four arms with active gauges (full bridge), multiplies the sensitivity:
+$$
+\frac{\Delta V}{V_\mathrm{ex}} =
+\begin{cases}
+k\varepsilon/4 & \text{quarter bridge (1 active arm)} \\
+k\varepsilon/2 & \text{half bridge (2 active arms)} \\
+k\varepsilon   & \text{full bridge (4 active arms)}
+\end{cases}
+$$ {#eq-m1-bridge-configs}
+
+Which arrangement is used is a decision about what you want to cancel, not
+just about sensitivity:
+
+- **Quarter bridge**, one gauge at the strain-gauge position, is sensitive to
+  bending strain but also to the gauge's own temperature coefficient (its
+  resistance drifts with temperature regardless of load) and to axial load
+  superimposed on bending.
+- **Half bridge**, one active gauge at the measurement position and one
+  *dummy* gauge bonded to an unstrained piece of the same material (same
+  thermal environment, no mechanical strain), placed in an adjacent bridge
+  arm so their temperature-driven resistance changes cancel in the bridge
+  equation while their strain response does not. This is [the temperature
+  compensation](#sec-m1-temp) below.
+- **Half bridge, both gauges on the beam** (one on the top surface, one on
+  the bottom, at the same $x$) instead cancels axial load — which produces
+  equal-sign strain on both surfaces — while doubling the bending-strain
+  signal, since bending produces opposite-sign strain top and bottom. This is
+  a different half-bridge wiring from the dummy-gauge one above, and the two
+  should not be confused: one cancels temperature, the other cancels axial
+  load, and neither does both.
+- **Full bridge**, four active gauges (two on each surface, at the root),
+  cancels both temperature and axial load simultaneously, at the cost of two
+  more gauges to bond and wire.
+
+### Temperature compensation, measured rather than assumed {#sec-m1-temp}
+
+A bare quarter bridge cannot tell a real mechanical strain from an apparent
+one produced by the gauge's own resistance changing with temperature. Design
+the test directly: change the beam's temperature by a known amount with the
+beam **unloaded** ($F=0$), and record both a quarter bridge and a
+dummy-compensated half bridge. Any output that appears is, by construction,
+entirely apparent strain — there is no real mechanical strain to confuse it
+with — so
+$$
+\alpha_\mathrm{apparent} = \frac{1}{\Delta T}\times
+  \frac{4\,\Delta V/V_\mathrm{ex}}{n_\mathrm{arm}\,k}
+$$ {#eq-m1-temp-apparent}
+gives the apparent strain per kelvin directly from the measured $\Delta V$,
+with $n_\mathrm{arm}=1$ for the quarter bridge and $2$ for the half bridge.
+A half bridge does not cancel the effect to zero — the dummy gauge's own
+temperature coefficient only matches the active gauge's to within
+manufacturing tolerance — but $\alpha_\mathrm{apparent}$ for the half bridge
+should be a small fraction of the quarter bridge's value, and the ratio
+between the two is the compensation's own figure of merit.
+
+::: {.content-hidden when-format="revealjs"}
+Nothing here depends on the beam's length, width or thickness: the test is
+done at $F=0$, so no bending strain is involved, and @eq-m1-temp-apparent
+converts a measured voltage directly into an apparent strain using only the
+gauge factor and the bridge arm count — both properties of the sensing
+chain, not of the beam.
+:::
+
+### Choosing the measurand for the budget {#sec-m1-budget-choice}
+
+M1 measures two different things — a load-cell voltage calibrated against a
+force, and a beam-mounted bridge's strain — and a single uncertainty budget
+has to pick one. This handbook budgets the **beam-mounted quarter bridge's
+strain**, $\hat\varepsilon$, because it is the quantity
+[M2](../M2-hall-displacement/index.qmd) needs for the stiffness cross-check,
+and because its budget exercises every component this experiment
+introduces: the gauge factor's own tolerance, the amplifier's gain and
+offset, the reference masses, and [S1's effective
+quantization](../S1-daq-static/handbook.qmd#sec-s1-enob). Inverting
+@eq-m1-quarter for a measured $\Delta V$,
+$$
+\hat\varepsilon = \frac{4\,\Delta V}{k\,V_\mathrm{ex}}
+$$ {#eq-m1-strain-recover}
+with sensitivity coefficients
+$$
+\frac{\partial\hat\varepsilon}{\partial \Delta V} = \frac{4}{kV_\mathrm{ex}},
+\qquad
+\frac{\partial\hat\varepsilon}{\partial k} = -\frac{\hat\varepsilon}{k},
+\qquad
+\frac{\partial\hat\varepsilon}{\partial V_\mathrm{ex}} = -\frac{\hat\varepsilon}{V_\mathrm{ex}}
+$$ {#eq-m1-sensitivity}
+The load-cell's own hysteresis (@eq-m1-hysteresis) enters the strain budget
+as a bound on the amplifier chain shared by both sensors, following [the
+conditioning board's uncertainty
+treatment](../../hardware/conditioning-board.qmd#sec-cond-budget).
+
+### Relation to S1 {#sec-m1-relation}
+
+Every number in @eq-m1-quarter-numeric and @eq-m1-required-gain is only
+useful because [S1](../S1-daq-static/index.qmd) already measured what the
+ADC alone can resolve. M1 does not re-measure the converter; it reads S1's
+noise floor and effective quantization off the shelf and asks what gain
+makes a real bridge signal usable against them — the same relationship [S3
+has with S1](../S3-aliasing-filtering/handbook.qmd#sec-s3-relation), now for
+a mechanical rather than a generated electrical signal.

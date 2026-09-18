@@ -1,0 +1,74 @@
+experiment: T1
+run: cal-t50
+date: 2026-09-18
+operator: tools/synth (generated)
+synthetic: true
+board:
+  model: portenta-h7
+  serial: SYNTHETIC-0001
+  usbio_version: 0.4.0
+  adc_bits: 16
+  vref_mV: 3300
+host:
+  os: linux
+  os_version: '6.6'
+  machine: raspberry-pi-5
+  libusb_version: 1.0.27
+  hub: true
+driver_version: 0.4.0
+binding: python
+binding_version: 0.4.0
+acquisition:
+  pins:
+  - 15
+  - 16
+  requested_period_us: 1000
+  achieved_rate_hz: 999.96
+  duration_s: 0.199008
+stream_stats:
+  records: 200
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+channels:
+- pin: 15
+  quantity: temperature
+  unit: degC
+  sensor: NTC thermistor, resistive divider
+  conditioning:
+    gain: 1.0
+    offset: 0.0
+    filter: none
+  calibration_reference: reference thermometer at the bath
+  reference_value: 50.0
+  reference_u: 0.02
+  excitation_v: 0.9
+  divider_r_fixed_ohm: 1000.0
+  self_heating_shift_c: 0.015345
+- pin: 16
+  quantity: temperature
+  unit: degC
+  sensor: Pt1000, bridge + instrumentation amplifier
+  conditioning:
+    gain: 15.0
+    offset: 1.0
+    filter: none
+  calibration_reference: reference thermometer at the bath
+  reference_value: 50.0
+  reference_u: 0.02
+  excitation_v: 1.2
+  bridge_r_ohm: 1000.0
+  self_heating_shift_c: 0.03247
+environment:
+  ambient_temperature_C: 23.0
+  notes: bath = 50 degC, excitation = low
+references:
+- instrument: reference thermometer
+  model: TODO (Paolo)
+  calibration: TODO (Paolo)
+generator:
+  tool: tools/synth
+  version: 0.1.0
+  note: Parameters are placeholders; see tools/synth/params/

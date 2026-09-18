@@ -1,0 +1,95 @@
+---
+title: "T3 — Long-term stability and drift"
+subtitle: "Averaging always helps — until it doesn't"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    incremental: false
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before you start the log {.center}
+
+### What you are about to measure
+
+A temperature sensor, in an insulated box, logged for **24 hours**.
+
+Nothing you would call "the temperature" is supposed to change much. What
+you are actually measuring is:
+
+- how much the *instrument itself* wanders, with no help from the room;
+- how much the room gets through the insulation anyway, on a cycle you
+  already know the period of;
+- and — the headline result — **how long you should average for**, and what
+  happens if you average for longer than that.
+
+### The rule of the session
+
+::: {.callout-important}
+## More averaging is not always better
+
+Every earlier experiment on this site showed noise falling as you average
+more. This one finds the point where that stops being true — and shows what
+takes over once it does.
+:::
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will build
+
+An insulated enclosure — a cooler box, foam, whatever slows heat exchange
+with the room — with the sensor near its centre, away from the walls.
+
+::: {.callout-warning}
+## This one runs overnight
+
+Disable host sleep and unattended updates before you start. Label the setup
+with what it is and when it should finish. See the handbook's safety
+callout before you leave it.
+:::
+
+### One long recording
+
+```bash
+arduino-io mode 15 analog
+arduino-io stream 15 --hz 0.2 --seconds 86400 --csv data/log-24h.csv
+```
+
+Watch the first few records land before you walk away. Come back in at least
+24 hours, stop the stream, and check the record for gaps before trusting it.
+
+### Then
+
+Open [the handbook](handbook.qmd) for the full procedure, and one of the two
+analysis templates — [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+They have the same sections and produce the same numbers. Both ship with a
+24-hour reference log, so you can read the whole analysis before your own run
+finishes.
+
+## What you should come away with {.center}
+
+### Three sentences you should be able to defend
+
+1. "This record's drift is $\dot x$ mK/h, and the diurnal cycle — $A_d$ mK,
+   the largest single feature in the raw data — is the room, not the
+   instrument."
+2. "The Allan deviation of the detrended residual has a minimum at
+   $\tau_\mathrm{opt} = \dots$, of $\sigma_y = \dots$; averaging past that
+   point makes the answer *worse*, not better."
+3. "The correct Type A term for a 24-hour average of this record is
+   $\sigma_y(\tau_\mathrm{opt})$, not $s/\sqrt n$, because the record is not
+   made of independent samples."
+
+If you can say those three with your own numbers in them, the session
+worked.

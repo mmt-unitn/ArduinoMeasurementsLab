@@ -1,0 +1,279 @@
+---
+title: "T1 — Static calibration of temperature sensors"
+subtitle: "Laboratory handbook"
+description: "NTC and Pt1000 against a reference thermometer; self-heating as an influence quantity"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-t1-outcomes}
+
+By the end of this session you should be able to:
+
+1. Fit the Steinhart–Hart equation for an NTC and the Callendar–Van Dusen
+   relation for a Pt1000, both as ordinary linear least squares, and explain
+   why each is linear in its unknowns despite looking nonlinear.
+2. State which coefficients of a standardized sensor curve are worth fitting
+   from a small bath sweep and which are better fixed at their published
+   value, and why.
+3. Derive the sensitivity of a resistive divider and of a bridge-plus-in-amp
+   front end symbolically, and convert a voltage noise floor into a
+   temperature resolution.
+4. Measure self-heating as an influence quantity: change the excitation,
+   observe the apparent shift, and extract a dissipation constant from it.
+5. Build a GUM uncertainty budget for a temperature recovered through a
+   genuinely nonlinear calibration curve, using a local sensitivity
+   coefficient rather than assuming a linear correction.
+
+## Prerequisites {#sec-t1-prerequisites}
+
+- [S1](../S1-daq-static/index.qmd), completed: this experiment reuses S1's
+  measured noise floor directly, in @sec-t1-tasks.
+- A bench set up and verified: see [Setting up a bench](../../setup/index.qmd).
+- Ordinary least squares, and the GUM uncertainty budget from S1's own
+  handbook. No more.
+
+## Hardware and cost tier {#sec-t1-hardware}
+
+::: {.callout-note}
+## Tier 2 — a stirred bath and two sensor front ends
+
+Beyond a tier-1 bench: [the thermal rig](../../hardware/thermal-rig.qmd) (a
+stirred water bath, an ice bath, a reference thermometer) and
+[the conditioning board](../../hardware/conditioning-board.qmd) for the
+Pt1000's instrumentation amplifier. No signal generator, no oscilloscope.
+:::
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Supported board with `UsbIo` | The instrument under test | Any board; no streaming-rate requirement here |
+| Thermal rig | The controlled temperature source | Stirred bath, ice bath, reference thermometer; see [the thermal rig](../../hardware/thermal-rig.qmd) |
+| Reference thermometer | The reference instrument | Must be better than either sensor under test, by a stated margin |
+| NTC thermistor + divider resistor | One sensor under test | Divider resistor chosen for sensitivity where it matters most, see @sec-t1-sensitivity |
+| Pt1000 + bridge resistors + instrumentation amplifier | The other sensor under test | See [the conditioning board](../../hardware/conditioning-board.qmd) |
+| Breadboard and wires | — | — |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+## Theory {#sec-t1-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-t1-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-t1-recording}
+
+Seven runs, seven CSV files, seven sidecars, following
+[Data format](../../data-format/index.qmd); the checklist in
+@sec-t1-step-sidecar is the version to work through at the bench.
+
+A sidecar for one of the bath points looks like this — copy it, do not
+retype it:
+
+```{.yaml filename="data/cal-t50.yaml"}
+experiment: T1
+run: cal-t50
+date: 2026-09-18
+operator: "your name"
+synthetic: false
+
+board:
+  model: portenta-h7
+  serial: "from arduino-io list"
+  usbio_version: "from arduino-io info"
+  adc_bits: 16
+  vref_mV: 3300
+
+host:
+  os: linux
+  os_version: "from uname -a"
+  machine: "which bench"
+  hub: true
+
+driver_version: "0.4.0"
+binding: cli
+
+acquisition:
+  pins: [15, 16]
+  requested_period_us: 1000
+  achieved_rate_hz: 0.0      # from the stream summary
+  duration_s: 0.2
+
+stream_stats:                 # all six, from the summary line
+  records: 0
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+
+channels:
+  - pin: 15
+    quantity: temperature
+    unit: degC
+    sensor: "NTC thermistor, resistive divider"
+    conditioning: {gain: 1.0, offset: 0.0, filter: none}
+    calibration_reference: "reference thermometer at the bath"
+    reference_value: 50.00     # what the reference thermometer read
+    reference_u: 0.02          # from the reference thermometer's own calibration
+    excitation_v: 0.9          # the divider's Vcc actually used
+  - pin: 16
+    quantity: temperature
+    unit: degC
+    sensor: "Pt1000, bridge + instrumentation amplifier"
+    conditioning: {gain: 15.0, offset: 1.0, filter: none}   # fitted, not design
+    calibration_reference: "reference thermometer at the bath"
+    reference_value: 50.00     # the same reading, same instant
+    reference_u: 0.02
+    excitation_v: 1.2          # the bridge's Vexc actually used
+
+environment:
+  ambient_temperature_C: 23.0
+  notes: ""
+
+references:
+  - instrument: "reference thermometer"
+    model: "the model you used"
+    calibration: "certificate or none"
+```
+
+::: {.callout-warning}
+## Both channels get the same `reference_value`
+
+The whole point of @sec-t1-together is that both sensors are checked against
+one reading of one instrument at one instant. A sidecar that quotes two
+different reference values for the two channels at the same bath point has
+recorded two different baths, not one.
+:::
+
+## Analysis tasks {#sec-t1-tasks}
+
+Open one of the two templates —
+[Python](analysis-py.qmd) or [R](analysis-r.qmd) — point it at your files,
+and work through it.
+
+1. **Data quality.** Run `validate_meta()` on every sidecar and read the
+   stream counters, as in S1.
+2. **NTC calibration.** Recover $R$ from each bath point's mean divider
+   voltage, fit @eq-t1-sh-linear, and report $A$, $B$, $C$ and the residuals
+   in kelvin.
+3. **Pt1000 calibration.** Recover $R$ from each bath point's mean bridge
+   voltage, fit @eq-t1-cvd-linear with $B$ fixed at the IEC 60751 value, and
+   report $R_0$, the recovered $A$, and the residuals.
+4. **Sensitivity and resolution.** Evaluate @eq-t1-divider-sens and
+   @eq-t1-bridge-sens at a chosen bath point, load
+   [S1's own noise-floor run](../S1-daq-static/index.qmd), and compute
+   @eq-t1-resolution for both sensors. State which sensor wins, and why.
+5. **Self-heating.** Using the fitted curves, convert `cal-t50` and
+   `selfheat-high` to apparent temperatures for both sensors, and solve
+   @eq-t1-selfheat-fit for $\delta$.
+6. **Budget.** Build the budget of @sec-t1-budget below, for one sensor at
+   one operating point.
+
+## Uncertainty budget {#sec-t1-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+For T1 the measurand is the calibrated temperature $\hat T = f(V)$, with $f$
+either the Steinhart–Hart inverse of @eq-t1-sh or the Callendar–Van Dusen
+inverse of @eq-t1-cvd composed with the front end's own voltage relation
+(@eq-t1-divider or @eq-t1-bridge). Unlike S1's linear correction, $f$ is
+genuinely nonlinear — [Data format](../../data-format/index.qmd#sec-budget)
+warns about exactly this case — so the sensitivity coefficient is the **local
+derivative of the fitted model** at the operating point, evaluated
+numerically by a central difference,
+
+$$
+\frac{\mathrm{d}\hat T}{\mathrm{d}V}
+\approx \frac{f(V+\varepsilon) - f(V-\varepsilon)}{2\varepsilon}
+$$ {#eq-t1-budget-sens}
+
+computed identically in both languages for a small step $\varepsilon$, rather
+than transcribed as a hand-differentiated formula that the two templates
+could disagree on.
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| Reference thermometer | B | Normal | `reference_u` from the sidecar | $1$ |
+| Fit residual | B | Rectangular | Largest calibration residual, as a bound | $1$ |
+| Effective ADC quantization | B | Rectangular | S1's ENOB, via @eq-t1-budget-sens | Half-width $q_\mathrm{eff}/2$ |
+| Repeatability of the mean | A | — | $\sigma/\sqrt{n}$ of the run, via @eq-t1-budget-sens | — |
+| Self-heating (uncorrected) | B | Rectangular | $\Delta T_\mathrm{sh}$ at the operating excitation, as a bound | $1$ |
+| Bath spatial non-uniformity | B | Rectangular | [TODO (Paolo)]{.todo}: from the multi-point check of @sec-t1-step-points | $1$ |
+
+: Components of the T1 budget {#tbl-t1-components}
+
+Report $u_c$ and $U = 2u_c$, the index $h_i$ of every component, and one
+sentence naming the dominant term and what you would change to reduce it.
+
+::: {.callout-important}
+## Why a local derivative and not a closed-form propagation
+
+A fully rigorous treatment would propagate the *fitted parameters'* own
+covariance matrix through $f$ as well as the voltage's — the analogue of the
+$a$/$b$ correlation S1's budget states and does not correct for. This
+experiment simplifies the same way S1 does: it treats the fitted curve as
+known exactly and propagates only the voltage-domain uncertainties through
+its local derivative. A Monte Carlo evaluation following JCGM 101
+[@gum_s1], propagating the fit's own parameter uncertainty as well, is the
+natural extension for a postgraduate group.
+:::
+
+## Questions {#sec-t1-questions}
+
+1. The Steinhart–Hart fit and the Callendar–Van Dusen fit are both described
+   here as "ordinary linear least squares." In what sense is that true, and
+   in what sense is each equation still nonlinear?
+2. Why does fixing $A$ and $B$ at the IEC 60751 values, rather than fitting
+   all three Callendar–Van Dusen coefficients, make the fit *more* reliable
+   with only six bath points, not less?
+3. Two sensors have similar sensitivity in V/K but very different resolution
+   in kelvin once S1's noise floor is accounted for. What does that tell you
+   about each front end's own contribution to the noise?
+4. Your divider resistor was chosen for good sensitivity at one end of the
+   bath range. Using @eq-t1-divider-sens, at what temperature is the
+   sensitivity actually maximized, and how does that compare with where your
+   fit residuals are smallest?
+5. You measure a self-heating shift of $0.1$ K between two excitation levels.
+   Is that shift itself something to correct for at your normal operating
+   excitation, or only evidence that a correction is unnecessary? What in the
+   budget answers that question?
+6. A colleague argues the reference thermometer's uncertainty is negligible
+   because it is "much better" than either sensor under test. Using your own
+   budget, is that argument supported by the numbers, or merely plausible?
+7. T2 will apply the calibration curves fitted here to voltage records taken
+   at a different time, in a different medium. What in today's calibration —
+   beyond the fitted coefficients themselves — needs to still be true for
+   that to be valid?
+
+## Instructor notes {#sec-t1-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

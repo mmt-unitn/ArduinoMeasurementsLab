@@ -1,0 +1,99 @@
+---
+title: "M1 — Strain gauges and load cell"
+subtitle: "Why the amplifier is not optional, and what a static calibration has to separate"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    incremental: false
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before the bench {.center}
+
+### What you are about to measure
+
+A strain gauge bridge outputs microvolts per unit strain. A board's ADC,
+even after [S1](../S1-daq-static/index.qmd) characterized it, cannot resolve
+microvolts on its own.
+
+By the end of the session you will know:
+
+- exactly how much amplifier gain a bridge measurement needs, from
+  arithmetic against S1's own noise floor;
+- what a load cell's static calibration has to separate — linearity,
+  hysteresis, creep, zero drift — and how each is measured;
+- how quarter, half and full bridge wiring trade sensitivity against what
+  they cancel;
+- what temperature compensation actually buys, measured rather than assumed.
+
+### The rule of the session
+
+::: {.callout-important}
+## Derive the gain, do not guess it
+
+A bridge signal that never leaves the noise floor is not a small
+measurement — it is no measurement at all. Every gain used today is derived
+from arithmetic against S1's numbers, not chosen because it looked
+reasonable.
+:::
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will build
+
+Two amplifier stages — one for a standalone load cell, one for gauges bonded
+to [the cantilever beam](../../hardware/beam-rig.qmd) — each verified at its
+quiescent output before a sensor is connected.
+
+::: {.smaller}
+| Run(s) | What it shows |
+|---|---|
+| Load cell, loading + unloading (10 runs) | Linearity and hysteresis |
+| Load cell, held load | Creep |
+| Load cell, zero after the sequence | Zero drift |
+| Beam gauges: quarter, half, full bridge | Sensitivity ratio 1 : 2 : 4 |
+| Quarter vs. half bridge, two temperatures | Temperature compensation |
+:::
+
+::: {.callout-warning}
+## What ruins the session
+
+Loading and unloading with a **different** mass sequence breaks the
+hysteresis comparison. Interrupting the creep hold — even bumping the bench
+— injects a step where there should be a smooth curve.
+:::
+
+### Then
+
+Open [the handbook](handbook.qmd) for the full procedure, and one of the two
+analysis templates — [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+They have the same sections and produce the same numbers. Both ship with
+reference data, so you can read the whole analysis before you wire anything.
+
+## What you should come away with {.center}
+
+### Three sentences you should be able to defend
+
+1. "A bare quarter-bridge signal at a representative strain is about
+   $\dots$ mV, against a noise floor of $\dots$ mV from S1 — so the required
+   gain, from @eq-m1-required-gain, is $\dots$."
+2. "Our load cell showed $\dots\,\%$FS non-linearity and $\dots\,\%$FS
+   hysteresis, and creep of $\dots\,\%$ over the hold, with the zero
+   returning to within $\dots$ mV of where it started."
+3. "Quarter, half and full bridge gave outputs in the ratio $\dots$, and the
+   dummy-compensated half bridge's apparent strain per kelvin was $\dots$
+   times smaller than the bare quarter bridge's."
+
+If you can say those three with your own numbers in them, the session
+worked.

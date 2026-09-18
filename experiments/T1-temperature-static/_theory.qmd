@@ -1,0 +1,233 @@
+### Two sensors, one bath, at the same time {#sec-t1-together}
+
+This experiment calibrates an **NTC thermistor** in a resistive divider and a
+**Pt1000** in a bridge with an instrumentation amplifier, in the same bath at
+the same instants. That is deliberate: if the two sensors are calibrated
+separately, in separate sessions, a difference between their fitted curves
+could be the sensors, or it could be that the two baths were not at the same
+temperature. Reading them together removes that confound — whatever the
+reference thermometer reads at each point is what *both* fits are checked
+against, so any difference between the two calibrations is the sensors, and
+only the sensors.
+
+### The NTC: Steinhart–Hart {#sec-t1-ntc}
+
+An NTC thermistor's resistance falls with temperature, steeply and
+nonlinearly. The Steinhart–Hart equation is the standard empirical model
+[@steinhart1968]:
+
+$$
+\frac{1}{T} = A + B\ln R + C(\ln R)^3
+$$ {#eq-t1-sh}
+
+with $T$ in kelvin and $R$ the thermistor's resistance. It looks like a
+three-parameter nonlinear fit, but it is not: it is **linear in $A$, $B$ and
+$C$**, because $\ln R$ and $(\ln R)^3$ are just two more columns of data once
+$R$ has been measured. Writing $x_1 = 1$, $x_2 = \ln R$, $x_3 = (\ln R)^3$ and
+$y = 1/T$,
+
+$$
+y = A\,x_1 + B\,x_2 + C\,x_3
+$$ {#eq-t1-sh-linear}
+
+is an ordinary least-squares problem, solved exactly the way
+[S1 fits offset and gain](../S1-daq-static/handbook.qmd#eq-s1-fit) — except
+with three columns instead of two. No iteration, no starting guess, no risk of
+the fit not converging: the price of the cubic term is one extra column, not
+a different kind of problem.
+
+::: {.content-hidden when-format="revealjs"}
+A simpler, physically motivated special case sets $C = 0$: the **beta
+equation**,
+
+$$
+R(T) = R_{25}\exp\left[\beta\left(\frac{1}{T}-\frac{1}{T_{25}}\right)\right]
+$$ {#eq-t1-beta}
+
+with $T_{25} = 298.15$ K. This is the two-parameter model most datasheets
+quote ($\beta$ is the number on the label), and it is exact only if the true
+curve has no cubic term. Fitting the full @eq-t1-sh-linear to real data and
+finding $C$ small compared with its own uncertainty is evidence the beta
+equation was good enough; finding it *not* small is evidence it was not — and
+you cannot tell which, without doing the three-parameter fit.
+:::
+
+The resistance itself is not measured directly. The divider (@sec-t1-sensitivity)
+gives a voltage, from which $R$ is recovered algebraically; averaging in
+**voltage**, at each bath point, and inverting once, is preferable to
+inverting every sample and averaging temperatures — the inversion is
+nonlinear, and averaging after a nonlinear step is biased in general (the two
+only agree exactly for a linear map). @sec-t1-sensitivity returns to why this
+matters more at some points of the range than others.
+
+### The Pt1000: Callendar–Van Dusen {#sec-t1-pt1000}
+
+A platinum RTD's resistance is far more linear, and far better standardized.
+For $t \ge 0\,^\circ$C the IEC 60751 Callendar–Van Dusen relation is
+[@iec60751]
+
+$$
+R(t) = R_0\left(1 + A t + B t^2\right)
+$$ {#eq-t1-cvd}
+
+with $t$ in degrees Celsius and $R_0$ the resistance at $0\,^\circ$C —
+nominally $1000\,\Omega$ for a Pt1000, never exactly that on a real part. $A$
+and $B$ are standardized coefficients, common to every sensor built to the
+IEC 60751 curve; only $R_0$, and a manufacturing spread in $A$ small enough to
+be worth checking, differ from one physical part to the next.
+
+This experiment **fixes** $A$ and $B$ at the IEC 60751 values and fits $R_0$
+(and, as an extension, $A$) from the bath data — not the other way around.
+Fixing the standard's own coefficients and fitting only what is specific to
+*this* part is both less work and more honest than fitting all three: with
+only six bath points, a free three-parameter quadratic has little power to
+separate $R_0$, $A$ and $B$ from each other, while the manufacturing spread
+this experiment can actually resolve is in $R_0$.
+
+::: {.content-hidden when-format="revealjs"}
+Fitting $R_0$ and $A$ together, with $B$ fixed, still looks nonlinear —
+$R_0 A$ is a product of two unknowns — but it is not. Expand @eq-t1-cvd as
+
+$$
+R(t) = R_0\underbrace{\left(1 + Bt^2\right)}_{\text{known}} + \underbrace{(R_0 A)}_{\text{unknown}}\,t
+$$ {#eq-t1-cvd-linear}
+
+Treating $x_1 = R_0$ and $x_2 = R_0 A$ as the two unknowns, $R(t)$ is linear in
+$(x_1, x_2)$ against the two *known* basis functions $(1+Bt^2)$ and $t$ — an
+ordinary least-squares fit again, exactly as @eq-t1-sh-linear was. Recover
+$R_0 = x_1$ and $A = x_2/x_1$ afterwards. This is the general trick for a
+model that is nonlinear in its parameters only through a fixed multiplicative
+structure: pick the basis so the unknowns enter linearly, fit that, and
+recover the physically named quantities from the fit by division or
+substitution.
+:::
+
+### Sensitivity: divider versus bridge {#sec-t1-sensitivity}
+
+The NTC sits in a plain resistive divider, no amplifier:
+
+$$
+V = V_{cc}\,\frac{R}{R + R_t}
+$$ {#eq-t1-divider}
+
+with $R$ the fixed resistor and $R_t$ the thermistor. Differentiating by the
+chain rule, and writing $\alpha = \dfrac{1}{R_t}\dfrac{\mathrm{d}R_t}{\mathrm{d}T}$
+for the thermistor's own fractional sensitivity,
+
+$$
+\frac{\mathrm{d}V}{\mathrm{d}T}
+= \frac{\mathrm{d}V}{\mathrm{d}R_t}\frac{\mathrm{d}R_t}{\mathrm{d}T}
+\approx V_{cc}\,\frac{R\,R_t}{(R+R_t)^2}\,\alpha
+$$ {#eq-t1-divider-sens}
+
+(the sign of $\alpha$ is negative for an NTC; @eq-t1-divider-sens gives the
+magnitude). Two things follow directly from the shape of this expression.
+First, $R\,R_t/(R+R_t)^2$ is maximized — for fixed $R_t$ — when $R = R_t$, so
+a divider's sensitivity peaks where the fixed resistor matches the
+thermistor's *own* resistance, and falls away on both sides of that point.
+Second, $\alpha$ itself is far from constant for an NTC: it is large (many
+percent per kelvin) near the low end of a typical operating range and smaller
+at the high end, because the thermistor's exponential resistance law falls
+off in relative terms. A divider sized for good sensitivity at one end of the bath sweep is,
+by construction, worse at the other end — a real design trade-off, not a
+detail to be corrected after the fact.
+
+The Pt1000 sits in a bridge, read through an instrumentation amplifier of
+gain $G$:
+
+$$
+V = G\,V_\mathrm{exc}\left(\frac{R_t}{R_t+R_b} - \frac{1}{2}\right) + V_\mathrm{off}
+$$ {#eq-t1-bridge}
+
+with $R_b$ the three matched fixed arms and $R_t$ the Pt1000. Differentiating,
+
+$$
+\frac{\mathrm{d}V}{\mathrm{d}T}
+= G\,V_\mathrm{exc}\,\frac{R_b}{(R_t+R_b)^2}\,\frac{\mathrm{d}R_t}{\mathrm{d}T}
+$$ {#eq-t1-bridge-sens}
+
+::: {.content-hidden when-format="revealjs"}
+Unlike the NTC, the Pt1000's own $\mathrm{d}R_t/\mathrm{d}T \approx R_0 A$ is
+almost constant over the whole industrial range — that is the entire point of
+choosing a linear standard curve — so @eq-t1-bridge-sens varies with $T$ only
+through the slowly changing $R_b/(R_t+R_b)^2$ term, not through the
+sensor's own physics. The bridge's sensitivity is far flatter across the bath
+sweep than the divider's, at the cost of needing an amplifier at all.
+:::
+
+**The number that matters is not volts per kelvin, it is kelvin per volt of
+noise.** [S1](../S1-daq-static/index.qmd) measured this platform's own ADC
+noise floor $\sigma$ directly, on a shorted and a live channel, with no
+sensor attached. Dividing that noise floor by @eq-t1-divider-sens or
+@eq-t1-bridge-sens, evaluated at an operating point, converts a voltage noise
+into a **temperature resolution**:
+
+$$
+\delta T_\mathrm{res} = \frac{\sigma}{\left|\mathrm{d}V/\mathrm{d}T\right|}
+$$ {#eq-t1-resolution}
+
+This is the honest way to compare two sensor front ends: not by their
+sensitivity in V/K in isolation, but by what that sensitivity buys against a
+fixed, independently measured noise floor. A front end with high gain and a
+noisy amplifier can easily lose to a passive divider read by a quiet ADC — the
+comparison in [the analysis tasks](handbook.qmd#sec-t1-tasks) works this out with this experiment's own numbers,
+not asserted ones.
+
+### Self-heating: an error the excitation creates {#sec-t1-selfheat}
+
+Both sensors are read by passing current through them, and that current
+dissipates power in the sensing element itself. The element then sits above
+the surrounding medium by [@bentley]
+
+$$
+\Delta T_\mathrm{sh} = \frac{P_\mathrm{diss}}{\delta}
+$$ {#eq-t1-selfheat}
+
+— the same relation as [the thermal rig's own derivation](../../hardware/thermal-rig.qmd#eq-therm-selfheat)
+— with $\delta$ the dissipation constant (mW/K) from the sensor to the bath.
+$P_\mathrm{diss}$ for the divider is $I^2 R_t$ with $I = V_{cc}/(R+R_t)$; for
+the bridge it is $I_t^2 R_t$ with $I_t = V_\mathrm{exc}/(R_t+R_b)$ the current
+through the Pt1000 branch specifically — the other three bridge arms
+dissipate power too, but not *in the sensor*, so they do not enter this term.
+
+This experiment measures $\delta$ rather than assuming it, by recording one
+extra pair of readings at the *same* bath temperature with a **higher**
+excitation on both sensors, and reading the apparent temperature shift through
+the already-fitted calibration curve:
+
+$$
+\delta = \frac{P_\mathrm{high} - P_\mathrm{low}}{\Delta T_\mathrm{sh,high} - \Delta T_\mathrm{sh,low}}
+$$ {#eq-t1-selfheat-fit}
+
+Every quantity on the right is something this experiment already has: the two
+powers from the known excitation and the fitted resistance, and the two
+apparent temperatures from applying @eq-t1-sh or @eq-t1-cvd to the two
+recordings. Because the *low*-excitation reading is also the one every
+calibration point uses, $\Delta T_\mathrm{sh,low}$ is close to the baseline the
+fitted curve already absorbed, and the interesting number is the extra shift
+at high excitation, relative to it.
+
+::: {.callout-important}
+## Self-heating is why "just increase the excitation" is not free
+
+A bigger excitation gives a bigger signal and, other things equal, a better
+resolution in @eq-t1-resolution — but it also dissipates more power in the
+sensor, worsening @eq-t1-selfheat. The two trade against each other, and
+$\delta$, measured here rather than guessed, is what tells you where the
+trade stops being worth it. A well-stirred water bath, with its large thermal
+conductance to the sensor, tolerates far more excitation than still air will
+in [T2](../T2-temperature-dynamic/index.qmd) — the same $\delta$ that limits
+excitation here reappears there as a limit on how fast a sensor can be driven
+without lying about the medium it is sitting in.
+:::
+
+### An optional third sensor {#sec-t1-thermocouple}
+
+A thermocouple, with cold-junction compensation, would extend this
+comparison to a third physical principle (a Seebeck voltage rather than a
+resistance) and a genuinely different influence quantity (the reference
+junction's own temperature, rather than self-heating). It is not required for
+this experiment and no reference data ships for it; a group with time to
+spare can build the comparison as an extension, following the sensitivity
+and budget structure of @sec-t1-sensitivity and of
+[the budget](handbook.qmd#sec-t1-budget) unchanged.

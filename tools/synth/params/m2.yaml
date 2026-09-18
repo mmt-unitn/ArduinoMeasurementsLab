@@ -1,0 +1,81 @@
+# M2 - Hall-effect displacement measurement.
+#
+# TODO (Paolo): placeholders throughout; replace with measured/designed values
+# once the Hall sensor, the micrometer stage and the beam rig
+# (hardware/beam-rig.qmd) are chosen and characterized. `beam:` must stay
+# numerically identical to the `beam:` block in params/m1.yaml -- the two
+# experiments share one physical rig, and the stiffness cross-check in
+# analysis-py.qmd/analysis-r.qmd depends on that.
+
+seed: 20260918
+
+# The cantilever beam rig, identical to params/m1.yaml's `beam:` block.
+beam:
+  length_m: 0.220              # TODO (Paolo): L
+  width_m: 0.025                # TODO (Paolo): b
+  thickness_m: 0.003            # TODO (Paolo): h
+  youngs_modulus_pa: 70.0e+9    # TODO (Paolo): E (70 GPa placeholder, aluminium-like)
+  density_kg_m3: 2700.0         # TODO (Paolo): rho (not used by M2 directly)
+  gauge_position_m: 0.010       # TODO (Paolo): x_gauge (M1's gauge; unused here,
+                                 # kept only so the two files are easy to diff)
+
+# The ratiometric linear Hall sensor. V_out = Vcc * (0.5 + A / (1 + d/d0)^n),
+# with A = S * B0 the combined amplitude of sensitivity and on-axis field at
+# d = 0 -- the two cannot be separated from a V(d) curve alone, so the
+# generator (and the fit in the analysis templates) treats A as one parameter.
+# `decay_exponent` is fixed a priori (far-field dipole falloff, B ~ d^-3); the
+# fit floats only A and d0, see _theory.qmd.
+hall:
+  vcc_nominal_v: 3.300           # TODO (Paolo): supply rail actually used
+  sensitivity_amplitude: 0.45    # TODO (Paolo): A = S * B0, from the sensor + magnet used
+  d0_mm: 6.0                     # TODO (Paolo): characteristic decay distance
+  decay_exponent: 3              # fixed by the far-field dipole model, not fitted
+  temperature_coefficient_per_k: 0.0003  # TODO (Paolo): fractional sensitivity drift / K
+  vcc_sense_gain: 0.95           # TODO (Paolo): divider ratio on the Vcc-sense channel,
+                                  # so it reads with headroom below vref rather than at the rail
+
+# Pins: Hall output on one channel, supply-voltage sense on a second channel,
+# recorded together so the ratiometric correction can be checked sample by
+# sample.
+pins:
+  hall_out: 15
+  vcc_sense: 16
+
+# Standalone calibration sweep: a magnet on the micrometer stage, swept toward
+# and away from the sensor, well clear of the beam.
+calibration_sweep:
+  distances_mm: [2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20]
+  distance_u_mm: 0.01            # TODO (Paolo): micrometer resolution/uncertainty
+  records_per_point: 200
+  period_us: 1000
+
+# Supply-voltage drift run: displacement held fixed at the chosen working
+# point while Vcc is made to drift, to separate a ratiometric reading from an
+# absolute one.
+supply_drift:
+  distance_mm: 8.0                # the chosen working point, see _theory.qmd
+  duration_s: 20.0
+  period_us: 2000
+  vcc_start_v: 3.300
+  vcc_end_v: 3.240                # TODO (Paolo): representative supply droop
+
+# On-the-beam cross-check: the same small reference masses as
+# params/m1.yaml's bridge_demo.quarter_masses_kg, applied at the tip while the
+# Hall sensor reads the resulting displacement against a fixed baseline gap.
+beam_crosscheck:
+  masses_kg: [0.0, 0.010, 0.020, 0.030]
+  mass_u_kg: 0.00005               # TODO (Paolo)
+  baseline_distance_mm: 8.0        # d at F = 0; must equal supply_drift.distance_mm
+  records_per_point: 200
+  period_us: 1000
+
+# Reference instrument quoted in generated sidecars.
+references:
+  micrometer:
+    instrument: "micrometer stage"
+    model: "TODO (Paolo)"
+    calibration: "TODO (Paolo)"
+  masses:
+    instrument: "reference masses"
+    model: "TODO (Paolo)"
+    calibration: "TODO (Paolo)"

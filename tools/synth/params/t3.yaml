@@ -1,0 +1,45 @@
+# T3 - long-term stability and drift.
+#
+# TODO (Paolo): placeholders throughout; replace with values measured on the
+# reference bench once the insulated box and its sensor are built.
+
+seed: 20260918
+
+# One continuous 24 h log, sampled every few seconds -- a fast logging rate
+# would learn nothing here and would make the file large for no reason. See
+# _theory.qmd for why the averaging time, not the sample rate, is what this
+# experiment is about.
+log:
+  period_s: 5.0            # tau_0: the base sample interval
+  duration_h: 24.0          # exactly 17280 samples at period_s = 5 s
+  pin: 15
+
+# The sensor: a linear analog output V = sensor_offset_V +
+# sensor_sensitivity_V_per_K * T_celsius, connected straight to the ADC pin
+# (no separate conditioning stage -- gain = 1, offset = 0 in `channels[]`).
+# The sensitivity is chosen high enough that the ADC's own input-referred
+# noise (platform.yaml, adc.noise_sigma_v), referred back through it, sits
+# below the millikelvin noise floor this experiment is built to resolve --
+# exactly the role a real instrumentation-amplifier front end plays.
+sensor:
+  sensitivity_V_per_K: 0.150     # TODO (Paolo): measured sensor + front-end gain
+  reference_T_C: 23.0            # linearization point, mid-scale at the ADC
+  midscale_V: 1.65               # V at reference_T_C -- sets sensor_offset_V
+
+# The synthetic temperature record: a mean, a diurnal cycle (the room, not
+# the box), a slow linear drift (the instrument), and two noise processes
+# whose sum is what makes the Allan deviation have an actual minimum instead
+# of falling forever -- see the comment in t3_long_term.py for the generation
+# method.
+signal:
+  mean_T_C: 23.0
+  diurnal_amplitude_K: 0.150      # TODO (Paolo): measured room swing, insulated box
+  diurnal_period_s: 86400.0       # exactly 24 h; not a free parameter
+  diurnal_phase_rad: 1.0          # TODO (Paolo): depends on time of day logging starts
+  drift_K_per_h: 0.0006           # TODO (Paolo): instrument drift, 0.6 mK/h
+  white_sigma_K: 0.0                # additional white noise beyond the ADC's own
+                                     # (0: the ADC noise, referred through the
+                                     # sensor gain, already supplies this term)
+  random_walk_step_K: 0.00006     # TODO (Paolo): per-sample Wiener increment,
+                                   # the physical origin of the random-walk
+                                   # (rate) noise that makes ADEV rise at long tau
