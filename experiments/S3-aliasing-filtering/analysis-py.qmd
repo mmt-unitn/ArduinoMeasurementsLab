@@ -1,0 +1,736 @@
+---
+title: "S3 — Analysis template (Python)"
+subtitle: "Aliasing, conditioning and filtering"
+description: "Folding predicted and observed, filter attenuation, and what digital filtering cannot undo, in Python"
+engine: jupyter
+jupyter: python3
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment. To analyse your own measurements, replace the files in `data/`
+and change the paths in the first cell — nothing else.
+
+The R template [`analysis-r.qmd`](analysis-r.qmd) has the same sections, the
+same figure labels and the same output tables, and produces the same numbers
+from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the filters here are written out rather than called from a library
+
+Both templates apply the same
+[windowed-sinc FIR](handbook.qmd#eq-s3-fir), computed from its closed form and
+applied by direct convolution. Library filter design and `filtfilt` edge
+padding differ between `scipy.signal` and `gsignal` by enough to break
+table-for-table agreement between the two languages, and an analysis whose
+numbers depend on which language ran it is not an analysis. The frequency
+estimator and the sine fit are written out for the same reason.
+:::
+
+## Setup
+
+```{python}
+#| label: setup
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd().parents[1] / "shared" / "python"))
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from labtools import (budget_table, enob, lsb_volts, read_run,
+                      synthetic_banner, timing_summary, validate_meta)
+
+plt.rcParams.update({
+    "figure.figsize": (7.0, 4.0),
+    "axes.grid": True,
+    "grid.alpha": 0.3,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+})
+
+DATA = Path("data")
+SWEEP_RUNS = sorted(DATA.glob("alias-f*.csv"))
+FILTER_OFF = DATA / "filter-off.csv"
+FILTER_ON = DATA / "filter-on.csv"
+OVERSAMPLED = DATA / "oversampled.csv"
+
+FIR_TAPS = 201            # odd, so the group delay is an integer sample;
+                          # enough taps that 150 Hz is inside the passband
+                          # rather than in the transition band
+DECIMATION = 10           # 5 kHz oversampled run down to the 500 Hz grid
+```
+
+```{python}
+#| label: helpers
+def sampling_rate(run):
+    """Hz, from the least-squares grid fit of the device timestamps.
+
+    Not the requested rate and not `achieved_rate_hz`: the fitted period is
+    the one both languages compute identically, and it is what the signal
+    actually saw.
+    """
+    return 1.0e6 / timing_summary(run.data).stats["period_us"]
+
+
+def estimate_frequency(x, fs):
+    """Peak of the Hann-windowed periodogram, refined by parabolic
+    interpolation on the three bins around the peak."""
+    x = np.asarray(x, dtype=float)
+    n = x.size
+    w = 0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(n) / (n - 1))
+    mag = np.abs(np.fft.rfft((x - x.mean()) * w))
+    k = int(np.argmax(mag[1:])) + 1          # skip DC
+    if 0 < k < mag.size - 1:
+        a, b, c = mag[k - 1], mag[k], mag[k + 1]
+        denom = a - 2.0 * b + c
+        delta = 0.5 * (a - c) / denom if denom != 0.0 else 0.0
+    else:
+        delta = 0.0
+    return (k + delta) * fs / n
+
+
+def sine_fit(t_s, x, f):
+    """Three-parameter least squares at a known frequency.
+
+    Returns the amplitude, the mean level and the residual standard
+    deviation. The normal equations are solved explicitly so that Python and
+    R take the same arithmetic path.
+    """
+    t_s = np.asarray(t_s, dtype=float)
+    x = np.asarray(x, dtype=float)
+    d = np.column_stack([np.cos(2.0 * np.pi * f * t_s),
+                         np.sin(2.0 * np.pi * f * t_s),
+                         np.ones_like(t_s)])
+    coef = np.linalg.solve(d.T @ d, d.T @ x)
+    resid = x - d @ coef
+    dof = max(t_s.size - 3, 1)
+    return (float(np.hypot(coef[0], coef[1])), float(coef[2]),
+            float(np.sqrt((resid ** 2).sum() / dof)))
+
+
+def alias_frequency(f, fs):
+    """The folding rule: f_a = |f - k fs| with k the nearest integer.
+
+    Python's round() and R's round() are both round-half-to-even, so the two
+    agree; the sweep avoids half-integer f/fs anyway.
+    """
+    return abs(f - round(f / fs) * fs)
+
+
+def fir_lowpass(fc, fs, n_taps=FIR_TAPS):
+    """Windowed-sinc low-pass, normalised to unity passband gain."""
+    n = np.arange(n_taps, dtype=float)
+    m = (n_taps - 1) / 2.0
+    w = 0.54 - 0.46 * np.cos(2.0 * np.pi * n / (n_taps - 1))   # Hamming
+    h = w * np.sinc(2.0 * fc / fs * (n - m))                   # sinc(x)=sin(pi x)/(pi x)
+    return h / h.sum()
+
+
+def fir_apply(x, h):
+    """Direct convolution, kept only where the whole window exists."""
+    return np.convolve(np.asarray(x, dtype=float), h, mode="valid")
+
+
+def filter_magnitude(f, fc, order):
+    """|H(f)| of the Butterworth-style stage."""
+    return 1.0 / np.sqrt(1.0 + (f / fc) ** (2 * order))
+```
+
+```{python}
+#| label: load
+sweep = [read_run(p) for p in SWEEP_RUNS]
+off = read_run(FILTER_OFF)
+on = read_run(FILTER_ON)
+over = read_run(OVERSAMPLED)
+
+all_runs = {r.meta["run"]: r for r in sweep + [off, on, over]}
+board = on.meta["board"]
+FSR = board["vref_mV"] / 1000.0
+LSB = lsb_volts(on.meta)
+```
+
+```{python}
+#| label: banner
+#| echo: false
+#| output: asis
+print(synthetic_banner(on.meta))
+```
+
+## Data quality
+
+```{python}
+#| label: quality
+#| echo: false
+#| output: asis
+problems = {name: validate_meta(run.meta) for name, run in all_runs.items()}
+lossy = {}
+for name, run in all_runs.items():
+    stats = run.meta.get("stream_stats", {})
+    bad = {k: v for k, v in stats.items()
+           if k != "records" and isinstance(v, int) and v > 0}
+    if bad:
+        lossy[name] = bad
+n_bad = sum(1 for p in problems.values() if p)
+print(f"""
+{len(all_runs)} runs read: {len(sweep)} in the aliasing sweep, the
+filtered/unfiltered pair, and the oversampled run.
+{'All sidecars are complete.' if n_bad == 0
+ else f'{n_bad} sidecar(s) have missing fields.'}
+{'No run reports a lost record.' if not lossy
+ else 'Runs with losses: ' + ', '.join(lossy)}
+""")
+```
+
+## The conditioning stage
+
+The stage maps the generator's bipolar output onto the converter's unipolar
+input; see the
+[derivation in the handbook](handbook.qmd#sec-s3-conditioning). Its design
+values live in each sidecar's `conditioning` block, and the check below is
+that the recordings sit where the design says they should.
+
+```{python}
+#| label: conditioning
+ch_on = on.meta["channels"][0]
+GAIN = ch_on["conditioning"]["gain"]
+OFFSET = ch_on["conditioning"]["offset"]
+U_GAIN_REL = ch_on["conditioning_u_gain_rel"]
+U_OFFSET_V = ch_on["conditioning_u_offset_v"]
+
+cond = pd.DataFrame([{
+    "run": run.meta["run"],
+    "mean_V": run.data["volts"].mean(),
+    "min_V": run.data["volts"].min(),
+    "max_V": run.data["volts"].max(),
+} for run in [off, on, over]])
+cond["offset_error_mV"] = (cond["mean_V"] - OFFSET) * 1e3
+cond["headroom_lo_V"] = cond["min_V"]
+cond["headroom_hi_V"] = FSR - cond["max_V"]
+```
+
+```{python}
+#| label: out-conditioning
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.run} | {r.mean_V:.4f} | {r.offset_error_mV:+.1f} | "
+    f"{r.min_V:.4f} | {r.max_V:.4f} | {r.headroom_lo_V:.3f} | {r.headroom_hi_V:.3f} |"
+    for r in cond.itertuples())
+print(f"""
+| Run | Mean [V] | Mean − $V_\\mathrm{{off}}$ [mV] | Min [V] | Max [V] | Low headroom [V] | High headroom [V] |
+|---|---|---|---|---|---|---|
+{rows}
+
+: Where each recording sits in the converter's range, against a design offset of {OFFSET:.3f} V and a gain of {GAIN:.3f} {{#tbl-s3-conditioning}}
+""")
+```
+
+```{python}
+#| label: out-conditioning-text
+#| echo: false
+#| output: asis
+worst = cond.loc[cond["offset_error_mV"].abs().idxmax()]
+print(f"""
+No recording reaches either rail: the smallest low headroom is
+{cond['headroom_lo_V'].min():.3f} V and the smallest high headroom is
+{cond['headroom_hi_V'].min():.3f} V, so nothing clips and the sinusoid fits
+are unbiased. The largest departure of a recording's mean from the design
+offset is {worst['offset_error_mV']:+.1f} mV on `{worst['run']}`, which is the
+stage's own offset error plus the converter's — the two are not separable from
+this measurement alone, which is why the budget carries an offset term from
+the sidecar rather than from this table.
+""")
+```
+
+## Aliasing sweep
+
+Each run is one generator frequency, sampled deliberately below Nyquist. The
+apparent frequency is estimated from the recording and predicted from the
+[folding rule](handbook.qmd#eq-s3-alias) using the generator setting recorded
+in the sidecar.
+
+```{python}
+#| label: aliasing
+rows = []
+for run in sweep:
+    ch = run.meta["channels"][0]
+    fs = sampling_rate(run)
+    volts = run.data["volts"].to_numpy()
+    t_s = run.data["t_us"].to_numpy() / 1.0e6
+    f_gen = ch["generator_frequency_hz"]
+    f_obs = estimate_frequency(volts, fs)
+    f_pred = alias_frequency(f_gen, fs)
+    amp, _, _ = sine_fit(t_s, volts, f_obs)
+    rows.append({
+        "run": run.meta["run"], "f_gen_Hz": f_gen, "fs_Hz": fs,
+        "k": round(f_gen / fs), "f_pred_Hz": f_pred, "f_obs_Hz": f_obs,
+        "error_Hz": f_obs - f_pred, "amplitude_V": amp,
+    })
+alias = pd.DataFrame(rows)
+```
+
+```{python}
+#| label: out-alias
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.f_gen_Hz:.0f} | {r.k} | {r.f_pred_Hz:.2f} | {r.f_obs_Hz:.2f} | "
+    f"{r.error_Hz:+.3f} | {r.amplitude_V:.4f} |"
+    for r in alias.itertuples())
+print(f"""
+| $f$ [Hz] | $k$ | Predicted $f_a$ [Hz] | Observed [Hz] | Error [Hz] | Amplitude [V] |
+|---|---|---|---|---|---|
+{rows}
+
+: The aliasing sweep at $f_s = {alias['fs_Hz'].iloc[0]:.1f}$ Hz {{#tbl-s3-alias}}
+""")
+```
+
+```{python}
+#| label: fig-s3-folding
+#| echo: false
+#| fig-cap: "The folding triangle. Left: apparent frequency against generator frequency, predicted (line) and observed (points); every point above the Nyquist frequency is a different generator setting producing the same samples as something below it. Right: observed minus predicted."
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.6, 3.4))
+fs0 = alias["fs_Hz"].iloc[0]
+grid = np.linspace(0, alias["f_gen_Hz"].max() * 1.02, 2000)
+ax1.plot(grid, [alias_frequency(f, fs0) for f in grid], lw=1.0,
+         label="predicted")
+ax1.plot(alias["f_gen_Hz"], alias["f_obs_Hz"], "o", ms=6, label="observed")
+ax1.axhline(fs0 / 2, color="0.4", lw=0.8, ls="--")
+ax1.text(grid[-1], fs0 / 2, " Nyquist", va="center", fontsize=8, color="0.3")
+ax1.set_xlabel("Generator frequency $f$ [Hz]")
+ax1.set_ylabel("Apparent frequency $f_a$ [Hz]")
+ax1.legend(frameon=False, loc="upper right")
+
+ax2.axhline(0.0, color="0.4", lw=0.8)
+ax2.plot(alias["f_gen_Hz"], alias["error_Hz"] * 1e3, "o-", ms=5, lw=0.8)
+ax2.set_xlabel("Generator frequency $f$ [Hz]")
+ax2.set_ylabel("Observed − predicted [mHz]")
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-alias-text
+#| echo: false
+#| output: asis
+print(f"""
+The largest departure from the folding rule across the sweep is
+{alias['error_Hz'].abs().max() * 1e3:.1f} mHz, against a bin width of
+{alias['fs_Hz'].iloc[0] / len(sweep[0].data):.2f} Hz. The rule is exact; what
+is left is the frequency estimator's own resolution.
+
+Read the left panel again and note what it means at the bench: every one of
+the {(alias['k'] > 0).sum()} points with $k > 0$ is a generator setting above
+Nyquist that produced samples identical to those of some lower frequency.
+Nothing in the recorded numbers distinguishes them.
+""")
+```
+
+## Anti-alias filtering
+
+The same 650 Hz input, recorded twice: once straight into the converter, once
+through the analog filter. Both alias to the same apparent frequency — the
+filter does not move the alias, it reduces what arrives to be aliased.
+
+```{python}
+#| label: filtering
+FC = ch_on["filter_fc_hz"]
+ORDER = ch_on["filter_order"]
+U_FC_REL = ch_on["filter_u_fc_rel"]
+F_GEN = ch_on["generator_frequency_hz"]
+
+pair = []
+for label, run in [("unfiltered", off), ("filtered", on)]:
+    fs = sampling_rate(run)
+    volts = run.data["volts"].to_numpy()
+    t_s = run.data["t_us"].to_numpy() / 1.0e6
+    f_obs = estimate_frequency(volts, fs)
+    amp, level, resid = sine_fit(t_s, volts, f_obs)
+    pair.append({"case": label, "fs_Hz": fs, "f_obs_Hz": f_obs,
+                 "amplitude_V": amp, "level_V": level, "resid_V": resid,
+                 "n": len(volts)})
+pair = pd.DataFrame(pair)
+
+ratio_obs = (pair.loc[pair["case"] == "filtered", "amplitude_V"].iloc[0]
+             / pair.loc[pair["case"] == "unfiltered", "amplitude_V"].iloc[0])
+ratio_pred = filter_magnitude(F_GEN, FC, ORDER)
+```
+
+```{python}
+#| label: out-filter
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.case} | {r.f_obs_Hz:.2f} | {r.amplitude_V:.5f} | {r.level_V:.4f} | "
+    f"{r.resid_V * 1e3:.3f} | {r.n} |"
+    for r in pair.itertuples())
+print(f"""
+| Case | Observed $f_a$ [Hz] | Amplitude [V] | Mean level [V] | Residual $\\sigma$ [mV] | $n$ |
+|---|---|---|---|---|---|
+{rows}
+
+: The same {F_GEN:.0f} Hz input with and without the analog filter {{#tbl-s3-filter}}
+""")
+```
+
+```{python}
+#| label: out-filter-text
+#| echo: false
+#| output: asis
+print(f"""
+Observed amplitude ratio {ratio_obs:.4f}
+({20 * np.log10(ratio_obs):+.2f} dB); predicted from
+$\\lvert H(f)\\rvert$ at the **true** {F_GEN:.0f} Hz — not at the apparent
+{pair['f_obs_Hz'].iloc[0]:.0f} Hz — with $f_c = {FC:.0f}$ Hz and
+$n = {ORDER}$: {ratio_pred:.4f} ({20 * np.log10(ratio_pred):+.2f} dB).
+The difference is {100 * (ratio_obs / ratio_pred - 1):+.2f} %.
+
+Both recordings still show a tone at {pair['f_obs_Hz'].iloc[1]:.0f} Hz. That
+is the point: the filter changed the alias's *size*, not its existence or its
+frequency. Attenuating it enough is a design decision taken before the
+sampler, and the next section is how that decision is made.
+""")
+```
+
+```{python}
+#| label: fig-s3-filter-pair
+#| echo: false
+#| fig-cap: "First 60 ms of the unfiltered and filtered recordings. The apparent frequency is identical — the filter cannot move an alias — and only the amplitude differs."
+fig, ax = plt.subplots(figsize=(7.0, 3.2))
+for label, run in [("unfiltered", off), ("filtered", on)]:
+    t_ms = (run.data["t_us"].to_numpy() - run.data["t_us"].iloc[0]) / 1e3
+    keep = t_ms <= 60
+    ax.plot(t_ms[keep], run.data["volts"].to_numpy()[keep], lw=1.0,
+            marker="o", ms=2.5, label=label)
+ax.axhline(OFFSET, color="0.5", lw=0.8, ls="--")
+ax.set_xlabel("Time [ms]")
+ax.set_ylabel("ADC input [V]")
+ax.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+## Filter design
+
+The design question of
+[the handbook](handbook.qmd#sec-s3-filter-design): given a sampling rate, a
+passband edge and a required attenuation at the worst-case folding frequency,
+what corner frequency and what order? The cost is paid in the passband.
+
+```{python}
+#| label: design
+FS_DESIGN = 500.0        # the rate the bench actually samples at
+F_MAX = 100.0            # the highest frequency of interest
+A_REQ_DB = 40.0          # required attenuation at the folding frequency
+F_FOLD = FS_DESIGN - F_MAX
+
+design = []
+for order in (1, 2, 3, 4):
+    fc = F_FOLD / (10 ** (A_REQ_DB / 10.0) - 1) ** (1.0 / (2 * order))
+    droop = filter_magnitude(F_MAX, fc, order)
+    design.append({
+        "order": order, "fc_Hz": fc,
+        "fc_over_fmax": fc / F_MAX,
+        "droop_dB": 20 * np.log10(droop),
+        "droop_pct": 100 * (1 - droop),
+    })
+design = pd.DataFrame(design)
+```
+
+```{python}
+#| label: out-design
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.order} | {r.fc_Hz:.1f} | {r.fc_over_fmax:.2f} | {r.droop_dB:+.2f} | {r.droop_pct:.1f} |"
+    for r in design.itertuples())
+print(f"""
+| Order $n$ | Required $f_c$ [Hz] | $f_c/f_\\mathrm{{max}}$ | Droop at $f_\\mathrm{{max}}$ [dB] | Droop [%] |
+|---|---|---|---|---|
+{rows}
+
+: Corner frequency needed for {A_REQ_DB:.0f} dB at $f_\\mathrm{{fold}} = {F_FOLD:.0f}$ Hz, with $f_s = {FS_DESIGN:.0f}$ Hz and $f_\\mathrm{{max}} = {F_MAX:.0f}$ Hz {{#tbl-s3-design}}
+""")
+```
+
+```{python}
+#| label: fig-s3-design
+#| echo: false
+#| fig-cap: "Magnitude response of each design of @tbl-s3-design. Every curve passes through the required attenuation at the folding frequency; they differ in how much of the passband they spend to get there."
+fig, ax = plt.subplots(figsize=(7.0, 3.6))
+f_grid = np.logspace(0, np.log10(FS_DESIGN * 2), 400)
+for r in design.itertuples():
+    ax.plot(f_grid, 20 * np.log10(filter_magnitude(f_grid, r.fc_Hz, r.order)),
+            lw=1.1, label=f"$n$ = {r.order}, $f_c$ = {r.fc_Hz:.0f} Hz")
+ax.axvline(F_MAX, color="0.4", lw=0.8, ls=":")
+ax.axvline(F_FOLD, color="0.4", lw=0.8, ls="--")
+ax.axhline(-A_REQ_DB, color="0.4", lw=0.8, ls="--")
+ax.text(F_MAX, 5, " $f_{max}$", fontsize=8, color="0.3")
+ax.text(F_FOLD, 5, " $f_{fold}$", fontsize=8, color="0.3")
+ax.set_xscale("log")
+ax.set_ylim(-70, 12)
+ax.set_xlabel("Frequency [Hz]")
+ax.set_ylabel("$|H(f)|$ [dB]")
+ax.legend(frameon=False, fontsize=8, loc="lower left")
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-design-text
+#| echo: false
+#| output: asis
+first = design.iloc[0]
+last = design.iloc[-1]
+print(f"""
+A first-order stage needs $f_c = {first['fc_Hz']:.1f}$ Hz to reach
+{A_REQ_DB:.0f} dB at {F_FOLD:.0f} Hz — below the passband edge itself, which
+costs {first['droop_pct']:.0f} % of the signal at $f_\\mathrm{{max}}$ and is
+not a usable design. Order {last['order']:.0f} puts the corner at
+{last['fc_Hz']:.1f} Hz, {last['fc_over_fmax']:.1f} times the passband edge,
+for {last['droop_pct']:.1f} % droop. That is the trade the table exists to
+make visible: attenuation is bought with either order or passband.
+""")
+```
+
+## Digital filtering after the fact
+
+The oversampled run contains the signal and a strong interferer well above
+it, at a rate high enough that neither folds. Filtering *then* decimating is
+clean. Decimating without filtering first is not — and no filter applied
+afterwards repairs it.
+
+```{python}
+#| label: digital
+ch_over = over.meta["channels"][0]
+F_SIGNAL = ch_over["signal_frequency_hz"]
+F_INTERFERER = ch_over["interferer_frequency_hz"]
+
+fs_over = sampling_rate(over)
+v_over = over.data["volts"].to_numpy()
+t_over = over.data["t_us"].to_numpy() / 1.0e6
+fs_dec = fs_over / DECIMATION
+
+# The digital anti-alias filter: corner below the interferer, above the signal.
+FC_DIGITAL = fs_dec / 2.0 * 0.8
+h = fir_lowpass(FC_DIGITAL, fs_over)
+lag = (len(h) - 1) // 2
+
+v_filt = fir_apply(v_over, h)
+t_filt = t_over[lag:len(v_over) - lag]
+
+# Where the interferer lands if it is allowed to fold onto the decimated grid.
+F_FOLDED = alias_frequency(F_INTERFERER, fs_dec)
+
+cases = []
+# 1. naive: decimate the oversampled run with no digital filter
+idx = np.arange(0, len(v_over), DECIMATION)
+cases.append(("decimated, no filter", t_over[idx], v_over[idx], fs_dec))
+# 2. filter first, then decimate
+idx = np.arange(0, len(v_filt), DECIMATION)
+cases.append(("filtered, then decimated", t_filt[idx], v_filt[idx], fs_dec))
+# 3. the already-aliased run, filtered digitally
+fs_off = sampling_rate(off)
+h_off = fir_lowpass(fs_off / 2.0 * 0.8, fs_off)
+lag_off = (len(h_off) - 1) // 2
+v_off = off.data["volts"].to_numpy()
+t_off = off.data["t_us"].to_numpy() / 1.0e6
+cases.append(("already aliased, filtered", t_off[lag_off:len(v_off) - lag_off],
+              fir_apply(v_off, h_off), fs_off))
+
+digital = []
+for label, t_c, v_c, fs_c in cases:
+    a_sig, _, _ = sine_fit(t_c, v_c, F_SIGNAL)
+    a_fold, _, resid = sine_fit(t_c, v_c, F_FOLDED)
+    digital.append({"case": label, "fs_Hz": fs_c, "n": len(v_c),
+                    "amp_signal_mV": a_sig * 1e3,
+                    "amp_folded_mV": a_fold * 1e3,
+                    "resid_mV": resid * 1e3})
+digital = pd.DataFrame(digital)
+```
+
+```{python}
+#| label: out-digital
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.case} | {r.fs_Hz:.0f} | {r.n} | {r.amp_signal_mV:.2f} | "
+    f"{r.amp_folded_mV:.2f} | {r.resid_mV:.3f} |"
+    for r in digital.itertuples())
+print(f"""
+| Case | $f_s$ [Hz] | $n$ | Amplitude at {F_SIGNAL:.0f} Hz [mV] | Amplitude at {F_FOLDED:.0f} Hz [mV] | Residual $\\sigma$ [mV] |
+|---|---|---|---|---|---|
+{rows}
+
+: Filtering before and after the damage is done {{#tbl-s3-digital}}
+""")
+```
+
+```{python}
+#| label: fig-s3-digital
+#| echo: false
+#| fig-cap: "Spectra of the three cases of @tbl-s3-digital. Filtering before decimation removes the interferer; decimating first folds it into the band, where it is indistinguishable from signal; filtering a record that is already aliased leaves it untouched."
+fig, axes = plt.subplots(1, 3, figsize=(7.8, 3.0), sharey=True)
+for ax, (label, t_c, v_c, fs_c) in zip(axes, cases):
+    x = v_c - v_c.mean()
+    n = x.size
+    w = 0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(n) / (n - 1))
+    mag = np.abs(np.fft.rfft(x * w)) * 2.0 / w.sum()
+    freqs = np.fft.rfftfreq(n, 1.0 / fs_c)
+    ax.semilogy(freqs, np.maximum(mag, 1e-7), lw=0.8)
+    ax.axvline(F_SIGNAL, color="0.4", lw=0.8, ls=":")
+    ax.axvline(F_FOLDED, color="0.7", lw=0.8, ls="--")
+    ax.set_title(label, fontsize=8)
+    ax.set_xlabel("Frequency [Hz]")
+axes[0].set_ylabel("Amplitude [V]")
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-digital-text
+#| echo: false
+#| output: asis
+naive = digital.iloc[0]
+clean = digital.iloc[1]
+aliased = digital.iloc[2]
+print(f"""
+Decimating without filtering puts {naive['amp_folded_mV']:.1f} mV at
+{F_FOLDED:.0f} Hz — the {F_INTERFERER:.0f} Hz interferer, folded, sitting
+{naive['amp_folded_mV'] / naive['amp_signal_mV'] * 100:.0f} % as large as the
+signal and inside the band of interest. Filtering first leaves
+{clean['amp_folded_mV']:.2f} mV there, a reduction of
+{20 * np.log10(naive['amp_folded_mV'] / clean['amp_folded_mV']):.0f} dB.
+The signal estimate moves by
+{(clean['amp_signal_mV'] - naive['amp_signal_mV']) / naive['amp_signal_mV'] * 100:+.1f} %
+between the two cases — part of that is the FIR's own droop at
+{F_SIGNAL:.0f} Hz, and part is that the unfiltered estimate was biased by the
+folded interferer sitting {F_FOLDED - F_SIGNAL:.0f} Hz away, too close to be
+orthogonal to it over a record of this length. Neither part is noise, and
+both are worth quantifying in your report.
+
+The third row is the one to remember. The already-aliased recording, put
+through the same kind of digital filter, still carries
+{aliased['amp_signal_mV']:.1f} mV at {F_SIGNAL:.0f} Hz — the alias is *in the
+passband*, so the filter passes it, exactly as it passes a real signal there.
+No digital filter can do anything else: the two are the same numbers.
+""")
+```
+
+## Uncertainty budget
+
+The measurand is the recovered generator amplitude of
+[the handbook](handbook.qmd#eq-s3-recover-amplitude),
+$\hat{V}_g = \hat{A}_\mathrm{adc} / (G\,\lvert H(f)\rvert)$, with the
+[sensitivity coefficients](handbook.qmd#eq-s3-sensitivity) given there.
+
+```{python}
+#| label: budget
+row_on = pair.loc[pair["case"] == "filtered"].iloc[0]
+a_adc = row_on["amplitude_V"]
+sigma_resid = row_on["resid_V"]
+n_samples = int(row_on["n"])
+
+h_mag = filter_magnitude(F_GEN, FC, ORDER)
+v_g = a_adc / (GAIN * h_mag)
+
+# gamma: the dimensionless factor in every derivative of |H(f)|
+ratio2n = (F_GEN / FC) ** (2 * ORDER)
+gamma = ORDER * ratio2n / (1.0 + ratio2n)
+
+c_amp = 1.0 / (GAIN * h_mag)
+c_gain = -v_g / GAIN
+c_fc = -v_g * gamma / FC
+c_f = v_g * gamma / F_GEN
+
+# The effective quantization step, by S1's method applied to this record.
+enob_here = enob(FSR, sigma_resid)
+q_eff = FSR / 2 ** enob_here
+bin_width = row_on["fs_Hz"] / n_samples
+
+components = [
+    dict(quantity="Amplitude estimation noise", value=a_adc, unit="V",
+         distribution="type-a", std=sigma_resid * np.sqrt(2.0 / n_samples),
+         sensitivity=c_amp),
+    dict(quantity="Effective quantization", value=0.0, unit="V",
+         distribution="rectangular", half_width=q_eff / 2, sensitivity=c_amp),
+    dict(quantity="Conditioning gain G", value=GAIN, unit="V",
+         distribution="rectangular", half_width=U_GAIN_REL * GAIN,
+         sensitivity=c_gain),
+    dict(quantity="Conditioning offset", value=OFFSET, unit="V",
+         distribution="rectangular", half_width=U_OFFSET_V, sensitivity=0.0),
+    dict(quantity="Filter corner frequency", value=FC, unit="V",
+         distribution="rectangular", half_width=U_FC_REL * FC,
+         sensitivity=c_fc),
+    dict(quantity="Signal frequency", value=F_GEN, unit="V",
+         distribution="rectangular", half_width=bin_width / 2,
+         sensitivity=c_f),
+]
+budget = budget_table(components, k=2)
+```
+
+```{python}
+#| label: out-budget
+#| echo: false
+#| output: asis
+print(budget.to_markdown(
+    caption=f"Uncertainty budget for the recovered generator amplitude at "
+            f"$f = {F_GEN:.0f}$ Hz",
+    label="tbl-s3-budget"))
+```
+
+```{python}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant = budget.table.loc[budget.table["index_pct"].idxmax()]
+declared = on.meta["channels"][0]["reference_value"]
+print(f"""
+Recovered generator amplitude $\\hat{{V}}_g = {v_g:.4f}$ V against a setting
+of {declared:.4f} V, with an expanded uncertainty $U = {budget.U * 1e3:.2f}$ mV
+at $k = 2$ — a departure of
+{(v_g - declared) * 1e3:+.1f} mV, or
+{abs(v_g - declared) / budget.U:.1f} times $U$.
+
+The dominant component is **{dominant['quantity']}** at
+{dominant['index_pct']:.0f} % of the combined variance. Note
+$\\gamma = {gamma:.3f}$: at {F_GEN:.0f} Hz the filter is well into its
+stopband, so a relative error in $f_c$ is amplified almost {gamma:.1f}-fold
+into the recovered amplitude. Calibrating the filter corner is worth more
+here than any improvement to the converter.
+""")
+```
+
+::: {.callout-note}
+## Why the offset row is there and equal to zero
+
+The amplitude comes from a fit that carries its own mean level, so a DC
+offset error does not reach it to first order — the sensitivity coefficient
+is genuinely zero, not merely small. The row stays in the table because a
+component checked and found not to matter is a result; a budget that silently
+omits it looks like a budget that forgot.
+:::
+
+## What to report
+
+1. @tbl-s3-conditioning: where the recordings sit in the converter's range,
+   and how much headroom is left at each rail.
+2. @tbl-s3-alias and @fig-s3-folding: predicted against observed apparent
+   frequency, and the folding triangle. State how many of your generator
+   settings are indistinguishable from each other in the recorded samples.
+3. @tbl-s3-filter and @fig-s3-filter-pair: the measured attenuation against
+   $\lvert H(f)\rvert$ at the true frequency, and why it is evaluated there
+   and not at the apparent frequency.
+4. @tbl-s3-design and @fig-s3-design: your own design case — your $f_s$, your
+   passband edge, your required attenuation — with the order you would choose
+   and the passband cost you accept.
+5. @tbl-s3-digital and @fig-s3-digital: the three cases, and one sentence
+   saying why the third cannot be fixed.
+6. @tbl-s3-budget: the budget, the dominant component, and what you would
+   calibrate first.

@@ -1,0 +1,309 @@
+---
+title: "S3 — Aliasing, conditioning and filtering"
+subtitle: "Laboratory handbook"
+description: "Folding predicted and observed, anti-alias stages, digital filtering after the fact"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-s3-outcomes}
+
+By the end of this session you should be able to:
+
+1. Derive the gain and offset of a conditioning stage from a target input
+   range, and propagate the stage's own uncertainty into a recovered voltage.
+2. Predict the apparent frequency of an undersampled signal from
+   $f_a = |f - k f_s|$, and confirm the prediction from a swept measurement.
+3. Explain, in one sentence a colleague cannot argue with, why aliasing
+   cannot be detected from the recorded data alone.
+4. Design an anti-alias filter's corner frequency and order against a
+   required attenuation at a stated fold frequency, and state the passband
+   cost of that choice.
+5. Apply a digital filter to an oversampled recording and decimate it
+   correctly, and explain why the same procedure does not repair an
+   undersampled one.
+6. Build a GUM uncertainty budget for a recovered signal amplitude that
+   includes the conditioning stage, the filter and the frequency at which its
+   attenuation was evaluated, with correct sensitivity coefficients.
+
+## Prerequisites {#sec-s3-prerequisites}
+
+- [S1](../S1-daq-static/index.qmd), completed: this experiment uses its
+  ADC model, its effective-quantization result and its vocabulary
+  (Type A/B, sensitivity coefficient, effective number of bits) without
+  re-deriving them.
+- [S2](../S2-daq-dynamic/index.qmd) is not required but is the natural
+  companion: its dynamic ENOB and timing-quality results are the ones that
+  matter once the signal of interest is moving, which here it always is.
+- Statistics: mean, standard deviation, least squares, and a first exposure
+  to the discrete Fourier transform (a periodogram's peak location is enough;
+  no signal-processing course is assumed).
+
+## Hardware and cost tier {#sec-s3-hardware}
+
+::: {.callout-note}
+## Tier 3 — a bench that can generate and condition a signal, not just read one
+
+Everything below either was already on the bench for S1/S2 or is specific to
+conditioning and filtering a generator's output.
+:::
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Supported board with `UsbIo` | The instrument under test | Same requirement as S1/S2; see [Supported boards](../../setup/boards.qmd) |
+| Host computer | Acquisition | Linux recommended; see [Linux host](../../setup/host-linux.qmd) |
+| Signal generator | The bipolar test signal | Must produce a stated peak amplitude accurately enough to be a reference; see [Bill of materials](../../hardware/bom.qmd) |
+| Conditioning board | Maps the generator's range onto the ADC's | See [the conditioning board](../../hardware/conditioning-board.qmd) |
+| Filter stage | The anti-alias filter of @sec-s3-step-filter | See [the anti-alias filter stage](../../hardware/filter-stage.qmd) |
+| Digital multimeter | Verifying the conditioning stage at DC | Same DMM as S1 |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+## Theory {#sec-s3-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-s3-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-s3-recording}
+
+Nineteen runs, nineteen CSV files, nineteen sidecars. The format is specified
+in [Data format](../../data-format/index.qmd); the checklist in
+@sec-s3-step-sidecar is the version to work through at the bench. S3 extends
+the channel schema with a few extra keys that are not part of the general
+specification — documented where they are used, and shown here in context:
+
+```{.yaml filename="data/filter-on.yaml"}
+experiment: S3
+run: filter-on
+date: 2026-09-18
+operator: "your name"
+synthetic: false
+
+board:
+  model: portenta-h7
+  serial: "from arduino-io list"
+  usbio_version: "from arduino-io info"
+  adc_bits: 16
+  vref_mV: 3300
+
+host:
+  os: linux
+  os_version: "from uname -a"
+  machine: "which bench"
+  hub: true
+
+driver_version: "0.4.0"
+binding: cli
+
+acquisition:
+  pins: [15]
+  requested_period_us: 2000
+  achieved_rate_hz: 0.0        # from the stream summary
+  duration_s: 2.0
+
+stream_stats:                  # all six, from the summary line
+  records: 0
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+
+channels:
+  - pin: 15
+    quantity: voltage
+    unit: V
+    sensor: "signal generator (bipolar)"
+    conditioning:
+      gain: 1.35               # measured, not the design target
+      offset: 1.65
+      filter: "2-pole Butterworth-style (op-amp buffered), fc = 100 Hz"
+    calibration_reference: "signal generator amplitude setting"
+    reference_value: 1.0       # generator peak amplitude, V
+    reference_u: 0.01          # from the generator's specification
+    generator_frequency_hz: 650.0   # S3 extension: not part of the general schema
+    filter_fc_hz: 100.0             # S3 extension
+    filter_order: 2                 # S3 extension
+
+environment:
+  ambient_temperature_C: 23.0
+  notes: ""
+
+references:
+  - instrument: "signal generator"
+    model: "the model you used"
+    calibration: "certificate or none"
+```
+
+::: {.callout-warning}
+## The generator's frequency, not the aliased one
+
+`generator_frequency_hz` is what the generator was **set** to, always — even
+when it is above $f_s/2$ and you already know it will alias. Writing down the
+predicted or observed apparent frequency instead destroys the comparison the
+analysis template exists to make.
+:::
+
+## Analysis tasks {#sec-s3-tasks}
+
+Open one of the two templates —
+[Python](analysis-py.qmd) or [R](analysis-r.qmd) — point it at your files, and
+work through it. They contain the same sections and produce the same numbers.
+
+1. **Data quality.** Run `validate_meta()` on every sidecar and read the
+   stream counters, as in S1.
+2. **Conditioning stage.** Check the mean of each recording's ADC-referred
+   voltage against the design offset $V_\mathrm{off}$, and report the
+   conditioning stage's gain and offset as actually measured.
+3. **Aliasing sweep.** For each sweep run, estimate the apparent frequency
+   from the recording and predict it from @eq-s3-alias using the generator
+   frequency in the sidecar. Plot predicted against observed and identify the
+   folding triangle.
+4. **Anti-alias filtering.** Compare the filtered and unfiltered runs of
+   @sec-s3-step-filter: the observed amplitude ratio against the value
+   predicted by @eq-s3-filter-mag at the known generator frequency.
+5. **Filter design.** Work the design question of @sec-s3-filter-design with
+   your own $f_s$, passband edge and required attenuation, and report the
+   passband cost.
+6. **Digital filtering.** Filter and decimate the oversampled run; filter the
+   undersampled run with the same style of filter; show that the first comes
+   out clean and the second does not change.
+7. **Budget.** Build the budget of @sec-s3-budget below.
+
+## Uncertainty budget {#sec-s3-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+**The measurand.** S3's budget is built for the recovered *generator
+amplitude* of the filtered, aliased tone from @sec-s3-step-filter — not its
+frequency and not the raw ADC voltage — because amplitude is where the
+conditioning stage and the filter both leave their mark, and because a
+frequency-estimation uncertainty (from @sec-s3-aliasing) still enters it, as
+the fourth component below shows. Recovering it means inverting the
+conditioning stage and the filter's attenuation:
+
+$$
+\hat{V}_g = \frac{\hat{A}_\mathrm{adc}}{G\,\lvert H(f)\rvert}
+$$ {#eq-s3-recover-amplitude}
+
+where $\hat{A}_\mathrm{adc}$ is the amplitude estimated at the ADC, $G$ the
+conditioning gain, and $\lvert H(f)\rvert$ the filter's magnitude response
+from @eq-s3-filter-mag evaluated at $f$, the generator's **known** frequency
+setting — known because it was written down at the bench, not because it can
+be recovered from the aliased samples (@sec-s3-aliasing again). Write
+
+$$
+\gamma = \frac{n\,(f/f_c)^{2n}}{1 + (f/f_c)^{2n}}
+$$ {#eq-s3-gamma}
+
+for the dimensionless quantity that appears in every derivative of
+$\lvert H(f)\rvert$; the sensitivity coefficients of @eq-s3-recover-amplitude
+are then
+
+$$
+\frac{\partial \hat{V}_g}{\partial \hat{A}_\mathrm{adc}} = \frac{1}{G\,\lvert H(f)\rvert},
+\qquad
+\frac{\partial \hat{V}_g}{\partial G} = -\frac{\hat{V}_g}{G},
+\qquad
+\frac{\partial \hat{V}_g}{\partial V_\mathrm{off}} = 0,
+$$
+$$
+\frac{\partial \hat{V}_g}{\partial f} = \hat{V}_g\,\frac{\gamma}{f},
+\qquad
+\frac{\partial \hat{V}_g}{\partial f_c} = -\hat{V}_g\,\frac{\gamma}{f_c}
+$$ {#eq-s3-sensitivity}
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| Amplitude estimation noise | A | — | $\sigma_\mathrm{resid}\sqrt{2/n}$ from the sinusoid fit's residuals | $1/(G\lvert H\rvert)$ |
+| Effective quantization (S1 method, evaluated locally) | B | Rectangular | Half-width $q_\mathrm{eff}/2$, $q_\mathrm{eff}$ from $\sigma_\mathrm{resid}$ via [S1's ENOB](../S1-daq-static/handbook.qmd#eq-s1-enob) | $1/(G\lvert H\rvert)$ |
+| Conditioning gain $G$ | B | Rectangular | `u_gain_rel` in `params/s3.yaml` | $-\hat{V}_g/G$ |
+| Conditioning offset $V_\mathrm{off}$ | B | Rectangular | `u_offset_v` | $0$ |
+| Filter corner frequency $f_c$ | B | Rectangular | `u_fc_rel` | $-\hat{V}_g\,\gamma/f_c$ |
+| Signal frequency $f$ | B | Rectangular | Half the FFT bin width, $f_s/(2n_\mathrm{samples})$ | $\hat{V}_g\,\gamma/f$ |
+
+: Components of the S3 budget {#tbl-s3-components}
+
+Report $u_c$ and $U = 2u_c$, the index $h_i$ of every component, and one
+sentence naming the dominant term.
+
+::: {.callout-important}
+## Two things this budget states rather than hides
+
+**The offset's sensitivity coefficient is genuinely zero.** An amplitude
+estimated from a detrended (mean-removed) sinusoid fit does not depend on a
+DC offset error to first order; unlike S1's budget, where the measurand *is*
+a DC voltage and the offset matters directly, here it does not. The row stays
+in the table, at zero, rather than being quietly dropped — a component that
+turns out not to matter is still a result, and a budget that omits it looks
+like it forgot to check.
+
+**The frequency uncertainty is a conservative resolution bound, not the
+interpolated estimate's own precision.** The point estimate of $f$ used
+elsewhere in the analysis comes from a sub-bin (quadratic) interpolation of
+the periodogram peak, but its true uncertainty depends on the SNR in a way
+that is not simple to bound in closed form. The budget instead uses the raw
+FFT bin width as a rectangular bound — the same "resolution cell" logic as
+quantization in [S1](../S1-daq-static/handbook.qmd#sec-s1-quantization) —
+which is conservative (larger than the interpolator's own scatter) and stated
+as such.
+:::
+
+## Questions {#sec-s3-questions}
+
+1. Your conditioning stage was designed for $V_\mathrm{lo} = 0.3$ V and
+   $V_\mathrm{hi} = 3.0$ V. If the generator's amplitude tolerance is $\pm 5\%$
+   instead of the $\pm 1\%$ assumed in `params/s3.yaml`, does the design still
+   avoid clipping? Show the calculation.
+2. Two frequencies in the aliasing sweep produced very different apparent
+   frequencies but the same $k$. Explain why that is expected, using
+   @eq-s3-alias, without appealing to the plot.
+3. A colleague says "we filtered the signal, so there's no more aliasing in
+   this run." Using the filtered/unfiltered pair's own numbers, say precisely
+   what is wrong with that sentence.
+4. Redo the filter design of @sec-s3-filter-design for $n = 4$ instead of
+   $n = 2$, with the same $f_s$, passband edge and required attenuation.
+   Report the new $f_c$ and the new passband droop.
+5. The oversampled run's digital filter used a Hamming-windowed sinc FIR.
+   What would change, qualitatively, if you doubled the number of taps $L$?
+   What would not change?
+6. You are asked to measure a signal known to contain nothing above 2 kHz,
+   using a board that can stream at up to 30 kHz. Do you need an anti-alias
+   filter at all? Justify the answer from @eq-s3-alias rather than from
+   intuition.
+7. In the budget of @sec-s3-budget, the offset's sensitivity coefficient is
+   zero. Propose a different measurand — still recoverable from this
+   experiment's data — for which it would not be, and say what changes.
+
+## Instructor notes {#sec-s3-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

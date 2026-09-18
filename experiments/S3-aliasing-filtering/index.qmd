@@ -13,10 +13,100 @@ experiment:
   validated:
     usbio: "TODO (Paolo)"
     driver: "TODO (Paolo)"
+toc: true
 ---
 
-::: {.callout-note}
-## Experiment not written yet
-This folder is part of the AMLab scaffold. The overview, slides, handbook and
-the two analysis templates will be added.
+A board's analog input accepts $0$ to $3.3$ V and samples at whatever rate you
+ask it to. Neither of those is automatically compatible with the signal you
+actually want to measure: a generator's output is bipolar, and a signal fast
+enough to be interesting is often fast enough to fold back on itself when
+undersampled. This experiment builds the stage that reconciles the first
+problem, demonstrates the second one deliberately, and then asks what a
+filter — analog or digital — can and cannot do about it.
+
+The central result is negative, and it is the one worth remembering:
+**aliasing has to be prevented before the ADC samples, because nothing done
+to the data afterward can undo it.** A folded component and a genuine signal
+at the same apparent frequency produce identical samples; digital filtering
+can clean up noise and interference that never folded, but it cannot tell the
+two apart once they have.
+
+## Materials {#sec-s3-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — 20 minutes, before the bench
+- [Handbook](handbook.qmd) — theory, procedure, tasks, questions
+  ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd) — Jupyter engine
+- [R template](analysis-r.qmd) — knitr engine
+
+Both ship with reference data and produce the same numbers.
+:::
+
+:::
+
+## What you measure {#sec-s3-index-measure}
+
+| Quantity | How | Where it is used later |
+|---|---|---|
+| Conditioning gain $G$ and offset $V_\mathrm{off}$ | Derived from the target ADC range, verified with a DMM at DC | Every voltage recovered from an S3 recording |
+| Apparent frequency $f_a$ vs. predicted | A sweep of generator frequencies at one fixed, deliberately low $f_s$ | Confirms the folding relationship $f_a = \lvert f - k f_s\rvert$ |
+| Anti-alias filter attenuation | Design computation, checked against the observed amplitude ratio of a filtered/unfiltered pair | Chooses $f_c$ and order for a required attenuation at a given $f_s$ |
+| Digital filtering limits | FIR filtering of an oversampled run vs. an undersampled one | Shows why filtering cannot happen after the fact |
+
+: What S3 produces {#tbl-s3-index-outputs}
+
+## Bench {#sec-s3-index-bench}
+
+**Tier 3.** A supported board, a signal generator capable of a bipolar output
+and at least two simultaneous or sequential tones, a conditioning board (see
+[the conditioning board](../../hardware/conditioning-board.qmd)), and a
+filter stage (see [the anti-alias filter stage](../../hardware/filter-stage.qmd)).
+
+**Board.** Any board with streaming support works; the aliasing sweep and the
+filtered/unfiltered pair both need the sampling rate to be exactly what was
+requested, which is the property S1 measured and S2 characterizes further.
+
+**Host.** Linux is recommended, following the same evidence S1 gathered for
+its own recommendation.
+
+## Reference data {#sec-s3-index-data}
+
+Nineteen generated runs ship with the experiment, in `data/`:
+
+| File(s) | Contents |
+|---|---|
+| `alias-f0035` … `alias-f0935` (16 runs) | 2 s at 500 Hz each, one generator frequency per run, spanning $k = 0, 1, 2$ |
+| `filter-off`, `filter-on` | 2 s at 500 Hz, a 650 Hz tone (aliases to 150 Hz) with no filter and with a 2-pole 100 Hz anti-alias filter |
+| `oversampled` | 1 s at 5000 Hz, a 150 Hz signal plus a 1800 Hz interferer, nothing folded |
+
+: Reference data shipped with S3 {#tbl-s3-index-data}
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+It is produced by a seeded generator (`tools/synth/s3_aliasing_filtering.py`)
+whose parameters are plausible placeholders, not measurements — the
+conditioning stage's and filter's own uncertainties in particular are marked
+`TODO (Paolo)` in `tools/synth/params/s3.yaml`. It exists so the analysis
+templates render, and are checked in continuous integration, with no bench
+attached. Every page that uses it says so.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+Four hours, tier 3, needs S1 as a prerequisite — the conditioning-stage design
+and the filter trade-off are where the session earns its extra hour over S1.
+Full notes, expected values, common failures and the rubric are in the
+[handbook](handbook.qmd#sec-s3-instructor).
 :::

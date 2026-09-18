@@ -1,0 +1,127 @@
+### Session timing {#sec-s3-instructor-timing}
+
+Four hours, for a pair of students who have already completed S1 (S2 helps
+but is not required):
+
+| Time | Activity | Watch for |
+|---|---|---|
+| 0:00–0:20 | Slides, and reviewing the conditioning-stage design | Students who start wiring before computing $G$ and $V_\mathrm{off}$ |
+| 0:20–0:50 | Building and verifying the conditioning stage | Skipping the DC verification step and finding out about clipping later, mid-sweep |
+| 0:50–1:40 | The aliasing sweep, 16 recordings | Reading $f$ off the generator's *display* rather than its *set* value, if the two differ |
+| 1:40–2:10 | Filtered/unfiltered pair and the oversampled run | Forgetting to record the filter's $f_c$ and order in the sidecar |
+| 2:10–3:10 | Analysis template | See below |
+| 3:10–3:50 | Filter design exercise (@sec-s3-filter-design) worked with their own numbers | Confusing $f_\mathrm{fold}$ with $f_a$ |
+| 3:50–4:00 | Budget discussion | — |
+
+If time is short, drop the oversampled run and the digital-filtering section
+and hand out the shipped `oversampled` reference run instead: the point being
+taught — a digital filter cannot undo aliasing that has already happened — is
+made just as well by the shipped data as by the students' own.
+
+### Expected results {#sec-s3-instructor-expected}
+
+On the shipped synthetic data. [TODO (Paolo)]{.todo}: replace with values from
+the reference bench once the conditioning board and filter stage exist and
+have been characterized; until then these describe the generator's design
+parameters, not measurements.
+
+- Aliasing sweep: observed apparent frequency should track the predicted
+  $f_a = |f - k f_s|$ closely, agreeing to within roughly the frequency
+  resolution of the FFT used to estimate it — a fraction of a hertz on the
+  shipped runs. A folding triangle should be visible by eye in the
+  predicted-vs-observed plot.
+- Filtered/unfiltered pair: the unfiltered 650 Hz tone folds to 150 Hz at
+  full conditioned amplitude ($G V_g \approx 1.35$ V); the filtered one folds
+  to the same 150 Hz at roughly 1/42 of that amplitude — attenuated, not
+  removed, and still clearly a coherent tone, not noise.
+- Oversampled run, filtered and decimated: a clean 150 Hz tone, the 1800 Hz
+  interferer suppressed by the FIR stopband.
+- Undersampled run (the unfiltered run of the pair above), filtered digitally
+  with the same style of low-pass: the 150 Hz component is unchanged by the
+  digital filter, because at $f_s = 500$ Hz it is indistinguishable from a
+  genuine 150 Hz signal.
+
+### Common failures, in the order they happen {#sec-s3-instructor-failures}
+
+1. **The conditioning stage is wired but never verified against the DC
+   targets of @eq-s3-gain-offset.** The sweep then either clips (input rides
+   the rail, every high-frequency point in the sweep looks identical and
+   wrong) or under-uses the range (needlessly worse SNR). Both are invisible
+   until someone plots the raw codes.
+2. **The generator's displayed frequency and its set frequency are treated as
+   the same number.** Cheap generators can be off by a percent or more; if
+   the observed $f_a$ disagrees with the prediction by more than the FFT's
+   resolution, this is the first thing to check, not a bug in the analysis.
+3. **The filter's $f_c$ is confused with the fold frequency $f_\mathrm{fold}$
+   in @sec-s3-filter-design.** They are different quantities: $f_c$ is a
+   property of the filter, $f_\mathrm{fold}$ is a property of $f_s$ and the
+   band of interest. Confusing them produces a design that misses its own
+   target by a wide margin, silently.
+4. **A digital filter is expected to clean up the undersampled run.** This is
+   the central misconception the experiment exists to correct — let a group
+   try it, get a "clean-looking" 150 Hz tone, and only then ask them how they
+   would tell it apart from the genuine 150 Hz signal in the oversampled run.
+   They cannot, from the samples alone, and that is the point.
+5. **`filter_fc_hz` / `filter_order` left out of the filtered run's sidecar.**
+   Then the analysis cannot compute the predicted attenuation to compare
+   against the observed one, and the comparison in @sec-s3-tasks silently
+   degrades to eyeballing a plot.
+
+### Discussion questions and where they should land {#sec-s3-instructor-discussion}
+
+**"If aliasing can't be detected in the data, how would we ever know it
+happened on a real measurement?"** By controlling the acquisition, not by
+inspecting the result: either sample fast enough that nothing above $f_s/2$
+exists in the input (a hardware guarantee, the anti-alias filter), or
+independently know the signal's bandwidth ahead of time. There is no analysis
+technique that substitutes for either.
+
+**"The filtered tone is still clearly visible in @fig-s3-filter-pair. Did the
+filter fail?"** No — it attenuated the tone by design, by a computable
+amount, and the point of @sec-s3-filter-design is that attenuation is a
+number you choose against a required outcome, not a promise of zero. Ask what
+attenuation *would* be enough, given S1's noise floor, and have them compute
+the $f_c$ and $n$ that would deliver it.
+
+**"Why does the theory page insist on an op-amp buffered filter instead of
+just two RC stages?"** Because @eq-s3-filter-mag, the formula the whole
+design section relies on, is only exact for the buffered case. Two bare RC
+stages loading each other give a different, worse-behaved response — this is
+a good moment to have them derive the two-stage passive transfer function and
+compare.
+
+**"We used a 2-pole filter and it still let a lot through. What changes with
+4 poles?"** Recompute @eq-s3-design-fc and @eq-s3-droop with $n = 4$ for the
+same targets and compare; this is the natural extension for a group that
+finishes early.
+
+### Assessment rubric {#sec-s3-instructor-rubric}
+
+Out of 100, for the report:
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Sidecar completeness | 10 | Every run reconstructible from its metadata; generator frequency, conditioning gain/offset and filter parameters all present |
+| Conditioning stage | 15 | $G$, $V_\mathrm{off}$ derived from @eq-s3-gain-offset, verified against DC measurements, headroom explicitly justified |
+| Aliasing sweep | 20 | Predicted vs. observed $f_a$ plotted and matching; the folding triangle identified and explained, not just plotted |
+| Anti-alias filtering | 20 | Observed attenuation of the filtered tone compared with @eq-s3-filter-mag; the design trade-off of @sec-s3-filter-design worked through with the group's own numbers |
+| Digital filtering | 15 | Oversampled run cleaned correctly; undersampled run shown to resist digital cleanup, with a correct explanation of *why* |
+| Uncertainty budget | 20 | Correct sensitivity coefficients from @eq-s3-sensitivity-cond; components identified as Type A or B; the dominant term named |
+
+Deduct across the board for any number quoted without a unit, for treating
+attenuation as binary ("filtered" / "not filtered") rather than as the
+computed quantity it is, and for any claim that a digital filter recovered an
+undersampled signal.
+
+### If a group finishes early {#sec-s3-instructor-extension}
+
+- Repeat the filter design of @sec-s3-filter-design with $n = 4$ or $n = 6$
+  and quantify the passband/stopband trade-off numerically rather than just
+  observing that it improves.
+- Record a second oversampled run with the interferer closer to the signal of
+  interest and find the FIR filter length beyond which the stopband
+  attenuation no longer improves usefully for this record length.
+- Propagate the covariance between the conditioning stage's $G$ and
+  $V_\mathrm{off}$ if both were fitted from the same calibration data, rather
+  than treating them as independent — the same extension S1 proposes for its
+  own calibration fit.

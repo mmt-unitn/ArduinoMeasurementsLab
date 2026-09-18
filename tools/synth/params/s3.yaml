@@ -1,0 +1,92 @@
+# S3 - aliasing, conditioning and filtering.
+#
+# TODO (Paolo): placeholders throughout; replace with measured/designed values
+# once the conditioning board and filter stage (hardware/conditioning-board.qmd,
+# hardware/filter-stage.qmd) are built and characterized.
+
+seed: 20260918
+
+# --- the conditioning stage --------------------------------------------------
+# V_adc = gain * V_in + offset_v, mapping the generator's bipolar output onto
+# the ADC's 0-3.3 V input with headroom at both rails (see _theory.qmd for the
+# derivation). generator_amplitude_v is the generator's peak (bipolar) output,
+# so it never spans the full +-generator_amplitude_v range at the ADC by
+# construction, only [headroom_lo_v, vref_v - headroom_hi_v].
+conditioning:
+  generator_amplitude_v: 1.0        # Vg: generator peak output, +-1.0 V
+  headroom_lo_v: 0.3                # V_lo: lowest ADC input actually used
+  headroom_hi_v: 0.3                # margin below vref_mV/1000 at the top
+  gain: 1.35                        # G = (V_hi - V_lo) / (2 Vg), derived
+  offset_v: 1.65                    # V_off = (V_hi + V_lo) / 2, derived
+  # Relative/absolute uncertainty of the stage itself. A resistor-network
+  # implementation is assumed but no specific resistors are chosen here (see
+  # _theory.qmd); these are placeholders for what a tolerance budget would give.
+  u_gain_rel: 0.005                 # TODO (Paolo): from the resistor tolerances used
+  u_offset_v: 0.005                 # TODO (Paolo): from the resistor tolerances used
+  u_amplitude_rel: 0.01             # TODO (Paolo): generator amplitude accuracy spec
+
+# --- the anti-alias filter used for the filtered/unfiltered pair ------------
+# Modelled as a scalar attenuation of the sinusoid's amplitude ahead of the
+# ADC: |H(f)| = 1/sqrt(1 + (f/fc)^(2n)), the maximally-flat (Butterworth-like)
+# magnitude response of an n-pole op-amp buffered filter (see _theory.qmd for
+# why a buffered, not a bare cascaded-RC, stage is assumed).
+filter:
+  order: 2
+  fc_hz: 100.0
+  u_fc_rel: 0.02                    # TODO (Paolo): from the RC tolerance used
+
+# --- the aliasing sweep -------------------------------------------------------
+# fs deliberately low so several folding orders k appear across the sweep.
+# fs = 500 Hz, Nyquist = 250 Hz. The 16 frequencies below were chosen to avoid
+# f/fs landing on a half-integer (which makes k ambiguous under round-half-to-
+# even) and to produce k = 0, 1, 2 in roughly equal shares, tracing the folding
+# triangle f_a = |f - k fs| twice over as f runs from 35 Hz to 935 Hz:
+#   k=0: 35, 95, 155, 215                 (f_a rising 35 -> 215)
+#   k=1: 275, 335, 395, 455, 515, 575, 635, 695   (f_a falling then rising)
+#   k=2: 755, 815, 875, 935               (f_a falling 245 -> 65)
+aliasing_sweep:
+  fs_hz: 500.0
+  duration_s: 2.0
+  pin: 15
+  frequencies_hz: [35, 95, 155, 215, 275, 335, 395, 455, 515, 575, 635, 695,
+                    755, 815, 875, 935]
+
+# --- unfiltered vs filtered pair ---------------------------------------------
+# f = 650 Hz at fs = 500 Hz aliases to f_a = |650 - 500| = 150 Hz (k = 1) --
+# the same 150 Hz used as the "signal of interest" in the oversampled run
+# below, so the whole experiment tells one story. "unfiltered" applies no
+# attenuation ahead of the ADC (conditioning.filter: none); "filtered"
+# attenuates the 650 Hz amplitude by |H(650 Hz)| from the filter above before
+# conversion -- the honest model of an analog filter acting on a single
+# sinusoid (see the callout in handbook.qmd).
+filter_pair:
+  fs_hz: 500.0
+  duration_s: 2.0
+  pin: 15
+  signal_freq_hz: 650.0
+
+# --- oversampled run: signal + high-frequency interferer --------------------
+# fs high enough that neither tone folds (Nyquist = 2500 Hz > both). f1 is the
+# same 150 Hz "signal of interest" as the alias above; f2 is a strong
+# out-of-band interferer that would itself alias into the 150-350 Hz band if
+# this run were naively decimated to 500 Hz without digital filtering first --
+# which is exactly what the digital-filtering section demonstrates. The two
+# amplitudes sum to 0.9 V, under the 1.0 V the conditioning stage was designed
+# for (see `conditioning` above), so the composite signal does not clip the
+# stage even at the two tones' worst-case in-phase peak.
+oversampled:
+  fs_hz: 5000.0
+  duration_s: 1.0
+  pin: 15
+  signal_freq_hz: 150.0
+  signal_amplitude_v: 0.6
+  interferer_freq_hz: 1800.0
+  interferer_amplitude_v: 0.3
+  decimation_factor: 10             # 5000 Hz / 10 = 500 Hz, matching filter_pair's fs
+
+# --- reference instrument quoted in generated sidecars -----------------------
+references:
+  generator:
+    instrument: "signal generator"
+    model: "TODO (Paolo)"
+    calibration: "TODO (Paolo)"

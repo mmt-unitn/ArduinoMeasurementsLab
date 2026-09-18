@@ -1,0 +1,89 @@
+---
+title: "S3 — Aliasing, conditioning and filtering"
+subtitle: "What a filter can and cannot do about a folded frequency"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    incremental: false
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before the bench {.center}
+
+### What you are about to measure
+
+You have a generator that swings above and below zero, and a board that
+accepts $0$–$3.3$ V.
+
+By the end of the session you will know:
+
+- how to design the stage that reconciles the two, and what its own
+  uncertainty costs you;
+- exactly which apparent frequency a given generator frequency folds to, and
+  why that is predictable but not detectable after the fact;
+- what an anti-alias filter buys you, in decibels, and what it costs the
+  passband to buy it;
+- why a digital filter, applied after sampling, can clean up an oversampled
+  signal but can never undo an alias.
+
+### The rule of the session
+
+::: {.callout-important}
+## Prevention, not correction
+
+Every other error in this course can be measured, bounded and corrected after
+the fact. Aliasing cannot. The moment a signal above $f_s/2$ is sampled, the
+information that would distinguish it from a lower-frequency signal is gone —
+not hidden, not recoverable with a cleverer filter, gone. The only lever is
+upstream of the ADC.
+:::
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will build
+
+A conditioning stage, sized from @eq-s3-gain-offset for your generator's
+amplitude and the ADC's input range, and (optionally) a filter stage ahead of
+it.
+
+::: {.smaller}
+| Run(s) | What it shows |
+|---|---|
+| Aliasing sweep, 16 frequencies at one fixed $f_s$ | The folding triangle: predicted vs. observed $f_a$ |
+| Filtered / unfiltered pair, one frequency above $f_s/2$ | What a real filter's attenuation actually buys |
+| Oversampled run, signal + interferer | Input to the digital-filtering section |
+:::
+
+### Then
+
+Open [the handbook](handbook.qmd) for the full procedure, and one of the two
+analysis templates — [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+They have the same sections and produce the same numbers. Both ship with
+reference data, so you can read the whole analysis before you wire anything.
+
+## What you should come away with {.center}
+
+### Three sentences you should be able to defend
+
+1. "Our conditioning stage maps $\pm V_g$ onto $[V_\mathrm{lo}, V_\mathrm{hi}]$
+   with gain $G = \dots$ and offset $V_\mathrm{off} = \dots$, verified at DC
+   to within $\dots$ of the design targets."
+2. "At $f_s = \dots$ Hz, a generator frequency of $\dots$ Hz folds to
+   $\dots$ Hz, and our measurement agreed with that prediction to within
+   $\dots$ Hz."
+3. "Our filter attenuated the folded component by $\dots$ dB, against a
+   design target of $\dots$ dB at $\dots$ Hz, and the cost in the passband
+   was $\dots$ dB of droop at $\dots$ Hz."
+
+If you can say those three with your own numbers in them, the session worked.

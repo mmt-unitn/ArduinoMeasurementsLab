@@ -1,0 +1,129 @@
+::: {.callout-warning}
+## Before you connect anything
+
+The generator's output is bipolar and can swing well outside $0$–$3.3$ V; it
+must **never** reach the analog input pin directly. Build and verify the
+conditioning stage first, on the bench, with a DMM — not with the board
+connected — and confirm its output stays inside $[V_\mathrm{lo}, V_\mathrm{hi}]$
+for the full range of amplitudes you intend to use, before the first wire
+goes to a pin. See [Before you connect anything](../S1-daq-static/handbook.qmd#sec-s1-hardware)
+in S1 for the same warning about pin tolerances, which applies here
+unchanged.
+:::
+
+### 1. Build and verify the conditioning stage {#sec-s3-step-condition}
+
+```bash
+arduino-io list
+arduino-io info
+```
+
+Using @eq-s3-gain-offset, compute $G$ and $V_\mathrm{off}$ for your generator's
+amplitude setting and your chosen headroom against the board's
+$V_\mathrm{io}$. Build the stage described in
+[the conditioning board](../../hardware/conditioning-board.qmd), then, with
+the generator set to a **static** (0 Hz, DC) output at each of its extremes,
+measure the conditioning stage's output with the DMM and confirm it lands
+inside $[V_\mathrm{lo}, V_\mathrm{hi}]$ — not just close, inside.
+
+Record the DMM readings against the design targets. A discrepancy here is the
+conditioning stage's own gain and offset error, and it is the first two
+components of the uncertainty budget in @sec-s3-budget — measure it before
+you need it.
+
+::: {.callout-tip}
+## No conditioning board yet?
+
+The [reference data](index.qmd#sec-s3-index-data) models the same stage
+numerically —
+gain and offset applied before the S1 ADC model — so every analysis task
+below runs against it unmodified. Build the hardware when it is available and
+repeat the tasks with your own runs; nothing in the templates changes.
+:::
+
+### 2. The aliasing sweep {#sec-s3-step-sweep}
+
+Set the sampling rate deliberately low and sweep the generator's frequency
+through it, well below *and* well above the Nyquist frequency $f_s/2$, taking
+one recording per frequency:
+
+```bash
+arduino-io mode 15 analog
+# generator set to f = 35 Hz
+arduino-io stream 15 --hz 500 --seconds 2 --csv data/alias-f0035.csv
+# generator set to f = 95 Hz, repeat, and so on
+```
+
+Choose enough frequencies, on both sides of $f_s/2$ and past $f_s$, that
+several different values of $k = \operatorname{round}(f/f_s)$ occur — the
+shipped reference data uses 16 frequencies from 35 Hz to 935 Hz at
+$f_s = 500$ Hz (Nyquist 250 Hz), giving $k = 0, 1, 2$. Write down the
+generator's own frequency setting in each sidecar
+(`channels[].generator_frequency_hz`) — that is the ground truth
+@eq-s3-alias is checked against, and it does not appear anywhere else in the
+file.
+
+::: {.callout-important}
+## Do not compute $f_a$ at the bench
+
+Write down $f$ as set on the generator, and nothing else. Computing the
+predicted alias by hand and writing *that* down instead removes the point of
+the comparison in the analysis template — you would be checking your own
+arithmetic, not the acquisition.
+:::
+
+### 3. Anti-alias filter: with and without {#sec-s3-step-filter}
+
+Pick one frequency clearly above $f_s/2$ — the shipped data uses 650 Hz at
+$f_s = 500$ Hz, which folds to 150 Hz — and record it twice: once straight
+into the conditioning stage, once through
+[the filter stage](../../hardware/filter-stage.qmd) ahead of the
+conditioning stage.
+
+```bash
+# generator at 650 Hz, filter stage bypassed
+arduino-io stream 15 --hz 500 --seconds 2 --csv data/filter-off.csv
+# generator at 650 Hz, filter stage in circuit
+arduino-io stream 15 --hz 500 --seconds 2 --csv data/filter-on.csv
+```
+
+Record the filter's corner frequency and order in the sidecar
+(`channels[].filter_fc_hz`, `channels[].filter_order`, and a human-readable
+description in `conditioning.filter`) for the filtered run; leave
+`conditioning.filter: none` for the unfiltered one. Both runs are otherwise
+identical — same generator frequency, same amplitude, same sampling rate —
+so any difference between them is the filter's doing and nothing else's.
+
+### 4. An oversampled run, for the digital-filtering section {#sec-s3-step-oversample}
+
+Set the generator to output two tones at once — a 150 Hz signal and a much
+higher-frequency interferer — and sample fast enough that neither one is
+anywhere near $f_s/2$:
+
+```bash
+arduino-io stream 15 --hz 5000 --seconds 1 --csv data/oversampled.csv
+```
+
+If your generator cannot sum two tones, record them as two separate
+oversampled runs at the same $f_s$ and add the columns in the analysis
+template instead; note which approach you used in `environment.notes`.
+
+### 5. Fill the sidecars {#sec-s3-step-sidecar}
+
+Every run needs, beyond the fields S1 already asks for
+(the [same checklist as S1](../S1-daq-static/handbook.qmd#sec-s1-step-sidecar)):
+
+- [ ] `channels[].conditioning.gain` and `.offset` — the values **actually
+      measured** in step 1, not the design targets from @eq-s3-gain-offset
+- [ ] `channels[].generator_frequency_hz` — the generator's own setting, for
+      every run
+- [ ] `channels[].filter_fc_hz`, `channels[].filter_order` and a description
+      in `conditioning.filter` — for the filtered run of @sec-s3-step-filter
+      only; `conditioning.filter: none` for every other run
+- [ ] `channels[].reference_value` and `.reference_u` — the generator's peak
+      amplitude and its uncertainty, from the generator's own specification
+- [ ] `synthetic: false`
+
+These are S3-specific extensions of the channel schema in
+[Data format](../../data-format/index.qmd#sec-fields); the general fields
+there (`pin`, `quantity`, `unit`, …) are unchanged.

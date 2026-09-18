@@ -1,0 +1,741 @@
+---
+title: "S3 — Analysis template (R)"
+subtitle: "Aliasing, conditioning and filtering"
+description: "Folding predicted and observed, filter attenuation, and what digital filtering cannot undo, in R"
+engine: knitr
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment. To analyse your own measurements, replace the files in `data/`
+and change the paths in the first chunk — nothing else.
+
+The Python template [`analysis-py.qmd`](analysis-py.qmd) has the same
+sections, the same figure labels and the same output tables, and produces the
+same numbers from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the filters here are written out rather than called from a library
+
+Both templates apply the same
+[windowed-sinc FIR](handbook.qmd#eq-s3-fir), computed from its closed form and
+applied by direct convolution. Library filter design and `filtfilt` edge
+padding differ between `scipy.signal` and `gsignal` by enough to break
+table-for-table agreement between the two languages, and an analysis whose
+numbers depend on which language ran it is not an analysis. The frequency
+estimator and the sine fit are written out for the same reason.
+:::
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+library(ggplot2)
+library(patchwork)
+
+source("../../shared/R/labtools.R")
+
+theme_set(theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25)))
+
+SWEEP_RUNS <- sort(Sys.glob("data/alias-f*.csv"))
+FILTER_OFF <- "data/filter-off.csv"
+FILTER_ON <- "data/filter-on.csv"
+OVERSAMPLED <- "data/oversampled.csv"
+
+FIR_TAPS <- 201           # odd, so the group delay is an integer sample;
+                          # enough taps that 150 Hz is inside the passband
+                          # rather than in the transition band
+DECIMATION <- 10          # 5 kHz oversampled run down to the 500 Hz grid
+```
+
+```{r}
+#| label: helpers
+# Hz, from the least-squares grid fit of the device timestamps. Not the
+# requested rate and not achieved_rate_hz: the fitted period is the one both
+# languages compute identically, and it is what the signal actually saw.
+sampling_rate <- function(run) 1e6 / timing_summary(run$data)$stats$period_us
+
+# sin(pi x)/(pi x), and 1 at x = 0 -- written out because R has no sinc().
+sinc <- function(x) ifelse(x == 0, 1, sin(pi * x) / (pi * x))
+
+# Peak of the Hann-windowed periodogram, refined by parabolic interpolation
+# on the three bins around the peak.
+estimate_frequency <- function(x, fs) {
+  n <- length(x)
+  w <- 0.5 - 0.5 * cos(2 * pi * (0:(n - 1)) / (n - 1))
+  spec <- fft((x - mean(x)) * w)[1:(n %/% 2 + 1)]
+  mag <- Mod(spec)
+  k <- which.max(mag[-1]) + 1L          # 1-based; skip DC
+  delta <- 0
+  if (k > 1 && k < length(mag)) {
+    a <- mag[k - 1]; b <- mag[k]; cc <- mag[k + 1]
+    denom <- a - 2 * b + cc
+    if (denom != 0) delta <- 0.5 * (a - cc) / denom
+  }
+  ((k - 1) + delta) * fs / n            # k - 1: back to the 0-based bin index
+}
+
+# Three-parameter least squares at a known frequency. Returns the amplitude,
+# the mean level and the residual standard deviation. The normal equations are
+# solved explicitly so that R and Python take the same arithmetic path.
+sine_fit <- function(t_s, x, f) {
+  d <- cbind(cos(2 * pi * f * t_s), sin(2 * pi * f * t_s), rep(1, length(t_s)))
+  coef <- solve(crossprod(d), crossprod(d, x))
+  resid <- as.vector(x - d %*% coef)
+  dof <- max(length(t_s) - 3, 1)
+  list(amplitude = sqrt(coef[1]^2 + coef[2]^2),
+       level = as.numeric(coef[3]),
+       resid_sd = sqrt(sum(resid^2) / dof))
+}
+
+# The folding rule: f_a = |f - k fs| with k the nearest integer. R's round()
+# and Python's round() are both round-half-to-even, so the two agree; the
+# sweep avoids half-integer f/fs anyway.
+alias_frequency <- function(f, fs) abs(f - round(f / fs) * fs)
+
+# Windowed-sinc low-pass, normalised to unity passband gain.
+fir_lowpass <- function(fc, fs, n_taps = FIR_TAPS) {
+  n <- 0:(n_taps - 1)
+  m <- (n_taps - 1) / 2
+  w <- 0.54 - 0.46 * cos(2 * pi * n / (n_taps - 1))    # Hamming
+  h <- w * sinc(2 * fc / fs * (n - m))
+  h / sum(h)
+}
+
+# Direct convolution, kept only where the whole window exists -- the same
+# samples numpy's convolve(..., mode = "valid") returns.
+fir_apply <- function(x, h) {
+  y <- stats::filter(x, h, method = "convolution", sides = 1)
+  as.vector(y[length(h):length(x)])
+}
+
+# |H(f)| of the Butterworth-style stage.
+filter_magnitude <- function(f, fc, order) 1 / sqrt(1 + (f / fc)^(2 * order))
+```
+
+```{r}
+#| label: load
+sweep <- lapply(SWEEP_RUNS, read_run)
+off <- read_run(FILTER_OFF)
+on <- read_run(FILTER_ON)
+over <- read_run(OVERSAMPLED)
+
+all_runs <- c(sweep, list(off, on, over))
+names(all_runs) <- vapply(all_runs, function(r) r$meta$run, character(1))
+board <- on$meta$board
+FSR <- board$vref_mV / 1000
+LSB <- lsb_volts(on$meta)
+```
+
+```{r}
+#| label: banner
+#| echo: false
+#| output: asis
+cat(synthetic_banner(on$meta))
+```
+
+## Data quality
+
+```{r}
+#| label: quality
+#| echo: false
+#| output: asis
+problems <- lapply(all_runs, function(r) validate_meta(r$meta))
+lossy <- character(0)
+for (name in names(all_runs)) {
+  stats <- all_runs[[name]]$meta$stream_stats
+  counters <- stats[setdiff(names(stats), "records")]
+  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+    lossy <- c(lossy, name)
+  }
+}
+n_bad <- sum(vapply(problems, length, integer(1)) > 0)
+cat(sprintf('
+%d runs read: %d in the aliasing sweep, the
+filtered/unfiltered pair, and the oversampled run.
+%s
+%s
+', length(all_runs), length(sweep),
+   if (n_bad == 0) "All sidecars are complete."
+   else sprintf("%d sidecar(s) have missing fields.", n_bad),
+   if (length(lossy) == 0) "No run reports a lost record."
+   else paste0("Runs with losses: ", paste(lossy, collapse = ", "))))
+```
+
+## The conditioning stage
+
+The stage maps the generator's bipolar output onto the converter's unipolar
+input; see the
+[derivation in the handbook](handbook.qmd#sec-s3-conditioning). Its design
+values live in each sidecar's `conditioning` block, and the check below is
+that the recordings sit where the design says they should.
+
+```{r}
+#| label: conditioning
+ch_on <- on$meta$channels[[1]]
+GAIN <- ch_on$conditioning$gain
+OFFSET <- ch_on$conditioning$offset
+U_GAIN_REL <- ch_on$conditioning_u_gain_rel
+U_OFFSET_V <- ch_on$conditioning_u_offset_v
+
+cond <- do.call(rbind, lapply(list(off, on, over), function(run) {
+  data.frame(run = run$meta$run,
+             mean_V = mean(run$data$volts),
+             min_V = min(run$data$volts),
+             max_V = max(run$data$volts))
+}))
+cond$offset_error_mV <- (cond$mean_V - OFFSET) * 1e3
+cond$headroom_lo_V <- cond$min_V
+cond$headroom_hi_V <- FSR - cond$max_V
+```
+
+```{r}
+#| label: out-conditioning
+#| echo: false
+#| output: asis
+rows <- sprintf("| %s | %.4f | %+.1f | %.4f | %.4f | %.3f | %.3f |",
+                cond$run, cond$mean_V, cond$offset_error_mV, cond$min_V,
+                cond$max_V, cond$headroom_lo_V, cond$headroom_hi_V)
+cat(sprintf('
+| Run | Mean [V] | Mean − $V_\\mathrm{off}$ [mV] | Min [V] | Max [V] | Low headroom [V] | High headroom [V] |
+|---|---|---|---|---|---|---|
+%s
+
+: Where each recording sits in the converter\'s range, against a design offset of %.3f V and a gain of %.3f {#tbl-s3-conditioning}
+', paste(rows, collapse = "\n"), OFFSET, GAIN))
+```
+
+```{r}
+#| label: out-conditioning-text
+#| echo: false
+#| output: asis
+worst <- cond[which.max(abs(cond$offset_error_mV)), ]
+cat(sprintf('
+No recording reaches either rail: the smallest low headroom is
+%.3f V and the smallest high headroom is
+%.3f V, so nothing clips and the sinusoid fits
+are unbiased. The largest departure of a recording\'s mean from the design
+offset is %+.1f mV on `%s`, which is the
+stage\'s own offset error plus the converter\'s — the two are not separable from
+this measurement alone, which is why the budget carries an offset term from
+the sidecar rather than from this table.
+', min(cond$headroom_lo_V), min(cond$headroom_hi_V),
+   worst$offset_error_mV, worst$run))
+```
+
+## Aliasing sweep
+
+Each run is one generator frequency, sampled deliberately below Nyquist. The
+apparent frequency is estimated from the recording and predicted from the
+[folding rule](handbook.qmd#eq-s3-alias) using the generator setting recorded
+in the sidecar.
+
+```{r}
+#| label: aliasing
+alias <- do.call(rbind, lapply(sweep, function(run) {
+  ch <- run$meta$channels[[1]]
+  fs <- sampling_rate(run)
+  volts <- run$data$volts
+  t_s <- run$data$t_us / 1e6
+  f_gen <- ch$generator_frequency_hz
+  f_obs <- estimate_frequency(volts, fs)
+  f_pred <- alias_frequency(f_gen, fs)
+  fit <- sine_fit(t_s, volts, f_obs)
+  data.frame(run = run$meta$run, f_gen_Hz = f_gen, fs_Hz = fs,
+             k = round(f_gen / fs), f_pred_Hz = f_pred, f_obs_Hz = f_obs,
+             error_Hz = f_obs - f_pred, amplitude_V = fit$amplitude)
+}))
+```
+
+```{r}
+#| label: out-alias
+#| echo: false
+#| output: asis
+rows <- sprintf("| %.0f | %d | %.2f | %.2f | %+.3f | %.4f |",
+                alias$f_gen_Hz, alias$k, alias$f_pred_Hz, alias$f_obs_Hz,
+                alias$error_Hz, alias$amplitude_V)
+cat(sprintf('
+| $f$ [Hz] | $k$ | Predicted $f_a$ [Hz] | Observed [Hz] | Error [Hz] | Amplitude [V] |
+|---|---|---|---|---|---|
+%s
+
+: The aliasing sweep at $f_s = %.1f$ Hz {#tbl-s3-alias}
+', paste(rows, collapse = "\n"), alias$fs_Hz[1]))
+```
+
+```{r}
+#| label: fig-s3-folding
+#| echo: false
+#| fig-width: 7.6
+#| fig-height: 3.4
+#| fig-cap: "The folding triangle. Left: apparent frequency against generator frequency, predicted (line) and observed (points); every point above the Nyquist frequency is a different generator setting producing the same samples as something below it. Right: observed minus predicted."
+fs0 <- alias$fs_Hz[1]
+grid <- seq(0, max(alias$f_gen_Hz) * 1.02, length.out = 2000)
+pred <- data.frame(f = grid, fa = alias_frequency(grid, fs0))
+
+p_fold <- ggplot() +
+  geom_line(data = pred, aes(f, fa), linewidth = 0.4) +
+  geom_point(data = alias, aes(f_gen_Hz, f_obs_Hz), size = 1.8) +
+  geom_hline(yintercept = fs0 / 2, linewidth = 0.3, linetype = "dashed",
+             colour = "grey40") +
+  annotate("text", x = max(grid), y = fs0 / 2, label = " Nyquist",
+           hjust = 1, vjust = -0.6, size = 2.8, colour = "grey30") +
+  labs(x = "Generator frequency $f$ [Hz]", y = "Apparent frequency [Hz]")
+
+p_err <- ggplot(alias, aes(f_gen_Hz, error_Hz * 1e3)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.3) +
+  geom_point(size = 1.6) +
+  labs(x = "Generator frequency [Hz]", y = "Observed − predicted [mHz]")
+
+p_fold | p_err
+```
+
+```{r}
+#| label: out-alias-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+The largest departure from the folding rule across the sweep is
+%.1f mHz, against a bin width of
+%.2f Hz. The rule is exact; what
+is left is the frequency estimator\'s own resolution.
+
+Read the left panel again and note what it means at the bench: every one of
+the %d points with $k > 0$ is a generator setting above
+Nyquist that produced samples identical to those of some lower frequency.
+Nothing in the recorded numbers distinguishes them.
+', max(abs(alias$error_Hz)) * 1e3,
+   alias$fs_Hz[1] / nrow(sweep[[1]]$data), sum(alias$k > 0)))
+```
+
+## Anti-alias filtering
+
+The same 650 Hz input, recorded twice: once straight into the converter, once
+through the analog filter. Both alias to the same apparent frequency — the
+filter does not move the alias, it reduces what arrives to be aliased.
+
+```{r}
+#| label: filtering
+FC <- ch_on$filter_fc_hz
+ORDER <- ch_on$filter_order
+U_FC_REL <- ch_on$filter_u_fc_rel
+F_GEN <- ch_on$generator_frequency_hz
+
+pair <- do.call(rbind, Map(function(label, run) {
+  fs <- sampling_rate(run)
+  volts <- run$data$volts
+  t_s <- run$data$t_us / 1e6
+  f_obs <- estimate_frequency(volts, fs)
+  fit <- sine_fit(t_s, volts, f_obs)
+  data.frame(case = label, fs_Hz = fs, f_obs_Hz = f_obs,
+             amplitude_V = fit$amplitude, level_V = fit$level,
+             resid_V = fit$resid_sd, n = length(volts))
+}, c("unfiltered", "filtered"), list(off, on)))
+
+ratio_obs <- pair$amplitude_V[pair$case == "filtered"] /
+  pair$amplitude_V[pair$case == "unfiltered"]
+ratio_pred <- filter_magnitude(F_GEN, FC, ORDER)
+```
+
+```{r}
+#| label: out-filter
+#| echo: false
+#| output: asis
+rows <- sprintf("| %s | %.2f | %.5f | %.4f | %.3f | %d |",
+                pair$case, pair$f_obs_Hz, pair$amplitude_V, pair$level_V,
+                pair$resid_V * 1e3, pair$n)
+cat(sprintf('
+| Case | Observed $f_a$ [Hz] | Amplitude [V] | Mean level [V] | Residual $\\sigma$ [mV] | $n$ |
+|---|---|---|---|---|---|
+%s
+
+: The same %.0f Hz input with and without the analog filter {#tbl-s3-filter}
+', paste(rows, collapse = "\n"), F_GEN))
+```
+
+```{r}
+#| label: out-filter-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+Observed amplitude ratio %.4f
+(%+.2f dB); predicted from
+$\\lvert H(f)\\rvert$ at the **true** %.0f Hz — not at the apparent
+%.0f Hz — with $f_c = %.0f$ Hz and
+$n = %d$: %.4f (%+.2f dB).
+The difference is %+.2f %%.
+
+Both recordings still show a tone at %.0f Hz. That
+is the point: the filter changed the alias\'s *size*, not its existence or its
+frequency. Attenuating it enough is a design decision taken before the
+sampler, and the next section is how that decision is made.
+', ratio_obs, 20 * log10(ratio_obs), F_GEN, pair$f_obs_Hz[1], FC, ORDER,
+   ratio_pred, 20 * log10(ratio_pred), 100 * (ratio_obs / ratio_pred - 1),
+   pair$f_obs_Hz[2]))
+```
+
+```{r}
+#| label: fig-s3-filter-pair
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 3.2
+#| fig-cap: "First 60 ms of the unfiltered and filtered recordings. The apparent frequency is identical — the filter cannot move an alias — and only the amplitude differs."
+trace <- do.call(rbind, Map(function(label, run) {
+  t_ms <- (run$data$t_us - run$data$t_us[1]) / 1e3
+  keep <- t_ms <= 60
+  data.frame(case = label, t_ms = t_ms[keep], volts = run$data$volts[keep])
+}, c("unfiltered", "filtered"), list(off, on)))
+
+ggplot(trace, aes(t_ms, volts, colour = case)) +
+  geom_hline(yintercept = OFFSET, linewidth = 0.3, linetype = "dashed",
+             colour = "grey50") +
+  geom_line(linewidth = 0.3) +
+  geom_point(size = 0.6) +
+  labs(x = "Time [ms]", y = "ADC input [V]", colour = NULL) +
+  theme(legend.position = "top")
+```
+
+## Filter design
+
+The design question of
+[the handbook](handbook.qmd#sec-s3-filter-design): given a sampling rate, a
+passband edge and a required attenuation at the worst-case folding frequency,
+what corner frequency and what order? The cost is paid in the passband.
+
+```{r}
+#| label: design
+FS_DESIGN <- 500       # the rate the bench actually samples at
+F_MAX <- 100           # the highest frequency of interest
+A_REQ_DB <- 40         # required attenuation at the folding frequency
+F_FOLD <- FS_DESIGN - F_MAX
+
+design <- do.call(rbind, lapply(1:4, function(order) {
+  fc <- F_FOLD / (10^(A_REQ_DB / 10) - 1)^(1 / (2 * order))
+  droop <- filter_magnitude(F_MAX, fc, order)
+  data.frame(order = order, fc_Hz = fc, fc_over_fmax = fc / F_MAX,
+             droop_dB = 20 * log10(droop), droop_pct = 100 * (1 - droop))
+}))
+```
+
+```{r}
+#| label: out-design
+#| echo: false
+#| output: asis
+rows <- sprintf("| %d | %.1f | %.2f | %+.2f | %.1f |",
+                design$order, design$fc_Hz, design$fc_over_fmax,
+                design$droop_dB, design$droop_pct)
+cat(sprintf('
+| Order $n$ | Required $f_c$ [Hz] | $f_c/f_\\mathrm{max}$ | Droop at $f_\\mathrm{max}$ [dB] | Droop [%%] |
+|---|---|---|---|---|
+%s
+
+: Corner frequency needed for %.0f dB at $f_\\mathrm{fold} = %.0f$ Hz, with $f_s = %.0f$ Hz and $f_\\mathrm{max} = %.0f$ Hz {#tbl-s3-design}
+', paste(rows, collapse = "\n"), A_REQ_DB, F_FOLD, FS_DESIGN, F_MAX))
+```
+
+```{r}
+#| label: fig-s3-design
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 3.6
+#| fig-cap: "Magnitude response of each design of @tbl-s3-design. Every curve passes through the required attenuation at the folding frequency; they differ in how much of the passband they spend to get there."
+f_grid <- 10^seq(0, log10(FS_DESIGN * 2), length.out = 400)
+curves <- do.call(rbind, lapply(seq_len(nrow(design)), function(i) {
+  data.frame(design_label = sprintf("n = %d, fc = %.0f Hz", design$order[i],
+                                    design$fc_Hz[i]),
+             f = f_grid,
+             mag_dB = 20 * log10(filter_magnitude(f_grid, design$fc_Hz[i],
+                                                  design$order[i])))
+}))
+
+ggplot(curves, aes(f, mag_dB, colour = design_label)) +
+  geom_vline(xintercept = F_MAX, linewidth = 0.3, linetype = "dotted",
+             colour = "grey40") +
+  geom_vline(xintercept = F_FOLD, linewidth = 0.3, linetype = "dashed",
+             colour = "grey40") +
+  geom_hline(yintercept = -A_REQ_DB, linewidth = 0.3, linetype = "dashed",
+             colour = "grey40") +
+  geom_line(linewidth = 0.4) +
+  scale_x_log10() +
+  coord_cartesian(ylim = c(-70, 12)) +
+  labs(x = "Frequency [Hz]", y = "|H(f)| [dB]", colour = NULL) +
+  theme(legend.position = "bottom", legend.text = element_text(size = 7))
+```
+
+```{r}
+#| label: out-design-text
+#| echo: false
+#| output: asis
+first <- design[1, ]
+last <- design[nrow(design), ]
+cat(sprintf('
+A first-order stage needs $f_c = %.1f$ Hz to reach
+%.0f dB at %.0f Hz — below the passband edge itself, which
+costs %.0f %% of the signal at $f_\\mathrm{max}$ and is
+not a usable design. Order %.0f puts the corner at
+%.1f Hz, %.1f times the passband edge,
+for %.1f %% droop. That is the trade the table exists to
+make visible: attenuation is bought with either order or passband.
+', first$fc_Hz, A_REQ_DB, F_FOLD, first$droop_pct, last$order, last$fc_Hz,
+   last$fc_over_fmax, last$droop_pct))
+```
+
+## Digital filtering after the fact
+
+The oversampled run contains the signal and a strong interferer well above
+it, at a rate high enough that neither folds. Filtering *then* decimating is
+clean. Decimating without filtering first is not — and no filter applied
+afterwards repairs it.
+
+```{r}
+#| label: digital
+ch_over <- over$meta$channels[[1]]
+F_SIGNAL <- ch_over$signal_frequency_hz
+F_INTERFERER <- ch_over$interferer_frequency_hz
+
+fs_over <- sampling_rate(over)
+v_over <- over$data$volts
+t_over <- over$data$t_us / 1e6
+fs_dec <- fs_over / DECIMATION
+
+# The digital anti-alias filter: corner below the interferer, above the signal.
+FC_DIGITAL <- fs_dec / 2 * 0.8
+h <- fir_lowpass(FC_DIGITAL, fs_over)
+lag <- (length(h) - 1) %/% 2
+
+v_filt <- fir_apply(v_over, h)
+t_filt <- t_over[(lag + 1):(length(v_over) - lag)]
+
+# Where the interferer lands if it is allowed to fold onto the decimated grid.
+F_FOLDED <- alias_frequency(F_INTERFERER, fs_dec)
+
+# 1. naive: decimate the oversampled run with no digital filter
+idx1 <- seq(1, length(v_over), by = DECIMATION)
+# 2. filter first, then decimate
+idx2 <- seq(1, length(v_filt), by = DECIMATION)
+# 3. the already-aliased run, filtered digitally
+fs_off <- sampling_rate(off)
+h_off <- fir_lowpass(fs_off / 2 * 0.8, fs_off)
+lag_off <- (length(h_off) - 1) %/% 2
+v_off <- off$data$volts
+t_off <- off$data$t_us / 1e6
+
+cases <- list(
+  list(label = "decimated, no filter", t = t_over[idx1], v = v_over[idx1],
+       fs = fs_dec),
+  list(label = "filtered, then decimated", t = t_filt[idx2], v = v_filt[idx2],
+       fs = fs_dec),
+  list(label = "already aliased, filtered",
+       t = t_off[(lag_off + 1):(length(v_off) - lag_off)],
+       v = fir_apply(v_off, h_off), fs = fs_off)
+)
+
+digital <- do.call(rbind, lapply(cases, function(cs) {
+  a_sig <- sine_fit(cs$t, cs$v, F_SIGNAL)
+  a_fold <- sine_fit(cs$t, cs$v, F_FOLDED)
+  data.frame(case = cs$label, fs_Hz = cs$fs, n = length(cs$v),
+             amp_signal_mV = a_sig$amplitude * 1e3,
+             amp_folded_mV = a_fold$amplitude * 1e3,
+             resid_mV = a_fold$resid_sd * 1e3)
+}))
+```
+
+```{r}
+#| label: out-digital
+#| echo: false
+#| output: asis
+rows <- sprintf("| %s | %.0f | %d | %.2f | %.2f | %.3f |",
+                digital$case, digital$fs_Hz, digital$n,
+                digital$amp_signal_mV, digital$amp_folded_mV, digital$resid_mV)
+cat(sprintf('
+| Case | $f_s$ [Hz] | $n$ | Amplitude at %.0f Hz [mV] | Amplitude at %.0f Hz [mV] | Residual $\\sigma$ [mV] |
+|---|---|---|---|---|---|
+%s
+
+: Filtering before and after the damage is done {#tbl-s3-digital}
+', F_SIGNAL, F_FOLDED, paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: fig-s3-digital
+#| echo: false
+#| fig-width: 7.8
+#| fig-height: 3.0
+#| fig-cap: "Spectra of the three cases of @tbl-s3-digital. Filtering before decimation removes the interferer; decimating first folds it into the band, where it is indistinguishable from signal; filtering a record that is already aliased leaves it untouched."
+spectra <- do.call(rbind, lapply(cases, function(cs) {
+  x <- cs$v - mean(cs$v)
+  n <- length(x)
+  w <- 0.5 - 0.5 * cos(2 * pi * (0:(n - 1)) / (n - 1))
+  mag <- Mod(fft(x * w)[1:(n %/% 2 + 1)]) * 2 / sum(w)
+  data.frame(case = factor(cs$label, levels = vapply(cases, `[[`, character(1), "label")),
+             freq = seq(0, cs$fs / 2, length.out = n %/% 2 + 1),
+             mag = pmax(mag, 1e-7))
+}))
+
+ggplot(spectra, aes(freq, mag)) +
+  geom_vline(xintercept = F_SIGNAL, linewidth = 0.3, linetype = "dotted",
+             colour = "grey40") +
+  geom_vline(xintercept = F_FOLDED, linewidth = 0.3, linetype = "dashed",
+             colour = "grey70") +
+  geom_line(linewidth = 0.25) +
+  scale_y_log10() +
+  facet_wrap(~case, scales = "free_x") +
+  labs(x = "Frequency [Hz]", y = "Amplitude [V]") +
+  theme(strip.text = element_text(size = 7))
+```
+
+```{r}
+#| label: out-digital-text
+#| echo: false
+#| output: asis
+naive <- digital[1, ]
+clean <- digital[2, ]
+aliased <- digital[3, ]
+cat(sprintf('
+Decimating without filtering puts %.1f mV at
+%.0f Hz — the %.0f Hz interferer, folded, sitting
+%.0f %% as large as the
+signal and inside the band of interest. Filtering first leaves
+%.2f mV there, a reduction of
+%.0f dB.
+The signal estimate moves by
+%+.1f %%
+between the two cases — part of that is the FIR\'s own droop at
+%.0f Hz, and part is that the unfiltered estimate was biased by the
+folded interferer sitting %.0f Hz away, too close to be
+orthogonal to it over a record of this length. Neither part is noise, and
+both are worth quantifying in your report.
+
+The third row is the one to remember. The already-aliased recording, put
+through the same kind of digital filter, still carries
+%.1f mV at %.0f Hz — the alias is *in the
+passband*, so the filter passes it, exactly as it passes a real signal there.
+No digital filter can do anything else: the two are the same numbers.
+', naive$amp_folded_mV, F_FOLDED, F_INTERFERER,
+   naive$amp_folded_mV / naive$amp_signal_mV * 100,
+   clean$amp_folded_mV,
+   20 * log10(naive$amp_folded_mV / clean$amp_folded_mV),
+   (clean$amp_signal_mV - naive$amp_signal_mV) / naive$amp_signal_mV * 100,
+   F_SIGNAL, F_FOLDED - F_SIGNAL,
+   aliased$amp_signal_mV, F_SIGNAL))
+```
+
+## Uncertainty budget
+
+The measurand is the recovered generator amplitude of
+[the handbook](handbook.qmd#eq-s3-recover-amplitude),
+$\hat{V}_g = \hat{A}_\mathrm{adc} / (G\,\lvert H(f)\rvert)$, with the
+[sensitivity coefficients](handbook.qmd#eq-s3-sensitivity) given there.
+
+```{r}
+#| label: budget
+row_on <- pair[pair$case == "filtered", ]
+a_adc <- row_on$amplitude_V
+sigma_resid <- row_on$resid_V
+n_samples <- row_on$n
+
+h_mag <- filter_magnitude(F_GEN, FC, ORDER)
+v_g <- a_adc / (GAIN * h_mag)
+
+# gamma: the dimensionless factor in every derivative of |H(f)|
+ratio2n <- (F_GEN / FC)^(2 * ORDER)
+gamma <- ORDER * ratio2n / (1 + ratio2n)
+
+c_amp <- 1 / (GAIN * h_mag)
+c_gain <- -v_g / GAIN
+c_fc <- -v_g * gamma / FC
+c_f <- v_g * gamma / F_GEN
+
+# The effective quantization step, by S1's method applied to this record.
+enob_here <- enob(FSR, sigma_resid)
+q_eff <- FSR / 2^enob_here
+bin_width <- row_on$fs_Hz / n_samples
+
+components <- list(
+  list(quantity = "Amplitude estimation noise", value = a_adc, unit = "V",
+       distribution = "type-a", std = sigma_resid * sqrt(2 / n_samples),
+       sensitivity = c_amp),
+  list(quantity = "Effective quantization", value = 0, unit = "V",
+       distribution = "rectangular", half_width = q_eff / 2, sensitivity = c_amp),
+  list(quantity = "Conditioning gain G", value = GAIN, unit = "V",
+       distribution = "rectangular", half_width = U_GAIN_REL * GAIN,
+       sensitivity = c_gain),
+  list(quantity = "Conditioning offset", value = OFFSET, unit = "V",
+       distribution = "rectangular", half_width = U_OFFSET_V, sensitivity = 0),
+  list(quantity = "Filter corner frequency", value = FC, unit = "V",
+       distribution = "rectangular", half_width = U_FC_REL * FC,
+       sensitivity = c_fc),
+  list(quantity = "Signal frequency", value = F_GEN, unit = "V",
+       distribution = "rectangular", half_width = bin_width / 2,
+       sensitivity = c_f)
+)
+budget <- budget_table(components, k = 2)
+```
+
+```{r}
+#| label: out-budget
+#| echo: false
+#| output: asis
+cat(budget_to_markdown(
+  budget,
+  caption = sprintf("Uncertainty budget for the recovered generator amplitude at $f = %.0f$ Hz", F_GEN),
+  label = "tbl-s3-budget"))
+```
+
+```{r}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant <- budget$table[which.max(budget$table$index_pct), ]
+declared <- on$meta$channels[[1]]$reference_value
+cat(sprintf('
+Recovered generator amplitude $\\hat{V}_g = %.4f$ V against a setting
+of %.4f V, with an expanded uncertainty $U = %.2f$ mV
+at $k = 2$ — a departure of
+%+.1f mV, or
+%.1f times $U$.
+
+The dominant component is **%s** at
+%.0f %% of the combined variance. Note
+$\\gamma = %.3f$: at %.0f Hz the filter is well into its
+stopband, so a relative error in $f_c$ is amplified almost %.1f-fold
+into the recovered amplitude. Calibrating the filter corner is worth more
+here than any improvement to the converter.
+', v_g, declared, budget$U * 1e3, (v_g - declared) * 1e3,
+   abs(v_g - declared) / budget$U, dominant$quantity, dominant$index_pct,
+   gamma, F_GEN, gamma))
+```
+
+::: {.callout-note}
+## Why the offset row is there and equal to zero
+
+The amplitude comes from a fit that carries its own mean level, so a DC
+offset error does not reach it to first order — the sensitivity coefficient
+is genuinely zero, not merely small. The row stays in the table because a
+component checked and found not to matter is a result; a budget that silently
+omits it looks like a budget that forgot.
+:::
+
+## What to report
+
+1. @tbl-s3-conditioning: where the recordings sit in the converter's range,
+   and how much headroom is left at each rail.
+2. @tbl-s3-alias and @fig-s3-folding: predicted against observed apparent
+   frequency, and the folding triangle. State how many of your generator
+   settings are indistinguishable from each other in the recorded samples.
+3. @tbl-s3-filter and @fig-s3-filter-pair: the measured attenuation against
+   $\lvert H(f)\rvert$ at the true frequency, and why it is evaluated there
+   and not at the apparent frequency.
+4. @tbl-s3-design and @fig-s3-design: your own design case — your $f_s$, your
+   passband edge, your required attenuation — with the order you would choose
+   and the passband cost you accept.
+5. @tbl-s3-digital and @fig-s3-digital: the three cases, and one sentence
+   saying why the third cannot be fixed.
+6. @tbl-s3-budget: the budget, the dominant component, and what you would
+   calibrate first.

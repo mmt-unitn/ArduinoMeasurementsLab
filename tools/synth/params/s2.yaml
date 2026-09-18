@@ -1,0 +1,70 @@
+# S2 - dynamic characterization of the DAQ (sine fit).
+#
+# TODO (Paolo): placeholders throughout; replace with measured values.
+
+seed: 20260918
+
+# Coherent (IEEE Std 1057) sampling design: N samples per run, N prime, so
+# that any integer number of cycles M in (1, N) is automatically coprime
+# with N. The generator frequency f = M * fs_hz / n_samples is then
+# guaranteed incommensurate with fs_hz -- never an exact submultiple -- and
+# the N samples cover a full, non-repeating set of phase points around the
+# cycle instead of landing on the same few points every period. See
+# _theory.qmd, "Coherent and non-coherent sampling".
+sampling:
+  fs_hz: 20000            # top of the 1 kHz-20 kHz range the bench supports
+  n_samples: 2003          # prime
+  pin: 15                   # A0 on the Portenta H7, the same pin S1 calibrated
+
+# Frequency sweep. Each entry is the number of sine cycles M completed in
+# the n_samples-long record; the exact generator frequency is
+# f = M * fs_hz / n_samples (never a round number, which is itself the
+# point -- see the theory page). `label_hz` is only the nominal value used
+# to name the run's files; the sidecar carries the exact value.
+#
+# The nine points span about 2.5 decades, from where aperture jitter is
+# negligible to well past the jitter/noise crossover the analysis finds
+# (around 1 kHz with the aperture_jitter_ns below and S1's noise floor) --
+# enough to show the ENOB roll-off and flatten out again at the low end.
+sweep:
+  - {label_hz: 10, cycles: 1}
+  - {label_hz: 20, cycles: 2}
+  - {label_hz: 50, cycles: 5}
+  - {label_hz: 100, cycles: 10}
+  - {label_hz: 200, cycles: 20}
+  - {label_hz: 500, cycles: 50}
+  - {label_hz: 1000, cycles: 100}
+  - {label_hz: 2000, cycles: 200}
+  - {label_hz: 4000, cycles: 400}
+
+signal:
+  # Peak-to-peak amplitude as a fraction of the full-scale range, offset to
+  # mid-scale by the conditioning board. Headroom on each rail matters: a
+  # sine clipped even a few codes at the peaks wrecks the four-parameter fit
+  # far more than it wrecks a mean, because the clipped samples are exactly
+  # the ones the fit weights most. See handbook.qmd for the numbers.
+  amplitude_fraction_of_fsr: 0.90
+  phase0_rad: 0.7                    # arbitrary fixed phase; recovered by the fit
+
+# The DUT's own sample-clock error relative to the generator's reference --
+# this is what "clock accuracy in ppm" measures. A real crystal-less or
+# low-cost-crystal oscillator is good to a few tens of ppm; this is a
+# plausible placeholder, not a measurement.
+device_clock_ppm: 18.0   # TODO (Paolo): measured
+
+# Aperture jitter: the random part of the instant at which the sample-and-
+# hold actually captures the signal, on top of whatever the loop/host timing
+# model already reports in t_us -- i.e. it is invisible to t_us. This is the
+# mechanism that makes the dynamic ENOB fall with frequency; see
+# _theory.qmd, "Aperture jitter" and the callout in handbook.qmd.
+aperture_jitter_ns: 60.0  # TODO (Paolo): measured
+
+# The bench signal generator. Its frequency and amplitude, with their
+# uncertainties, are written into every sidecar's references[] (not
+# channels[].reference_value -- the generator is not itself a channel on the
+# board). See data recording section of index.qmd for why.
+generator:
+  model: "TODO (Paolo)"
+  calibration: "TODO (Paolo)"
+  frequency_u_ppm: 5.0            # TODO (Paolo): from the generator's specification
+  amplitude_u_fraction: 0.005     # TODO (Paolo): from the generator's specification
