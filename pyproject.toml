@@ -20,10 +20,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The Python binding to the board. Not needed to render the site: every
-# analysis template runs against the shipped reference data.
-hardware = ["arduino-driver>=0.4.0"]
 dev = ["pytest>=8.0"]
+
+# The Python binding to the board (`arduino_driver`) is deliberately NOT a
+# dependency here. It is not on PyPI -- it installs from the ArduinoDriver
+# repository, and its wheel is built with CMake -- and nothing on this site
+# needs it: every analysis template runs against recorded or generated data.
+# Install it on a bench machine with the command in setup/python.qmd.
 
 [build-system]
 requires = ["setuptools>=68"]

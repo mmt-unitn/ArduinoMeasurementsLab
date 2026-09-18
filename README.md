@@ -39,9 +39,12 @@ export QUARTO_PYTHON="$HOME/.venv/bin/python"
 quarto render
 ```
 
-`pyproject.toml` pins the same dependency set for CI, which creates the
-environment with [`uv`](https://docs.astral.sh/uv/); `renv.lock` does the same
-for R.
+`pyproject.toml` and `uv.lock` pin the same dependency set for CI, which
+creates the environment with [`uv`](https://docs.astral.sh/uv/) (`uv sync
+--locked`); `renv.lock` does the same for R. The Python binding to the board,
+`arduino_driver`, is deliberately **not** among them: nothing on this site
+needs hardware, and the binding installs from the ArduinoDriver repository
+rather than from PyPI — see [the Python setup page](setup/python.qmd).
 
 ### Tests
 
@@ -66,6 +69,23 @@ shared/                  labtools (Python and R), shared includes, bibliography
 tools/synth/             seeded generators of synthetic reference data
 assets/                  SCSS themes, RevealJS theme, listing template
 ```
+
+## Continuous integration
+
+`.github/workflows/render.yml` runs on every push to `main` and every pull
+request:
+
+1. both `labtools` test suites, before anything is rendered;
+2. a regeneration of all synthetic reference data, failing the build if the
+   committed files change — the generators are seeded, so a difference means
+   either a parameter changed without the data being regenerated, or a
+   generator stopped being deterministic;
+3. `quarto render`, which executes every analysis template against the
+   reference data; a template that fails to render fails the build;
+4. `quarto render --profile instructor`, uploaded as an artifact;
+5. deployment of `_site` to GitHub Pages, on `main` only.
+
+The instructor edition is never deployed.
 
 ## Open decisions
 

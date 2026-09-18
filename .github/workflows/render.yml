@@ -1,0 +1,109 @@
+name: Render
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The Pages deployment needs these; nothing else in the workflow does.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one half-way.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # Pinned: a Quarto upgrade must be a deliberate commit, not something that
+  # happens to the site on a Tuesday.
+  QUARTO_VERSION: "1.10.18"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: ${{ env.QUARTO_VERSION }}
+          # Typst ships with Quarto, so no LaTeX installation is needed for
+          # the PDF handbooks.
+          tinytex: false
+
+      - name: Set up Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install the Python environment
+        run: uv sync --locked --extra dev
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Install the R environment
+        uses: r-lib/actions/setup-renv@v2
+
+      # --- tests before rendering: a broken labtools must not produce a site
+      - name: Test labtools (Python)
+        run: uv run pytest tests -q
+
+      - name: Test labtools (R)
+        run: Rscript -e 'testthat::test_dir("tests/testthat", stop_on_failure = TRUE)'
+
+      # --- the reference data must be exactly what the generators produce
+      - name: Check that the shipped reference data is reproducible
+        run: |
+          uv run python tools/synth/generate.py
+          if ! git diff --quiet -- experiments; then
+            echo "::error::Regenerating the synthetic data changed the committed files."
+            echo "Either the generators or their parameters changed without the data"
+            echo "being regenerated, or a generator is not deterministic."
+            git diff --stat -- experiments
+            exit 1
+          fi
+
+      # --- the student site
+      - name: Render the site
+        env:
+          QUARTO_PYTHON: .venv/bin/python
+        run: quarto render
+
+      # --- the instructor edition, as an artifact only
+      - name: Render the instructor edition
+        env:
+          QUARTO_PYTHON: .venv/bin/python
+        run: quarto render --profile instructor
+
+      - name: Upload the instructor edition
+        uses: actions/upload-artifact@v4
+        with:
+          name: instructor-edition
+          path: _site-instructor
+          retention-days: 14
+
+      - name: Upload the student site for deployment
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
