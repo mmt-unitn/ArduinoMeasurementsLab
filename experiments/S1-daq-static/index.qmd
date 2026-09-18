@@ -1,0 +1,22 @@
+---
+title: "S1 — Static characterization of the DAQ"
+description: "Offset, gain, noise floor, effective bits and timestamp quality"
+categories: [DAQ, calibration, uncertainty]
+experiment:
+  id: S1
+  tier: 1
+  duration: "3 h"
+  level: [undergraduate, postgraduate]
+  boards: [portenta-h7, giga-r1, nano-33-iot, mkr-zero]
+  host: linux-recommended
+  needs: [voltage reference IC, DMM]
+  validated:
+    usbio: "TODO (Paolo)"
+    driver: "TODO (Paolo)"
+---
+
+::: {.callout-note}
+## Experiment not written yet
+This folder is part of the AMLab scaffold. The overview, slides, handbook and
+the two analysis templates will be added.
+:::

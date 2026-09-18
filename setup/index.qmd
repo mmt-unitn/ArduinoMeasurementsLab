@@ -1,0 +1,9 @@
+---
+title: "Setting up a bench"
+description: "What a bench needs, and in which order to set it up"
+---
+
+::: {.callout-note}
+## Page not written yet
+This page is part of the AMLab scaffold and will be filled in.
+:::

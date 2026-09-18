@@ -1,0 +1,9 @@
+---
+title: "Bench hardware"
+description: "What to build, and what to buy"
+---
+
+::: {.callout-note}
+## Page not written yet
+This page is part of the AMLab scaffold and will be filled in.
+:::

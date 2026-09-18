@@ -1,0 +1,22 @@
+---
+title: "T2 — Dynamic response of temperature sensors"
+description: "Plunge test, time constant, convection coefficient and dynamic error"
+categories: [thermal, dynamics, system identification]
+experiment:
+  id: T2
+  tier: 2
+  duration: "3 h"
+  level: [undergraduate, postgraduate]
+  boards: [any]
+  host: any
+  needs: [thermal rig, reference thermometer]
+  validated:
+    usbio: "TODO (Paolo)"
+    driver: "TODO (Paolo)"
+---
+
+::: {.callout-note}
+## Experiment not written yet
+This folder is part of the AMLab scaffold. The overview, slides, handbook and
+the two analysis templates will be added.
+:::

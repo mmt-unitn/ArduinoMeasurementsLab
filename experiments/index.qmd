@@ -1,0 +1,62 @@
+---
+title: "Experiments"
+description: "Nine laboratory activities in three strands"
+listing:
+  id: experiment-table
+  contents:
+    - "*/index.qmd"
+  template: ../assets/experiment-listing.ejs
+  sort: false
+  filter-ui: false
+  page-size: 20
+toc: true
+---
+
+Each experiment is one folder: an introductory presentation, a handbook (HTML
+and PDF), and two analysis templates — Python and R — that produce the same
+figures and the same numbers from the same data. Every experiment ships
+reference data, so you can work through the analysis before you ever touch a
+board, and every experiment ends with an uncertainty budget.
+
+## The three strands
+
+**S — signal processing and DAQ characterization.** What the board's own
+measurement chain does to a signal: offset and gain, noise, effective bits,
+timestamp quality, aliasing and filtering. Do these first: every later
+experiment inherits their conclusions.
+
+**T — thermal and environmental.** Sensors whose physics is slow enough to see:
+static calibration of NTC and Pt1000 against a reference thermometer, first-order
+dynamic response, and long-term drift.
+
+**M — mechanical.** A shared cantilever beam rig: strain gauges and a load
+cell, Hall-effect displacement, and vibration with modal analysis.
+
+## Cost tiers
+
+| Tier | Adds | Enables |
+|---|---|---|
+| 1 | Board, USB cable, voltage reference IC, a DMM | S1, and the static parts of T1 |
+| 2 | Signal generator, conditioning board (in-amp, offset and scale) | S2, T1, T2, M1, M2 |
+| 3 | Filter stage, thermal rig, beam rig with gauges and accelerometer | S3, T3, M3 |
+
+Costs per tier are collected in the [bill of materials](../hardware/bom.qmd).
+
+## All experiments
+
+::: {#experiment-table}
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Planning a course {.instructor-note}
+
+A two-semester measurement course fits the nine experiments as follows: S1 and
+S2 in the first three weeks, because every later uncertainty budget quotes
+their results; S3 once the conditioning board is built; T1 and T2 as the first
+experiments with a physical measurand; M1–M3 in the second semester, when the
+beam rig is available. T3 runs unattended alongside anything else.
+
+Bench count: one board and one host per two students. The signal generator of
+tier 2 is the usual bottleneck — one per two benches works if S2 is scheduled
+in shifts.
+:::

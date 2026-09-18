@@ -1,0 +1,86 @@
+---
+title: "About"
+toc: true
+---
+
+## What this is
+
+AMLab (Arduino Measurements Lab) is courseware for undergraduate and
+postgraduate laboratory work in measurement science and technology, built on
+the [ArduinoDriver](https://github.com/pbosetti/ArduinoDriver) platform.
+
+## Authors
+
+Paolo Bosetti, Department of Industrial Engineering, University of Trento.
+
+ArduinoDriver, the `UsbIo` firmware and the Python and R bindings are by the
+same author.
+
+## License
+
+- **Text, figures and data** in this website: [CC BY-SA
+  4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- **Code** — the `labtools` packages, the synthetic data generators, the
+  analysis templates: [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0),
+  the same licence as ArduinoDriver.
+
+## How to cite
+
+::: {.callout-note}
+## Citation details are provisional
+The DOI and the published URL are [TODO (Paolo)]{.todo}: the repository name
+and the hosting location are still open decisions (see the repository
+`README.md`).
+:::
+
+```bibtex
+@misc{amlab,
+  author = {Bosetti, Paolo},
+  title  = {AMLab: measurement science laboratory activities on the
+            ArduinoDriver platform},
+  year   = {2026},
+  note   = {University of Trento},
+  url    = {https://github.com/pbosetti/ArduinoMeasurementsLab}
+}
+```
+
+## How to contribute
+
+Corrections, new experiments and measured reference data are welcome.
+
+1. Every experiment lives in one folder under `experiments/` and follows the
+   structure of [`experiments/_template/`](https://github.com/pbosetti/ArduinoMeasurementsLab/tree/main/experiments/_template);
+   `tools/new-experiment.sh` copies it and fills in the identifiers.
+2. Theory is written once in `_theory.qmd` and included by both the slides and
+   the handbook; the same holds for `_procedure.qmd` and `_instructor.qmd`.
+3. Analysis templates come in pairs — Python and R — with the same section
+   headings, the same figure labels and the same output tables. Continuous
+   integration renders both against the shipped reference data and fails if
+   either fails.
+4. All equations are LaTeX (`$...$`, `$$...$$`), never Unicode glyphs.
+5. No invented numbers. Where a value depends on hardware that has not been
+   measured yet, leave a visible `TODO (Paolo)` marker.
+
+## Instructor edition
+
+Instructor material — expected results, pitfalls, session timing and
+assessment rubrics — lives in the same sources, inside blocks that are visible
+only under the `instructor` profile:
+
+```bash
+quarto render --profile instructor    # output in _site-instructor/
+```
+
+That build is produced as a continuous-integration artifact and is **not**
+deployed to the public site.
+
+## Acknowledgements
+
+The measurement-uncertainty treatment throughout follows the *Guide to the
+Expression of Uncertainty in Measurement* [@gum2008]; the ADC characterization
+experiments follow IEEE Std 1057 [@ieee1057] and IEEE Std 1241 [@ieee1241].
+
+## References
+
+::: {#refs}
+:::

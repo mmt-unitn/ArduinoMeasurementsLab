@@ -1,0 +1,9 @@
+---
+title: "Signal conditioning board"
+description: "Offset and scale, dividers, instrumentation amplifier, buffer"
+---
+
+::: {.callout-note}
+## Page not written yet
+This page is part of the AMLab scaffold and will be filled in.
+:::

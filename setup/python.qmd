@@ -1,0 +1,9 @@
+---
+title: "Python binding"
+description: "Installing and checking arduino_driver"
+---
+
+::: {.callout-note}
+## Page not written yet
+This page is part of the AMLab scaffold and will be filled in.
+:::

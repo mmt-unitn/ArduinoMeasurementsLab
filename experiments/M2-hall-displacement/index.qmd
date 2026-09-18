@@ -1,0 +1,22 @@
+---
+title: "M2 — Hall-effect displacement measurement"
+description: "A ratiometric sensor, a nonlinear calibration curve, and a stiffness cross-check"
+categories: [mechanical, calibration, displacement]
+experiment:
+  id: M2
+  tier: 3
+  duration: "3 h"
+  level: [undergraduate, postgraduate]
+  boards: [any]
+  host: any
+  needs: [beam rig, micrometer stage, linear Hall sensor]
+  validated:
+    usbio: "TODO (Paolo)"
+    driver: "TODO (Paolo)"
+---
+
+::: {.callout-note}
+## Experiment not written yet
+This folder is part of the AMLab scaffold. The overview, slides, handbook and
+the two analysis templates will be added.
+:::

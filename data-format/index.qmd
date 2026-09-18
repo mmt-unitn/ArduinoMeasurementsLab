@@ -1,0 +1,9 @@
+---
+title: "Data format"
+description: "One CSV plus one YAML sidecar, for every acquisition"
+---
+
+::: {.callout-note}
+## Page not written yet
+This page is part of the AMLab scaffold and will be filled in.
+:::

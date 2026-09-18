@@ -1,0 +1,9 @@
+---
+title: "Anti-alias filter stage"
+description: "RC and op-amp filters ahead of the ADC"
+---
+
+::: {.callout-note}
+## Page not written yet
+This page is part of the AMLab scaffold and will be filled in.
+:::

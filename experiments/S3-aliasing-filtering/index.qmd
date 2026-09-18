@@ -1,0 +1,22 @@
+---
+title: "S3 — Aliasing, conditioning and filtering"
+description: "Folding predicted and observed, anti-alias stages, digital filtering after the fact"
+categories: [signal processing, filtering, conditioning]
+experiment:
+  id: S3
+  tier: 3
+  duration: "4 h"
+  level: [undergraduate, postgraduate]
+  boards: [portenta-h7, giga-r1, nano-33-iot]
+  host: linux-recommended
+  needs: [signal generator, conditioning board, filter stage]
+  validated:
+    usbio: "TODO (Paolo)"
+    driver: "TODO (Paolo)"
+---
+
+::: {.callout-note}
+## Experiment not written yet
+This folder is part of the AMLab scaffold. The overview, slides, handbook and
+the two analysis templates will be added.
+:::

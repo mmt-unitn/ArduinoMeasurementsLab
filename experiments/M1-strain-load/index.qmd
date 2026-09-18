@@ -1,0 +1,22 @@
+---
+title: "M1 — Strain gauges and load cell"
+description: "Static calibration with reference masses; bridge configurations on the beam"
+categories: [mechanical, calibration, strain]
+experiment:
+  id: M1
+  tier: 3
+  duration: "4 h"
+  level: [undergraduate, postgraduate]
+  boards: [any]
+  host: any
+  needs: [beam rig, load cell, instrumentation amplifier, reference masses]
+  validated:
+    usbio: "TODO (Paolo)"
+    driver: "TODO (Paolo)"
+---
+
+::: {.callout-note}
+## Experiment not written yet
+This folder is part of the AMLab scaffold. The overview, slides, handbook and
+the two analysis templates will be added.
+:::

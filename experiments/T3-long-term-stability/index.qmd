@@ -1,0 +1,22 @@
+---
+title: "T3 — Long-term stability and drift"
+description: "A day of logging: drift, Allan deviation and the limits of averaging"
+categories: [thermal, stability, statistics]
+experiment:
+  id: T3
+  tier: 3
+  duration: "24 h + 2 h"
+  level: [postgraduate]
+  boards: [any]
+  host: linux-required
+  needs: [insulated box, bench host that stays on]
+  validated:
+    usbio: "TODO (Paolo)"
+    driver: "TODO (Paolo)"
+---
+
+::: {.callout-note}
+## Experiment not written yet
+This folder is part of the AMLab scaffold. The overview, slides, handbook and
+the two analysis templates will be added.
+:::

@@ -1,0 +1,9 @@
+---
+title: "Verifying a bench"
+description: "arduino-io info and a short stream test"
+---
+
+::: {.callout-note}
+## Page not written yet
+This page is part of the AMLab scaffold and will be filled in.
+:::

@@ -1,0 +1,22 @@
+---
+title: "M3 — Vibration and modal analysis"
+description: "Tap test and free decay: natural frequencies, damping and mass loading"
+categories: [mechanical, dynamics, signal processing]
+experiment:
+  id: M3
+  tier: 3
+  duration: "4 h"
+  level: [postgraduate]
+  boards: [portenta-h7, giga-r1]
+  host: linux-required
+  needs: [beam rig, accelerometer, strain gauge channel]
+  validated:
+    usbio: "TODO (Paolo)"
+    driver: "TODO (Paolo)"
+---
+
+::: {.callout-note}
+## Experiment not written yet
+This folder is part of the AMLab scaffold. The overview, slides, handbook and
+the two analysis templates will be added.
+:::
