@@ -31,11 +31,12 @@ a CI artifact and is **never** deployed to the public site.
 | Python | 3.14 | numpy, scipy, pandas, matplotlib, pyyaml, jupyter |
 | R | 4.6.1 | tidyverse, yaml, gsignal, broom, patchwork, knitr, rmarkdown, testthat |
 
-The Jupyter engine needs to find the right interpreter. On the development
-machine the environment is `~/.venv`:
+The Jupyter engine needs to find the right interpreter. Put its path in
+`_environment.local`, which Quarto reads automatically and which is
+gitignored because it is machine-specific:
 
 ```bash
-export QUARTO_PYTHON="$HOME/.venv/bin/python"
+echo "QUARTO_PYTHON=$HOME/.venv/bin/python" > _environment.local
 quarto render
 ```
 
