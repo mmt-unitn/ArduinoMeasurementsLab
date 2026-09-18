@@ -1,0 +1,89 @@
+---
+title: "S2 — Dynamic characterization of the DAQ"
+subtitle: "How many bits survive when the signal moves?"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before the bench {.center}
+
+### Where S1 left off
+
+S1 fed the converter a **constant** and found about 11 effective bits out of a
+nominal 16.
+
+A constant does not care *when* you sample it. So S1 could not see:
+
+- the sample-and-hold closing at a slightly random instant;
+- the board's oscillator running fast or slow;
+- what it costs to assume the samples are evenly spaced.
+
+Today the input moves, and all three become visible.
+
+### The one-line reason
+
+$$
+\dot{V}_\max = 2\pi f A
+$$
+
+A timing error of $\Delta t$ becomes an amplitude error of
+$\dot{V}\,\Delta t$ — and the slope grows with frequency.
+
+The same 10 µs of timing error costs **ten times as much** at 1 kHz as at
+100 Hz.
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will do
+
+1. Find the sampling rate the board **actually** achieves.
+2. Set the generator to about 90 % of full scale — and check it at the pin.
+3. Sweep the frequency over two decades, recording ~2000 samples each time.
+4. Fit a sinusoid to each record, twice: on the nominal grid, and on `t_us`.
+
+::: {.callout-warning}
+## Two ways to waste the session
+
+**Clipping.** A few clipped codes at the peaks wreck the fit. Verify the
+headroom at the pin before the first recording, and do not touch the
+amplitude again.
+
+**Using the board's own DAC as the source.** Its errors are correlated with
+the ADC's, so they cancel. The result looks excellent and means nothing.
+:::
+
+### Then
+
+Open [the handbook](handbook.qmd) for the full procedure, and one of the two
+analysis templates — [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+Both ship with reference data covering the whole sweep, so you can read the
+entire analysis before touching the generator.
+
+## What you should come away with {.center}
+
+### Three sentences you should be able to defend
+
+1. "This board delivers $x$ effective bits at $f_1$ and $y$ at $f_2$, measured
+   by sine fit against its own timestamps."
+2. "Analysing the same samples on the nominal grid instead costs $z$ bits —
+   which is what timestamping is worth."
+3. "Below $f_c$ the converter is noise limited and a quieter front end would
+   help; above it, it is jitter limited and only a better clock would."
+
+### And one number for the rest of the course
+
+The crossover frequency. It decides whether an improvement to *any* later
+measurement on this platform is worth making.

@@ -1,6 +1,6 @@
 ---
 title: "S2 — Dynamic characterization of the DAQ"
-description: "Sine-fit ENOB, clock accuracy and host dependence"
+description: "Sine-fit ENOB, clock accuracy and the timing penalty in bits"
 categories: [DAQ, signal processing, characterization]
 experiment:
   id: S2
@@ -13,10 +13,120 @@ experiment:
   validated:
     usbio: "TODO (Paolo)"
     driver: "TODO (Paolo)"
+toc: true
 ---
 
-::: {.callout-note}
-## Experiment not written yet
-This folder is part of the AMLab scaffold. The overview, slides, handbook and
-the two analysis templates will be added.
+[S1](../S1-daq-static/index.qmd) fed the converter a constant voltage and
+found that a board advertising 16 bits delivers about 11. That measurement
+asked nothing of the converter's timing, because a constant does not care when
+you look at it.
+
+S2 puts a sinusoid in, fits it by least squares, and studies what is left
+over. Every timing error is now an amplitude error, and it grows with
+frequency — so the effective resolution falls as the signal gets faster, and
+where it starts falling tells you whether the converter is limited by its
+noise or by its clock. The same fit measures the board's oscillator against
+the generator's, in parts per million.
+
+The result the experiment exists for is a contrast: the **same samples**
+analysed on the nominal sampling grid and on the device's own timestamps give
+different effective resolutions, and the difference is what timestamping is
+worth, in bits.
+
+## Materials {#sec-s2-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — 15 minutes, before the bench
+- [Handbook](handbook.qmd) — theory, procedure, tasks, questions
+  ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd) — Jupyter engine
+- [R template](analysis-r.qmd) — knitr engine
+
+Both ship with reference data and produce the same numbers.
+:::
+
+:::
+
+## What you measure {#sec-s2-index-measure}
+
+| Quantity | How | Where it is used later |
+|---|---|---|
+| Dynamic ENOB against frequency | Four-parameter sine fit, residual RMS | The resolution to quote for any signal that moves |
+| Timing penalty, in bits | The same fit on the nominal grid and on `t_us` | The argument for using timestamps, everywhere on this site |
+| Aperture jitter $\sigma_j$ | Fit of the jitter limit to the high-frequency end | The ceiling no front-end improvement can lift |
+| Noise/jitter crossover | Where the jitter limit meets S1's noise floor | [S3](../S3-aliasing-filtering/index.qmd)'s filter budget; M3's modal resolution |
+| Clock accuracy [ppm] | $\hat{f}/f_\mathrm{gen} - 1$ | Every frequency this platform reports |
+
+: What S2 produces {#tbl-s2-index-outputs}
+
+## Bench {#sec-s2-index-bench}
+
+**Tier 2.** S1's bench, plus a signal generator and the conditioning stage
+that maps its bipolar output onto the converter's unipolar input — see
+[the conditioning board](../../hardware/conditioning-board.qmd).
+
+**Board.** Streaming is required, and so is a high loop rate: the sweep has to
+reach frequencies where jitter dominates, which means sampling in the tens of
+kilohertz. That restricts this experiment to the mbed boards; see
+[Supported boards](../../setup/boards.qmd).
+
+**Host.** Linux recommended, for the reasons S1 measured.
+
+::: {.callout-important}
+## The generator must be better than the board
+
+The residual of a fit cannot tell you whether an imperfection came from the
+source or from the converter, so the source has to be the quieter of the two.
+And never use the board's own DAC as the signal source: it shares the
+reference, the clock and the ground with the ADC, so its errors are
+correlated with the ones being measured, and the result looks excellent while
+meaning nothing.
+:::
+
+## Reference data {#sec-s2-index-data}
+
+Nine generated runs in `data/`, one per sweep point, each 2003 samples — a
+prime, so that any number of signal cycles in the record is coprime with it
+and the sampling is as close to coherent as a loop-driven sampler allows.
+
+| File | Nominal frequency |
+|---|---|
+| `sweep-0010hz` … `sweep-0200hz` | 10, 20, 50, 100, 200 Hz — the noise-limited end |
+| `sweep-0500hz`, `sweep-1000hz` | 500 Hz, 1 kHz — around the crossover |
+| `sweep-2000hz`, `sweep-4000hz` | 2 kHz, 4 kHz — jitter limited |
+
+: Reference data shipped with S2 {#tbl-s2-index-data}
+
+The generator's exact frequency and amplitude, with their uncertainties, are
+in each sidecar's `references[]` rather than in `channels[]`: the generator is
+an instrument used to make the measurement, not a channel on the board.
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+It is produced by a seeded generator (`tools/synth/s2_daq_dynamic.py`) whose
+parameters are plausible placeholders, not measurements — they are marked
+`TODO (Paolo)` in `tools/synth/params/s2.yaml`. It exists so the analysis
+templates render, and are checked in continuous integration, with no hardware
+attached. Every page that uses it says so.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+Three hours, tier 2. Nearly all the difficulty is in the first twenty minutes
+of generator setup — amplitude, headroom, and no clipping — so start the
+groups on that immediately. The result worth the discussion time is the
+timing penalty, not the ENOB itself. Full notes, expected values, common
+failures and the rubric are in the
+[handbook](handbook.qmd#sec-s2-instructor).
 :::

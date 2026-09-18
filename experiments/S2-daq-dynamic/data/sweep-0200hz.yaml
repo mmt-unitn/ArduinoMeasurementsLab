@@ -1,0 +1,66 @@
+experiment: S2
+run: sweep-0200hz
+date: 2026-09-18
+operator: tools/synth (generated)
+synthetic: true
+board:
+  model: portenta-h7
+  serial: SYNTHETIC-0001
+  usbio_version: 0.4.0
+  adc_bits: 16
+  vref_mV: 3300
+host:
+  os: linux
+  os_version: '6.6'
+  machine: raspberry-pi-5
+  libusb_version: 1.0.27
+  hub: true
+driver_version: 0.4.0
+binding: python
+binding_version: 0.4.0
+acquisition:
+  pins:
+  - 15
+  requested_period_us: 50
+  achieved_rate_hz: 19994.207
+  duration_s: 0.100129
+stream_stats:
+  records: 2003
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+channels:
+- pin: 15
+  quantity: voltage
+  unit: V
+  sensor: sine from bench signal generator, through conditioning board
+  conditioning:
+    gain: 1.0
+    offset: 1.65
+    filter: none
+  calibration_reference: signal generator, see references
+environment:
+  ambient_temperature_C: 23.0
+  notes: 'sine sweep point: 20 cycles in 2003 samples (f_gen = 199.7004 Hz, nominal
+    200 Hz)'
+references:
+- instrument: signal generator
+  model: TODO (Paolo)
+  calibration: TODO (Paolo)
+  quantity: frequency
+  unit: Hz
+  reference_value: 199.700449
+  reference_u: 0.000999
+- instrument: signal generator
+  model: TODO (Paolo)
+  calibration: TODO (Paolo)
+  quantity: amplitude
+  unit: V
+  reference_value: 1.485
+  reference_u: 0.007425
+generator:
+  tool: tools/synth
+  version: 0.1.0
+  note: Parameters are placeholders; see tools/synth/params/

@@ -22,6 +22,7 @@ sys.path.insert(0, str(HERE))
 #: experiment id -> module in this directory
 GENERATORS = {
     "s1": "s1_daq_static",
+    "s2": "s2_daq_dynamic",
     "s3": "s3_aliasing_filtering",
 }
 

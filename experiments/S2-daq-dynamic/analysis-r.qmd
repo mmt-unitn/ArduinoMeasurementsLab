@@ -1,0 +1,558 @@
+---
+title: "S2 — Analysis template (R)"
+subtitle: "Dynamic characterization of the DAQ"
+description: "Sine-fit ENOB, the timing penalty, aperture jitter and clock accuracy, in R"
+engine: knitr
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment. To analyse your own measurements, replace the files in `data/`
+and change the paths in the first chunk — nothing else.
+
+The Python template [`analysis-py.qmd`](analysis-py.qmd) has the same
+sections, the same figure labels and the same output tables, and produces the
+same numbers from the same data.
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+library(ggplot2)
+library(patchwork)
+
+source("../../shared/R/labtools.R")
+
+theme_set(theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25)))
+
+SWEEP_RUNS <- sort(Sys.glob("data/sweep-*.csv"))
+DETAIL_RUN <- "data/sweep-0500hz.csv"   # the point examined in detail
+MAX_FIT_ITERATIONS <- 50
+```
+
+```{r}
+#| label: helpers
+# The generator's setting for `quantity`, from the sidecar. The generator is
+# an instrument used to make the measurement, not a channel on the board, so
+# its settings live in references[].
+generator <- function(meta, quantity) {
+  for (ref in meta$references) {
+    if (!is.null(ref$quantity) && ref$quantity == quantity) {
+      return(list(value = ref$reference_value, u = ref$reference_u))
+    }
+  }
+  stop(sprintf("no reference entry for '%s'", quantity))
+}
+
+# Four-parameter sine fit: A, B, C and the frequency. At a fixed frequency the
+# model is linear in A, B and C, so each iteration solves the three-parameter
+# problem and then takes one Gauss-Newton step in f using the extended design
+# matrix. Written out rather than taken from a library so that R and Python
+# follow the same arithmetic.
+sine_fit4 <- function(t_s, y, f0) {
+  n <- length(t_s)
+  f <- f0
+  for (i in seq_len(MAX_FIT_ITERATIONS)) {
+    w <- 2 * pi * f * t_s
+    d <- cbind(cos(w), sin(w), rep(1, n))
+    coef <- solve(crossprod(d), crossprod(d, y))
+    # d/df of the model, at the current parameters
+    dcol <- 2 * pi * t_s * (-coef[1] * sin(w) + coef[2] * cos(w))
+    e <- cbind(d, dcol)
+    step <- solve(crossprod(e), crossprod(e, y))
+    df <- as.numeric(step[4])
+    if (!is.finite(df)) break
+    f <- f + df
+    if (abs(df) < 1e-12 * max(abs(f), 1)) break
+  }
+
+  w <- 2 * pi * f * t_s
+  d <- cbind(cos(w), sin(w), rep(1, n))
+  coef <- solve(crossprod(d), crossprod(d, y))
+  resid <- as.vector(y - d %*% coef)
+  dof <- max(n - 4, 1)
+  sigma_r <- sqrt(sum(resid^2) / dof)
+
+  # Standard error of the frequency, from the linearised 4-column problem.
+  dcol <- 2 * pi * t_s * (-coef[1] * sin(w) + coef[2] * cos(w))
+  e <- cbind(d, dcol)
+  cov <- solve(crossprod(e))
+  list(f = f,
+       amplitude = sqrt(coef[1]^2 + coef[2]^2),
+       level = as.numeric(coef[3]),
+       sigma_r = sigma_r,
+       u_f = sigma_r * sqrt(cov[4, 4]),
+       residual = resid,
+       coef = as.vector(coef))
+}
+
+# The nominal grid: what you would have if the samples were not stamped. The
+# period comes from the least-squares grid fit, so this is the *best* uniform
+# grid for the record -- the comparison is deliberately generous to the
+# nominal-grid analysis.
+uniform_time <- function(run) {
+  t_us <- sort(unique(run$data$t_us))
+  period_us <- timing_summary(run$data)$stats$period_us
+  (t_us[1] + (seq_along(t_us) - 1) * period_us) / 1e6
+}
+```
+
+```{r}
+#| label: load
+runs <- lapply(SWEEP_RUNS, read_run)
+detail <- read_run(DETAIL_RUN)
+board <- runs[[1]]$meta$board
+FSR <- board$vref_mV / 1000
+LSB <- lsb_volts(runs[[1]]$meta)
+```
+
+```{r}
+#| label: banner
+#| echo: false
+#| output: asis
+cat(synthetic_banner(runs[[1]]$meta))
+```
+
+## Data quality
+
+```{r}
+#| label: quality
+#| echo: false
+#| output: asis
+issues <- lapply(runs, function(r) validate_meta(r$meta))
+lossy <- character(0)
+for (r in runs) {
+  stats <- r$meta$stream_stats
+  counters <- stats[setdiff(names(stats), "records")]
+  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+    lossy <- c(lossy, r$meta$run)
+  }
+}
+n_bad <- sum(vapply(issues, length, integer(1)) > 0)
+cat(sprintf('
+%d sweep points read, %d samples each.
+%s
+%s
+', length(runs), nrow(runs[[1]]$data),
+   if (n_bad == 0) "All sidecars are complete."
+   else sprintf("%d sidecar(s) have missing fields.", n_bad),
+   if (length(lossy) == 0) "No run reports a lost record."
+   else paste0("Runs with losses: ", paste(lossy, collapse = ", "))))
+```
+
+## One fit, in detail
+
+Before sweeping anything, look at a single fit and satisfy yourself that the
+model describes the data. A residual with structure in it means the number
+you are about to compute is measuring your setup, not the converter.
+
+```{r}
+#| label: detail-fit
+gen_f_detail <- generator(detail$meta, "frequency")
+t_detail <- detail$data$t_us / 1e6
+y_detail <- detail$data$volts
+
+fit_detail <- sine_fit4(t_detail, y_detail, gen_f_detail$value)
+```
+
+```{r}
+#| label: fig-s2-residual
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 5.0
+#| fig-cap: "One sweep point. Top: the samples and the fitted sinusoid over the first few cycles. Bottom: the residual over the whole record. Structure here — flat tops, a slow trend, a visible harmonic — invalidates everything downstream."
+t_rel_ms <- (t_detail - t_detail[1]) * 1e3
+show <- t_rel_ms <= 3e3 / fit_detail$f          # about three cycles
+dense <- seq(t_detail[show][1], tail(t_detail[show], 1), length.out = 800)
+w <- 2 * pi * fit_detail$f * dense
+model <- fit_detail$coef[1] * cos(w) + fit_detail$coef[2] * sin(w) +
+  fit_detail$coef[3]
+
+p_fit <- ggplot() +
+  geom_line(data = data.frame(t = (dense - t_detail[1]) * 1e3, v = model),
+            aes(t, v), linewidth = 0.4) +
+  geom_point(data = data.frame(t = t_rel_ms[show], v = y_detail[show]),
+             aes(t, v), size = 0.8) +
+  labs(x = NULL, y = "ADC input [V]")
+
+p_res <- ggplot(data.frame(t = t_rel_ms, r = fit_detail$residual * 1e3),
+                aes(t, r)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.2) +
+  labs(x = "Time [ms]", y = "Residual [mV]")
+
+p_fit / p_res
+```
+
+```{r}
+#| label: out-detail
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| Generator setting | %.4f Hz ± %.4f Hz |
+| Fitted frequency $\\hat{f}$ | %.4f Hz |
+| Standard error $u(\\hat{f})$ | %.3f mHz |
+| Fitted amplitude | %.4f V |
+| Fitted mean level | %.4f V |
+| Residual $\\sigma_r$ | %.4f mV (%.1f LSB) |
+| Effective bits | %.2f |
+| Amplitude as a fraction of FSR | %.1f %% |
+
+: The detailed fit, run `%s` {#tbl-s2-detail}
+', gen_f_detail$value, gen_f_detail$u, fit_detail$f, fit_detail$u_f * 1e3,
+   fit_detail$amplitude, fit_detail$level, fit_detail$sigma_r * 1e3,
+   fit_detail$sigma_r / LSB, enob(FSR, fit_detail$sigma_r),
+   2 * fit_detail$amplitude / FSR * 100, detail$meta$run))
+```
+
+## Effective bits in both time bases
+
+The same samples, fitted twice. The only thing that changes is what is
+assumed about *when* they were taken.
+
+```{r}
+#| label: sweep
+sweep <- do.call(rbind, lapply(runs, function(run) {
+  gf <- generator(run$meta, "frequency")
+  ga <- generator(run$meta, "amplitude")
+  y <- run$data$volts
+  t_dev <- run$data$t_us / 1e6
+  t_nom <- uniform_time(run)
+
+  fit_dev <- sine_fit4(t_dev, y, gf$value)
+  fit_nom <- sine_fit4(t_nom, y, gf$value)
+
+  data.frame(
+    run = run$meta$run,
+    f_gen_Hz = gf$value, u_f_gen_Hz = gf$u,
+    a_gen_V = ga$value, u_a_gen_V = ga$u,
+    f_hat_Hz = fit_dev$f, u_f_hat_Hz = fit_dev$u_f,
+    amplitude_V = fit_dev$amplitude,
+    sigma_dev_V = fit_dev$sigma_r,
+    sigma_nom_V = fit_nom$sigma_r,
+    enob_dev = enob(FSR, fit_dev$sigma_r),
+    enob_nom = enob(FSR, fit_nom$sigma_r),
+    ppm = (fit_dev$f / gf$value - 1) * 1e6,
+    n = length(y),
+    duration_s = t_dev[length(t_dev)] - t_dev[1])
+}))
+sweep <- sweep[order(sweep$f_gen_Hz), ]
+rownames(sweep) <- NULL
+sweep$penalty_bits <- sweep$enob_dev - sweep$enob_nom
+```
+
+```{r}
+#| label: out-sweep
+#| echo: false
+#| output: asis
+rows <- sprintf("| %.2f | %.4f | %.4f | %.2f | %.4f | %.2f | %.2f |",
+                sweep$f_gen_Hz, sweep$amplitude_V, sweep$sigma_dev_V * 1e3,
+                sweep$enob_dev, sweep$sigma_nom_V * 1e3, sweep$enob_nom,
+                sweep$penalty_bits)
+cat(sprintf('
+| $f_\\mathrm{gen}$ [Hz] | Amplitude [V] | $\\sigma_r$ on `t_us` [mV] | ENOB | $\\sigma_r$ on the grid [mV] | ENOB | Penalty [bit] |
+|---|---|---|---|---|---|---|
+%s
+
+: Effective bits from the device timestamps and from the nominal grid {#tbl-s2-sweep}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: out-sweep-text
+#| echo: false
+#| output: asis
+lo <- sweep[1, ]
+hi <- sweep[nrow(sweep), ]
+cat(sprintf('
+At %.0f Hz the converter delivers %.2f bits;
+at %.0f Hz, %.2f. The loss of
+%.2f bits across the sweep is the timing of
+the sample-and-hold, not its noise — the noise has not changed.
+
+The last column is the result this experiment exists for. Analysing the
+**same samples** on the nominal grid costs between
+%.1f and %.1f bits.
+That is what the device\'s timestamps are worth, and what an acquisition
+system that does not report them silently takes away.
+', lo$f_gen_Hz, lo$enob_dev, hi$f_gen_Hz, hi$enob_dev,
+   lo$enob_dev - hi$enob_dev, min(sweep$penalty_bits), max(sweep$penalty_bits)))
+```
+
+## The roll-off and the jitter limit
+
+Two mechanisms add in quadrature: a noise floor that does not depend on
+frequency, and a jitter term that grows with it.
+
+$$
+\sigma_r^2(f) = \sigma_n^2
+  + \left(\frac{2\pi f A \sigma_j}{\sqrt{2}}\right)^2
+$$ {#eq-s2-quadrature}
+
+which is linear in $f^2$, so both $\sigma_n$ and $\sigma_j$ come from one
+straight-line fit rather than from eyeballing the high-frequency end.
+
+The $\sqrt{2}$ is not decoration. A timing error $\delta t$ produces an
+amplitude error $\dot{V}\delta t$, and the slope of a sinusoid is
+$\dot{V} = 2\pi f A\cos\theta$, whose RMS over the cycle is $2\pi f A/\sqrt{2}$
+— not its peak. Dropping it reports an aperture jitter $\sqrt{2}$ times too
+small, and it is the same $\sqrt{2}$ that cancels in the standard
+$\mathrm{SNR}_j = -20\log_{10}(2\pi f\sigma_j)$, where signal and error are
+both expressed as RMS.
+
+```{r}
+#| label: jitter
+x <- sweep$f_gen_Hz^2
+y <- sweep$sigma_dev_V^2
+sxx <- sum((x - mean(x))^2)
+slope <- sum((x - mean(x)) * (y - mean(y))) / sxx
+intercept <- mean(y) - slope * mean(x)
+
+amp_mean <- mean(sweep$amplitude_V)
+sigma_n <- sqrt(max(intercept, 0))
+# slope = (2 pi A sigma_j / sqrt(2))^2, so the sqrt(2) comes back here.
+sigma_j <- sqrt(2) * sqrt(max(slope, 0)) / (2 * pi * amp_mean)
+
+# Where the two mechanisms are equal.
+f_cross <- sqrt(2) * sigma_n / (2 * pi * amp_mean * sigma_j)
+enob_noise <- enob(FSR, sigma_n)
+```
+
+```{r}
+#| label: fig-s2-enob
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 4.2
+#| fig-cap: "Effective bits against frequency. Circles: from the device timestamps. Crosses: the same samples on the nominal grid. Solid: the two-mechanism model of @eq-s2-quadrature. Dashed: the noise floor alone and the jitter limit alone; they cross where the converter stops being noise limited."
+f_grid <- 10^seq(log10(min(sweep$f_gen_Hz) * 0.7),
+                 log10(max(sweep$f_gen_Hz) * 1.5), length.out = 300)
+model_sigma <- sqrt(sigma_n^2 + (2 * pi * f_grid * amp_mean * sigma_j / sqrt(2))^2)
+# enob() is scalar in both languages, so it is mapped over the grid here
+# exactly as the Python template maps it in a comprehension.
+enob_v <- function(sigmas) vapply(sigmas, function(s) enob(FSR, s), numeric(1))
+
+curves <- rbind(
+  data.frame(f = f_grid, bits = enob_v(model_sigma),
+             what = "noise and jitter combined"),
+  data.frame(f = f_grid, bits = rep(enob_noise, length(f_grid)),
+             what = sprintf("noise floor alone (%.2f bit)", enob_noise)),
+  data.frame(f = f_grid,
+             bits = enob_v(2 * pi * f_grid * amp_mean * sigma_j / sqrt(2)),
+             what = "jitter limit alone"))
+points <- rbind(
+  data.frame(f = sweep$f_gen_Hz, bits = sweep$enob_dev, what = "from t_us"),
+  data.frame(f = sweep$f_gen_Hz, bits = sweep$enob_nom,
+             what = "on the nominal grid"))
+
+ggplot() +
+  geom_vline(xintercept = f_cross, linewidth = 0.3, linetype = "dotted",
+             colour = "grey40") +
+  geom_line(data = curves, aes(f, bits, linetype = what), linewidth = 0.4) +
+  geom_point(data = points, aes(f, bits, shape = what), size = 2) +
+  scale_x_log10() +
+  coord_cartesian(ylim = c(0, enob_noise + 2)) +
+  labs(x = "Generator frequency [Hz]", y = "Effective number of bits",
+       linetype = NULL, shape = NULL) +
+  theme(legend.position = "bottom", legend.box = "vertical",
+        legend.text = element_text(size = 7))
+```
+
+```{r}
+#| label: out-jitter
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| Noise floor $\\sigma_n$ | %.4f mV (%.1f LSB) |
+| Noise-limited ENOB | %.2f bit |
+| Aperture jitter $\\sigma_j$ | %.1f ns |
+| Mean fitted amplitude | %.4f V |
+| Crossover frequency | %.0f Hz |
+| ENOB at the crossover | %.2f bit |
+
+: Separating the two mechanisms, from the straight-line fit of @eq-s2-quadrature {#tbl-s2-jitter}
+', sigma_n * 1e3, sigma_n / LSB, enob_noise, sigma_j * 1e9, amp_mean,
+   f_cross, enob(FSR, sqrt(2) * sigma_n)))
+```
+
+```{r}
+#| label: out-jitter-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+Below **%.0f Hz** the converter is noise limited: a quieter front end
+would improve it and a better clock would not. Above it the converter is
+jitter limited, and no amount of front-end work helps — @eq-s2-quadrature\'s
+second term does not contain the number of bits, so a 16-bit converter and a
+12-bit one with the same %.0f ns of aperture jitter reach the
+same ceiling.
+
+Compare $\\sigma_n = %.3f$ mV with the noise floor measured on a
+constant input in [S1](../S1-daq-static/index.qmd). They are the same quantity
+measured two different ways, and they should agree. The low-frequency dynamic
+ENOB, %.2f bit, can never exceed S1\'s static figure —
+if it does, one of the two experiments is wrong.
+', f_cross, sigma_j * 1e9, sigma_n * 1e3, max(sweep$enob_dev)))
+```
+
+## Clock accuracy
+
+The fitted frequency is expressed in the device's time base; the generator's
+setting is expressed in the generator's. Their ratio compares two oscillators.
+
+```{r}
+#| label: clock
+sweep$u_ppm_fit <- sweep$u_f_hat_Hz / sweep$f_gen_Hz * 1e6
+sweep$u_ppm_gen <- sweep$u_f_gen_Hz / sweep$f_gen_Hz * 1e6
+ppm_mean <- mean(sweep$ppm)
+ppm_spread <- max(sweep$ppm) - min(sweep$ppm)
+```
+
+```{r}
+#| label: out-clock
+#| echo: false
+#| output: asis
+rows <- sprintf("| %.2f | %.4f | %+.2f | %.3f | %.2f |",
+                sweep$f_gen_Hz, sweep$f_hat_Hz, sweep$ppm,
+                sweep$u_ppm_fit, sweep$u_ppm_gen)
+cat(sprintf('
+| $f_\\mathrm{gen}$ [Hz] | $\\hat{f}$ [Hz] | $\\delta$ [ppm] | $u(\\hat{f})$ [ppm] | $u(f_\\mathrm{gen})$ [ppm] |
+|---|---|---|---|---|
+%s
+
+: Clock accuracy at every sweep point {#tbl-s2-clock}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: fig-s2-ppm
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 3.2
+#| fig-cap: "Clock error against frequency, with the standard error of each fit. The quantity should not depend on frequency: a trend would mean the fit is not converging, not that the oscillator changes with the signal."
+band <- mean(sweep$u_ppm_gen)
+ggplot(sweep, aes(f_gen_Hz, ppm)) +
+  annotate("rect", xmin = min(sweep$f_gen_Hz) * 0.7,
+           xmax = max(sweep$f_gen_Hz) * 1.5, ymin = -band, ymax = band,
+           fill = "grey85") +
+  geom_hline(yintercept = ppm_mean, linewidth = 0.3, linetype = "dashed",
+             colour = "grey40") +
+  geom_errorbar(aes(ymin = ppm - u_ppm_fit, ymax = ppm + u_ppm_fit),
+                width = 0.04, linewidth = 0.3) +
+  geom_point(size = 1.8) +
+  scale_x_log10() +
+  labs(x = "Generator frequency [Hz]", y = "Clock error [ppm]",
+       subtitle = sprintf("mean %+.2f ppm; grey band = generator specification",
+                          ppm_mean))
+```
+
+```{r}
+#| label: out-clock-text
+#| echo: false
+#| output: asis
+sign_word <- if (ppm_mean < 0) "fast" else "slow"
+resolved_gen <- if (abs(ppm_mean) > mean(sweep$u_ppm_gen)) "larger than" else "comparable to"
+cat(sprintf('
+Mean clock error **%+.2f ppm**, with a spread of
+%.2f ppm across two and a half decades of signal frequency and no
+trend — which is what it should be, since an oscillator\'s rate does not depend
+on what you measure with it.
+
+The sign says the device\'s oscillator runs **%s**: a device clock running
+fast stamps a given real interval with too many microseconds, so a real
+frequency appears low when expressed in device time.
+
+Against a generator specified to
+±%.1f ppm, this result is
+%s
+the reference\'s own uncertainty — see the budget below before concluding
+anything about the board.
+', ppm_mean, ppm_spread, sign_word, mean(sweep$u_ppm_gen), resolved_gen))
+```
+
+## Uncertainty budget
+
+The measurand is the clock error in ppm, with the
+[sensitivity coefficients](handbook.qmd#eq-s2-ppm-sensitivity) of the
+handbook. It is evaluated at the sweep point with the smallest fit
+uncertainty.
+
+```{r}
+#| label: budget
+best <- sweep[which.min(sweep$u_ppm_fit), ]
+c_ppm <- 1e6 / best$f_gen_Hz
+
+# One microsecond of timestamp quantization over the whole record, as a bound.
+u_q_ppm <- 1e6 / (best$duration_s * 1e6)
+
+components <- list(
+  list(quantity = "Fitted frequency", value = best$f_hat_Hz, unit = "ppm",
+       distribution = "type-a", std = best$u_f_hat_Hz, sensitivity = c_ppm),
+  list(quantity = "Generator frequency", value = best$f_gen_Hz, unit = "ppm",
+       distribution = "type-a", std = best$u_f_gen_Hz, sensitivity = -c_ppm),
+  list(quantity = "Timestamp quantization", value = 0, unit = "ppm",
+       distribution = "rectangular",
+       half_width = u_q_ppm * best$f_gen_Hz / 1e6, sensitivity = c_ppm),
+  list(quantity = "Instability across the sweep", value = 0, unit = "ppm",
+       distribution = "rectangular",
+       half_width = ppm_spread / 2 * best$f_gen_Hz / 1e6, sensitivity = c_ppm)
+)
+budget <- budget_table(components, k = 2)
+```
+
+```{r}
+#| label: out-budget
+#| echo: false
+#| output: asis
+cat(budget_to_markdown(
+  budget,
+  caption = sprintf("Uncertainty budget for the clock error, evaluated at $f_\\mathrm{gen} = %.2f$ Hz", best$f_gen_Hz),
+  label = "tbl-s2-budget"))
+```
+
+```{r}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant <- budget$table[which.max(budget$table$index_pct), ]
+resolved <- abs(best$ppm) > budget$U
+verdict <- if (resolved) {
+  "The result is resolved: the measured offset is larger than its own expanded uncertainty, so the board s oscillator really does differ from the generator s by about this much."
+} else {
+  sprintf("The result is NOT resolved: the measured offset is smaller than its own expanded uncertainty, so all that can honestly be said is that the two oscillators agree to within %.1f ppm.", budget$U)
+}
+cat(sprintf('
+Clock error $\\delta = %+.2f$ ppm with an expanded uncertainty
+$U = %.2f$ ppm at $k = 2$. The dominant component is
+**%s** at %.0f %% of the combined
+variance.
+
+%s
+
+Note which component dominates. Improving this measurement means a better
+*generator* or a longer record — not a better board. Being able to say which
+is what the budget is for.
+', best$ppm, budget$U, dominant$quantity, dominant$index_pct, verdict))
+```
+
+## What to report
+
+1. @tbl-s2-detail and @fig-s2-residual: one fit examined closely, with a
+   residual you are prepared to defend as structureless.
+2. @tbl-s2-sweep: effective bits in both time bases, and the timing penalty.
+   State the penalty as a sentence about acquisition systems in general.
+3. @fig-s2-enob and @tbl-s2-jitter: the roll-off, the extracted $\sigma_n$ and
+   $\sigma_j$, and the crossover. Compare $\sigma_n$ with S1's noise floor and
+   say whether they agree.
+4. @tbl-s2-clock and @fig-s2-ppm: the ppm result, its sign explained, and
+   whether it depends on frequency.
+5. @tbl-s2-budget: the budget, the dominant component, and what you would
+   change to improve the measurement.

@@ -1,0 +1,107 @@
+### Session timing {#sec-s2-instructor-timing}
+
+Three hours, for a pair of students at one bench:
+
+| Time | Activity | Watch for |
+|---|---|---|
+| 0:00–0:20 | Slides; the S1 result they are about to extend | They remember S1's ENOB number |
+| 0:20–0:45 | Generator setup, amplitude and headroom | Clipping; checking at the generator instead of at the pin |
+| 0:45–1:00 | Rate check, and computing the sweep frequencies | Using the requested rate rather than the achieved one |
+| 1:00–1:45 | The sweep itself | Changing the amplitude between points |
+| 1:45–2:40 | Analysis template | The two time bases; see below |
+| 2:40–3:00 | Crossover and budget discussion | — |
+
+The sweep is quick once the first point works. Nearly all the difficulty is in
+the first twenty minutes of generator setup, so start the groups on that
+immediately after the slides.
+
+### Expected results {#sec-s2-instructor-expected}
+
+[TODO (Paolo)]{.todo}: replace with values measured on the real bench. Until
+then these are the synthetic generator's parameters and must be presented as
+"the shape to expect", never as targets.
+
+- Dynamic ENOB at the lowest frequency: within a few tenths of a bit of S1's
+  static ENOB. If it is *higher*, something is wrong — the dynamic figure
+  cannot beat the static one.
+- ENOB falling by roughly 3.3 bits per decade once jitter dominates, which is
+  the 20 dB/decade of @eq-s2-jitter-snr.
+- Clock accuracy stable across the sweep to within a few ppm. It should not
+  depend on frequency; if it does, the fit is not converging.
+- The timing penalty of @eq-s2-penalty rising steeply with frequency, and
+  reaching several bits at the top of the sweep.
+
+### Common failures, in the order they happen {#sec-s2-instructor-failures}
+
+1. **Clipping.** The commonest and the most destructive. The residual shows a
+   clear odd-harmonic structure and the ENOB collapses. Have them plot the
+   residual against time — the flat tops are unmistakable — rather than
+   telling them.
+2. **The sweep is computed from the requested rate.** Every frequency is then
+   slightly non-coherent in a way that is correlated across the sweep, and
+   the frequency estimates all sit a fixed fraction of a bin off. Harmless for
+   ENOB, confusing for the ppm result.
+3. **The amplitude is changed mid-sweep** to "make the signal look better".
+   The FSR in @eq-s2-enob is then not the same for all points and the ENOB
+   curve acquires a step.
+4. **The fit is run at the nominal frequency** instead of fitting $f$. The
+   residual then contains an unmodelled frequency error that scales with
+   record length, and the ENOB falls with $n$ — a genuinely confusing result
+   until they see the cause.
+5. **The board's DAC is used as the source** because no generator was free.
+   The result is *too good*: correlated errors cancel. This is worth
+   demonstrating once deliberately, because "the measurement improved when I
+   made the setup worse" is a lesson that sticks.
+6. **The uniform-grid ENOB is reported as "the" ENOB.** It is the one that
+   looks worse, and a group in a hurry will quote whichever they computed
+   first.
+
+### Discussion questions and where they should land {#sec-s2-instructor-discussion}
+
+**"Which ENOB is the real one?"** The one computed with `t_us`, because that
+is when the samples were taken. The uniform-grid figure is what you would be
+*forced* to report on a system that does not timestamp its samples, and the
+difference is the value of timestamping. Push them to state it as a
+specification: "this board delivers $x$ bits at $f$, provided you use its
+timestamps".
+
+**"Why does ENOB fall with frequency when the noise is flat?"** Because the
+error is not in the value, it is in the time. Take them back to
+@eq-s2-slew.
+
+**"Our crossover is at 1 kHz. So what?"** So a front-end improvement helps
+below it and nothing above it. Ask what they would buy to improve a
+measurement at 5 kHz, and they should answer "a better clock, or a lower
+frequency", not "a better amplifier".
+
+**"The ppm figure is negative. Is the board slow or fast?"** Make them reason
+it through from @eq-s2-ppm rather than recall it.
+
+### Assessment rubric {#sec-s2-instructor-rubric}
+
+Out of 100, for the report:
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Setup and headroom | 10 | Amplitude verified at the pin; no clipping; amplitude constant across the sweep and recorded |
+| Sine fit | 20 | Four-parameter fit with the frequency estimated; residual plotted, not just summarised |
+| ENOB against frequency | 20 | Both time bases; the roll-off shown; the low-frequency value compared with S1's |
+| Jitter limit and crossover | 20 | @eq-s2-jitter-snr overlaid on the data; $\sigma_j$ extracted; the crossover identified and interpreted |
+| Clock accuracy | 10 | ppm with its sign explained, and the generator's own uncertainty acknowledged |
+| Uncertainty budget | 20 | Correct sensitivity coefficients; the generator's contribution present; the dominant term named |
+
+Deduct for any ENOB quoted without saying which time base produced it. That
+one omission makes the whole result unusable, and it is the specific habit
+this experiment exists to break.
+
+### If a group finishes early {#sec-s2-instructor-extension}
+
+- Extract $\sigma_j$ by fitting @eq-s2-jitter-snr to the high-frequency end,
+  and compare it with the timestamp jitter S1 measured. They are different
+  quantities — one is invisible to `t_us`, the other is what `t_us` records —
+  and seeing that they differ is the point.
+- Repeat two points on the second host from S1 and check whether the dynamic
+  ENOB depends on the host at all. It should not, much, which is itself
+  informative: the host affects *which* samples arrive, not *when* the
+  sample-and-hold closed.
+- Deliberately clip by 1 %, and quantify what it costs in bits.

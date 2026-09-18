@@ -1,0 +1,255 @@
+---
+title: "S2 — Dynamic characterization of the DAQ"
+subtitle: "Laboratory handbook"
+description: "Sine-fit ENOB, clock accuracy and the timing penalty in bits"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-s2-outcomes}
+
+By the end of this session you should be able to:
+
+1. Explain why a static test cannot reveal a timing defect, and why a
+   sinusoid can.
+2. Fit a sinusoid to sampled data by least squares with the frequency as a
+   free parameter, and say why the frequency must be fitted rather than
+   assumed.
+3. Convert a fit residual into an effective number of bits, and state which
+   time base produced it.
+4. Measure the cost, in bits, of analysing timestamped samples as though they
+   lay on a nominal grid.
+5. Separate a noise-limited regime from a jitter-limited one, extract the
+   aperture jitter, and locate the crossover.
+6. Measure one oscillator against another and report the result in ppm with
+   the correct sign.
+7. Build an uncertainty budget in which the reference instrument, not the
+   device under test, may well be the dominant term.
+
+## Prerequisites {#sec-s2-prerequisites}
+
+- [S1](../S1-daq-static/index.qmd), completed. Its noise floor and static
+  ENOB are inputs here, and the low-frequency end of this experiment is a
+  check on them.
+- A conditioning stage built and characterized — see
+  [the conditioning board](../../hardware/conditioning-board.qmd).
+- Least squares, and enough trigonometry to be comfortable with
+  @eq-s2-model.
+
+## Hardware and cost tier {#sec-s2-hardware}
+
+::: {.callout-note}
+## Tier 2 — S1's bench plus a source
+
+The one genuinely expensive item on this site's bill of materials is the
+signal generator, and it is shared between benches rather than bought per
+bench.
+:::
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Streaming board with `UsbIo` | The instrument under test | mbed boards only; the sweep needs tens of kHz |
+| Host computer | Acquisition | Linux recommended |
+| Signal generator | The reference source | Its noise and distortion must be below the converter's |
+| Conditioning stage | Bipolar to unipolar, with headroom | See [the conditioning board](../../hardware/conditioning-board.qmd) |
+| Oscilloscope or DMM | Verifying amplitude and headroom at the pin | — |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+## Theory {#sec-s2-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-s2-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-s2-recording}
+
+One CSV and one sidecar per sweep point, in the format specified in
+[Data format](../../data-format/index.qmd). The checklist in
+@sec-s2-step-sidecar is the version to work through at the bench.
+
+What distinguishes an S2 sidecar from an S1 one is `references[]`: the
+generator is an instrument used to make the measurement, so its settings and
+their uncertainties go there, one entry per quantity.
+
+```{.yaml filename="data/sweep-1000hz.yaml"}
+experiment: S2
+run: sweep-1000hz
+date: 2026-09-18
+operator: "your name"
+synthetic: false
+
+board:
+  model: portenta-h7
+  adc_bits: 16
+  vref_mV: 3300
+  usbio_version: "from arduino-io info"
+
+acquisition:
+  pins: [15]
+  requested_period_us: 50
+  achieved_rate_hz: 0.0        # from the stream summary, not the request
+  duration_s: 0.1
+
+stream_stats:                   # all six, from the summary line
+  records: 0
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+
+channels:
+  - pin: 15
+    quantity: voltage
+    unit: V
+    sensor: "sine from bench signal generator, through conditioning board"
+    conditioning: {gain: 1.0, offset: 1.65, filter: none}
+
+references:
+  - instrument: signal generator
+    model: "the model you used"
+    calibration: "certificate or none"
+    quantity: frequency
+    unit: Hz
+    reference_value: 998.502    # the exact setting, not the nominal label
+    reference_u: 0.005          # from the generator's specification
+  - instrument: signal generator
+    model: "the model you used"
+    calibration: "certificate or none"
+    quantity: amplitude
+    unit: V
+    reference_value: 1.485
+    reference_u: 0.0074
+```
+
+::: {.callout-warning}
+## Record the exact frequency, not the label
+
+`sweep-1000hz` is a file name. The frequency that enters @eq-s2-ppm is the
+one the generator was actually set to, computed from @eq-s2-coherent with the
+**achieved** sampling rate. Writing 1000 in the sidecar when the generator was
+set to 998.502 Hz puts a 1500 ppm error into a measurement whose whole purpose
+is to resolve tens of ppm.
+:::
+
+## Analysis tasks {#sec-s2-tasks}
+
+Open one of the two templates — [Python](analysis-py.qmd) or
+[R](analysis-r.qmd) — point it at your files, and work through it. They
+contain the same sections and produce the same numbers.
+
+1. **Data quality.** Validate every sidecar and read the stream counters.
+2. **One fit, in detail.** Take the middle frequency, fit @eq-s2-model with
+   $f$ free, and plot the residual against time. Confirm there is no
+   structure in it — no flat tops, no slow trend, no visible harmonic.
+3. **ENOB in both time bases.** Repeat the fit on the nominal grid and on
+   `t_us`, and report @eq-s2-penalty for every sweep point.
+4. **The roll-off.** Plot ENOB against frequency. Compare the low-frequency
+   value with S1's static ENOB; they should agree to a few tenths of a bit,
+   and the dynamic one can never be the larger.
+5. **The jitter limit.** Overlay @eq-s2-jitter-enob, fit $\sigma_j$ to the
+   high-frequency end, and find the crossover with S1's noise floor.
+6. **Clock accuracy.** Report @eq-s2-ppm for every point, with its sign
+   explained, and check that it does not depend on frequency.
+7. **Budget.** Build the budget of @sec-s2-budget.
+
+## Uncertainty budget {#sec-s2-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+**The measurand** is the device's clock error in ppm, @eq-s2-ppm, evaluated at
+the sweep point with the best signal-to-noise ratio. It is chosen over the
+amplitude because it is the result a user of this platform actually needs —
+every frequency the board ever reports is scaled by it — and because it makes
+the experiment's most important lesson arithmetic: the reference instrument,
+not the device under test, dominates.
+
+Writing $\delta = 10^6\,(\hat f/f_\mathrm{gen} - 1)$, the sensitivity
+coefficients are
+
+$$
+\frac{\partial \delta}{\partial \hat{f}} = \frac{10^6}{f_\mathrm{gen}},
+\qquad
+\frac{\partial \delta}{\partial f_\mathrm{gen}}
+  = -\frac{10^6\,\hat{f}}{f_\mathrm{gen}^{2}}
+  \approx -\frac{10^6}{f_\mathrm{gen}}
+$$ {#eq-s2-ppm-sensitivity}
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| Fitted frequency $\hat f$ | A | — | Standard error of $f$ from the four-parameter fit | $10^6/f_\mathrm{gen}$ |
+| Generator frequency | B | — | `reference_u` in the sidecar, from the instrument's specification | $-10^6/f_\mathrm{gen}$ |
+| Timestamp quantization | B | Rectangular | One microsecond over the record length, as a bound | $10^6/f_\mathrm{gen}$ |
+| Instability across the sweep | B | Rectangular | The spread of $\delta$ over the sweep points — it should not depend on frequency, so whatever spread there is bounds the drift | $10^6/f_\mathrm{gen}$ |
+
+: Components of the S2 budget {#tbl-s2-components}
+
+Report $u_c$ and $U = 2u_c$, the index $h_i$ of every component, and one
+sentence naming the dominant term.
+
+::: {.callout-important}
+## What this budget is designed to show
+
+On a well-fitted record of a few thousand samples the Type A term is tiny —
+the fit locates the frequency to a small fraction of a bin. The generator's
+own specification is then almost certainly the largest component, and the
+honest conclusion is that **this measurement is limited by the reference, not
+by the board**. That is not a failure of the experiment; it is the experiment
+working. The way to improve it is a better generator or a longer record, not
+a better board, and being able to say which is the point of building a budget
+at all.
+:::
+
+## Questions {#sec-s2-questions}
+
+1. Why can a static test not detect aperture jitter, however many samples you
+   average?
+2. The fit estimates four parameters from a few thousand samples. What
+   happens to the ENOB if you fix $f$ at the nominal value instead, and why
+   does the effect get *worse* with a longer record?
+3. Your dynamic ENOB at 10 Hz exceeds your static ENOB from S1 by half a bit.
+   What went wrong?
+4. Two boards have the same aperture jitter but 12 and 16 nominal bits. At
+   what frequency do they become indistinguishable, and what does that say
+   about buying resolution?
+5. The timing penalty at your highest frequency is several bits. Restate that
+   as a statement about a data acquisition system that reports samples without
+   timestamps.
+6. Your clock accuracy comes out at $-18$ ppm with a generator specified to
+   $\pm 5$ ppm. What can you legitimately conclude about the board's
+   oscillator?
+7. You need 12 effective bits at 5 kHz. Using your own $\sigma_j$, is that
+   achievable on this platform? If not, what would have to change?
+
+## Instructor notes {#sec-s2-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

@@ -1,0 +1,220 @@
+### What a static test cannot see {#sec-s2-why-sine}
+
+[S1](../S1-daq-static/index.qmd) fed the converter a constant and measured
+what came back. That finds offset, gain and the noise floor, and it is the
+right first experiment — but a constant asks nothing of the converter's
+*timing*. A sample taken 10 µs late has exactly the same value as one taken on
+time, because the input is not going anywhere.
+
+Put a sinusoid in and every timing error becomes an amplitude error. A sample
+taken $\Delta t$ late on a signal with slope $\dot{V}$ reports a voltage wrong
+by $\dot{V}\,\Delta t$, and the slope of a sinusoid grows with frequency:
+
+$$
+\dot{V}_\max = 2\pi f A
+$$ {#eq-s2-slew}
+
+So the same timing error costs ten times as much at 1 kHz as at 100 Hz. That
+is the whole experiment: sweep the frequency, watch the effective resolution
+fall, and find out where the converter stops being limited by its noise and
+starts being limited by its clock.
+
+### The four-parameter sine fit {#sec-s2-fit}
+
+The standard method, from IEEE Std 1057 [@ieee1057] and IEEE Std 1241
+[@ieee1241], is to fit a sinusoid to the samples by least squares and study
+what is left over. The model is written in the linear-in-parameters form
+
+$$
+y_i = A\cos(2\pi f t_i) + B\sin(2\pi f t_i) + C
+$$ {#eq-s2-model}
+
+from which the amplitude and phase come out as
+
+$$
+\hat{A}_0 = \sqrt{A^2 + B^2},
+\qquad
+\hat{\varphi} = \operatorname{atan2}(-B,\, A)
+$$ {#eq-s2-amp-phase}
+
+::: {.content-hidden when-format="revealjs"}
+Written this way, the fit is *linear* in $A$, $B$ and $C$ for any fixed $f$:
+build the design matrix
+
+$$
+\mathbf{D} = \begin{bmatrix}
+\cos(2\pi f t_0) & \sin(2\pi f t_0) & 1\\
+\vdots & \vdots & \vdots\\
+\cos(2\pi f t_{n-1}) & \sin(2\pi f t_{n-1}) & 1
+\end{bmatrix}
+$$ {#eq-s2-design}
+
+and solve the normal equations
+$(\mathbf{D}^\mathsf{T}\mathbf{D})\,\mathbf{c} = \mathbf{D}^\mathsf{T}\mathbf{y}$
+in one step. That is the **three-parameter** fit, and it is what the standards
+specify when the frequency is known exactly.
+
+The **fourth** parameter is $f$ itself, and it is what makes the problem
+nonlinear. The standard approach is to iterate: start from a frequency
+estimate, take the three-parameter solution at that frequency, and then
+improve $f$ by a step that also makes the derivative of the residual with
+respect to $f$ vanish. Extending the design matrix with the column
+
+$$
+\frac{\partial}{\partial f}\left[A\cos(2\pi f t_i) + B\sin(2\pi f t_i)\right]
+= 2\pi t_i \left[-A\sin(2\pi f t_i) + B\cos(2\pi f t_i)\right]
+$$ {#eq-s2-newton}
+
+and solving the enlarged least-squares problem gives a correction $\Delta f$;
+repeating until $\Delta f$ stops changing converges in a handful of steps from
+any starting point within a bin or two of the true frequency. The templates
+implement exactly this, written out rather than taken from a library, so that
+the Python and R versions follow the same arithmetic.
+
+Why fit $f$ at all, when the generator's dial says what it is? Two reasons,
+and both are results in their own right. The generator's dial and the
+device's clock are two different oscillators, so their ratio is a measurement
+(@sec-s2-clock). And a fit at the *wrong* frequency leaves a residual that
+looks like distortion and is not, which would corrupt the ENOB.
+:::
+
+### Coherent and non-coherent sampling {#sec-s2-coherent}
+
+If the record contains an exact integer number of signal cycles, and that
+integer shares no factor with the number of samples, then the samples land on
+$n$ distinct phases spread evenly around the cycle. This is **coherent
+sampling**, and it is what the standards ask for: it removes the leakage that
+otherwise biases both the fit and any spectral estimate.
+
+The condition is
+
+$$
+f = \frac{M}{n}\,f_s, \qquad \gcd(M, n) = 1
+$$ {#eq-s2-coherent}
+
+with $M$ the number of cycles in the record and $n$ the number of samples.
+Choosing $n$ **prime** makes the coprimality automatic for every $M$ between
+$1$ and $n$, which is why the reference data uses $n = 2003$.
+
+::: {.callout-warning}
+## Perfect coherence is not available on this platform
+
+@eq-s2-coherent requires knowing $f_s$ exactly, and on a loop-driven sampler
+you do not. The records land on `loop()` iterations, so the realised interval
+is quantized and the achieved rate differs from the requested one in the last
+few digits — S1 measured exactly this. The sweep is therefore *approximately*
+coherent, and the fourth parameter is what rescues it: because $f$ is
+estimated rather than assumed, a small departure from coherence costs
+precision in the frequency estimate rather than biasing the amplitude and the
+residual. A three-parameter fit at the nominal frequency would not survive
+this, and that is worth knowing before trusting one.
+:::
+
+### Effective bits, and the two time bases {#sec-s2-enob}
+
+Subtract the fitted sinusoid and what is left is everything the model does not
+explain: noise, quantization, distortion, and timing error. Its RMS,
+$\sigma_r$, converts to an effective number of bits exactly as in S1:
+
+$$
+\mathrm{ENOB} = \log_2\!\left(\frac{\mathrm{FSR}}{\sqrt{12}\,\sigma_r}\right)
+$$ {#eq-s2-enob}
+
+The experiment computes this **twice from the same samples**, changing only
+the time base fed to the fit:
+
+1. with a **uniform grid**, $t_i = t_0 + iT$, which is what you get if you
+   assume the converter sampled when it was asked to;
+2. with the **device's own `t_us`**, which is when it actually did.
+
+The difference
+
+$$
+\Delta_\mathrm{timing} = \mathrm{ENOB}_{t_\mathrm{us}} - \mathrm{ENOB}_\mathrm{uniform}
+$$ {#eq-s2-penalty}
+
+is the **timing penalty**, in bits: the resolution you throw away by trusting
+the nominal grid. It is the single most useful number this experiment
+produces, because it is paid by every acquisition system that reports samples
+without timestamps — which is most of them.
+
+### Aperture jitter and the jitter limit {#sec-s2-jitter}
+
+Even with perfect timestamps there is a floor. The sample-and-hold closes at
+an instant that is itself uncertain by some $\sigma_j$ — **aperture jitter** —
+and that uncertainty is *not* reported in `t_us`, because the device does not
+know about it. Through @eq-s2-slew it becomes an amplitude error of standard
+deviation $2\pi f A \sigma_j$, and comparing that with the RMS of a full-scale
+sinusoid gives the classical limit
+
+$$
+\mathrm{SNR}_j = -20\log_{10}\!\left(2\pi f \sigma_j\right)
+$$ {#eq-s2-jitter-snr}
+
+which in bits, through the usual $\mathrm{SNR} = 6.02\,\mathrm{ENOB} + 1.76$
+dB for a full-scale sinusoid, is
+
+$$
+\mathrm{ENOB}_j = \frac{\mathrm{SNR}_j - 1.76}{6.02}
+$$ {#eq-s2-jitter-enob}
+
+::: {.content-hidden when-format="revealjs"}
+@eq-s2-jitter-snr falls at 20 dB per decade of frequency — about 3.3 bits per
+decade — while the noise floor measured in S1 is flat. Plot both against
+frequency and they cross. Below the crossover the converter is **noise
+limited** and a quieter front end helps; above it the converter is **jitter
+limited** and only a better clock helps. Knowing which side of that line an
+application sits on is the difference between a useful improvement and a
+wasted one.
+
+Note also what @eq-s2-jitter-snr does *not* contain: the number of bits. A
+16-bit converter and a 12-bit converter with the same aperture jitter reach
+the same ceiling at high frequency. Resolution you cannot time is resolution
+you do not have.
+:::
+
+### Clock accuracy {#sec-s2-clock}
+
+The fitted frequency $\hat{f}$ is expressed in the device's own time base,
+because `t_us` is the device's `micros()`. The generator's frequency
+$f_\mathrm{gen}$ is expressed in the generator's. Their ratio is therefore a
+comparison of two oscillators:
+
+$$
+\delta = \left(\frac{\hat{f}}{f_\mathrm{gen}} - 1\right) \times 10^{6}
+\quad [\mathrm{ppm}]
+$$ {#eq-s2-ppm}
+
+A device clock running fast makes a given real frequency appear *low* in
+device time, so the sign of $\delta$ tells you which way the board's
+oscillator errs. The measurement is only ever as good as the generator: its
+own frequency uncertainty enters the budget directly, and if the generator is
+the worse of the two oscillators, this measures the generator.
+
+::: {.callout-important}
+## The source has to be better than the thing you are measuring
+
+Two requirements, and neither is negotiable.
+
+**The generator's noise and distortion must be below the converter's.** The
+residual of the fit cannot tell you whether the imperfection came from the
+source or from the converter. If the generator's own harmonic distortion is
+$-70$ dB and you are trying to measure an 11-bit converter at $-68$ dB, you
+are measuring the generator.
+
+**Never use the board's own DAC as the source.** It shares the reference, the
+clock and the ground with the ADC, so its errors are correlated with the ones
+you are trying to measure — a gain error in the reference cancels instead of
+appearing, and the DAC's own timing jitter is the ADC's jitter. The result
+looks excellent and means nothing. Correlated errors are the one failure mode
+a residual cannot reveal.
+:::
+
+### What S2 hands to the rest of the site {#sec-s2-relation}
+
+S1 measured the noise floor with a constant input; that is the **upper bound**
+this experiment's dynamic ENOB approaches at low frequency, and comparing the
+two is the first check that both experiments were done correctly. The
+crossover frequency of @sec-s2-jitter tells [S3](../S3-aliasing-filtering/index.qmd)
+how much of its filter design budget is worth spending, and it tells M3
+whether a modal peak can be resolved at all.

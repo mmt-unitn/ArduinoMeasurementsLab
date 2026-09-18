@@ -1,0 +1,100 @@
+::: {.callout-warning}
+## Before you connect anything
+
+The signal generator is mains powered and its output is referenced to
+protective earth. The board's ground is referenced to the host's USB ground.
+Connecting the two creates a ground loop at best and a fault current path at
+worst.
+
+- Check the generator's output range **on a scope or a DMM** before it goes
+  anywhere near a pin. An analog input tolerates $0$ to $V_\mathrm{io}$ and
+  nothing else.
+- A bipolar generator output **must** pass through the conditioning stage
+  first — see [the conditioning board](../../hardware/conditioning-board.qmd).
+  Never connect a $\pm 5$ V output directly to a 3.3 V input.
+- If the generator has a floating-output or isolation option, use it.
+:::
+
+### 1. Establish the sampling rate you can actually get {#sec-s2-step-rate}
+
+```bash
+arduino-io info
+arduino-io mode 15 analog
+arduino-io stream 15 --hz 20000 --seconds 1 --csv /tmp/rate-check.csv
+```
+
+Read the summary line. The **achieved** rate is what matters, and on a
+loop-driven sampler it is not the requested one. Write it down: every
+frequency in the sweep is computed from it.
+
+::: {.callout-tip}
+## Choosing the record length
+
+Use a **prime** number of samples — the reference data uses $n = 2003$ — so
+that any number of cycles is automatically coprime with it and the sampling
+is as close to coherent as this platform allows (@sec-s2-coherent).
+:::
+
+### 2. Set the amplitude, once {#sec-s2-step-amplitude}
+
+Set the generator so that the signal at the pin spans about **90 %** of the
+converter's range, centred on mid-scale. Check both peaks with the DMM or a
+scope at the pin, not at the generator.
+
+::: {.callout-important}
+## A clipped sine destroys the fit
+
+A few clipped codes at the peaks cost far more than the same number of bad
+samples anywhere else, because the peaks are where the model has the least
+freedom to absorb them. The residual then reports distortion that is entirely
+your own doing. Leave headroom, verify it, and do not change the amplitude
+again during the sweep — it is an input to the budget.
+:::
+
+### 3. The frequency sweep {#sec-s2-step-sweep}
+
+Pick frequencies spanning at least two decades below Nyquist. For each one,
+compute the exact setting from
+
+$$
+f = \frac{M}{n}\,f_s
+$$
+
+with $M$ the number of cycles you want in the record, then set the generator
+to that value and record:
+
+```bash
+arduino-io stream 15 --hz 20000 --seconds 0.11 --csv data/sweep-1000hz.csv
+```
+
+For every point, write into the sidecar's `references[]`: the **exact**
+generator setting, its frequency uncertainty from the instrument's
+specification, its amplitude and the amplitude's uncertainty. The generator is
+not a channel on the board, so it belongs in `references[]` and not in
+`channels[]`.
+
+Work upward in frequency and watch the summary line at each step. When the
+achieved rate starts falling short of the request, you have found the loop
+rate, and that is the end of the usable sweep.
+
+### 4. Repeat one point after everything else {#sec-s2-step-repeat}
+
+Re-record the middle frequency at the end of the session, without changing
+anything. If it disagrees with the first recording by more than the fit's own
+uncertainty, something drifted — most likely the generator warming up — and
+the sweep has to be treated as two sets rather than one.
+
+### 5. Fill the sidecars {#sec-s2-step-sidecar}
+
+The same discipline as
+[S1's checklist](../S1-daq-static/handbook.qmd#sec-s1-step-sidecar), with two
+additions specific to this experiment:
+
+- [ ] `board.adc_bits`, `board.vref_mV`, `board.usbio_version`
+- [ ] `host.os`, `host.machine`, `host.hub`
+- [ ] `acquisition.requested_period_us` **and** `acquisition.achieved_rate_hz`
+- [ ] all six `stream_stats` counters
+- [ ] `references[]`: the generator's **model**, **frequency** and its
+      uncertainty, **amplitude** and its uncertainty — one entry per quantity
+- [ ] the conditioning stage's `gain` and `offset` as fitted, not as designed
+- [ ] `synthetic: false`
