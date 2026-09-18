@@ -1,0 +1,66 @@
+::: {.callout-tip}
+## What a budget is for
+
+An uncertainty budget is not a formality at the end of a report. It is the
+only part of the report that tells the reader what the result is worth, and
+the only part that tells *you* what to improve next. A measurement without one
+is an opinion with decimals.
+:::
+
+Every AMLab experiment ends with the same construction, following the GUM
+[@gum2008].
+
+**1. Write the model.** State the measurand $Y$ as a function of the
+quantities you actually observed,
+$Y = f(X_1, X_2, \dots, X_N)$. If you cannot write the function you cannot
+build the budget, and usually you have not understood the measurement.
+
+**2. List the input quantities.** Everything that enters $f$, plus everything
+that affects the result without appearing in $f$ — the influence quantities.
+The second group is where budgets go wrong: ambient temperature, the host
+operating system, self-heating, the loading of a divider by the input it
+drives.
+
+**3. Evaluate each standard uncertainty.** A **Type A** evaluation comes from
+the statistics of repeated observations, most often $s/\sqrt{n}$. A **Type B**
+evaluation comes from anything else: an instrument specification, a
+calibration certificate, a datasheet bound, physical reasoning. The
+distinction is about *how you found the number*, not about its quality — a
+Type B component is not a lesser one.
+
+For a Type B bound of half-width $a$:
+
+| What you know | Distribution | $u(x_i)$ |
+|---|---|---|
+| A certificate quoting $U$ with $k$ | Normal | $U/k$ |
+| A bound, nothing about the inside | Rectangular | $a/\sqrt{3}$ |
+| A bound, values near the centre more likely | Triangular | $a/\sqrt{6}$ |
+| A sinusoidal variation of amplitude $a$ | U-shaped | $a/\sqrt{2}$ |
+
+: Type B evaluations {#tbl-typeb}
+
+**4. Compute the sensitivity coefficients.**
+$c_i = \partial f/\partial X_i$, evaluated at the operating point. A
+sensitivity coefficient carries units, and getting it wrong is the most common
+way to produce a budget that is internally consistent and physically
+meaningless.
+
+**5. Combine.** With uncorrelated inputs,
+
+$$
+u_c(y) = \sqrt{\sum_{i=1}^{N} \left(c_i\,u(x_i)\right)^2}
+$$ {#eq-uc-shared}
+
+**6. Expand.** $U = k\,u_c$, with $k = 2$ for a coverage probability of
+approximately 95 % when the combined distribution is approximately normal.
+Always say which $k$ you used; a number quoted without it is unusable.
+
+**7. Read the budget.** The index
+$h_i = (c_i u(x_i))^2 / u_c^2$ says what fraction of the variance each
+component holds. Report it. The component with the largest index is the only
+one worth spending money or time on, and the components below a few per cent
+can be improved indefinitely with no effect at all.
+
+`labtools`' `budget_table()` performs steps 3, 5, 6 and 7 from a list of
+components; steps 1, 2 and 4 are yours, and they are the ones that require
+understanding the measurement.

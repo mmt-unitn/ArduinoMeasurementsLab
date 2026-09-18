@@ -1,0 +1,125 @@
+---
+title: "{{ID}} — Analysis template (Python)"
+subtitle: "{{TITLE}}"
+description: "One line"
+engine: jupyter
+jupyter: python3
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+The R template [`analysis-r.qmd`](analysis-r.qmd) has the same sections, the
+same figure labels and the same output tables, and produces the same numbers
+from the same data.
+
+## Setup
+
+```{python}
+#| label: setup
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd().parents[1] / "shared" / "python"))
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from labtools import (budget_table, lsb_volts, pivot_channels, read_run,
+                      synthetic_banner, timing_summary, u_quantization,
+                      validate_meta)
+
+plt.rcParams.update({
+    "figure.figsize": (7.0, 4.0),
+    "axes.grid": True,
+    "grid.alpha": 0.3,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+})
+
+RUNS = {"reference": "data/reference.csv"}
+```
+
+```{python}
+#| label: load
+runs = {name: read_run(path) for name, path in RUNS.items()}
+primary = runs["reference"]
+```
+
+```{python}
+#| label: banner
+#| echo: false
+#| output: asis
+print(synthetic_banner(primary.meta))
+```
+
+## Data quality
+
+```{python}
+#| label: quality
+#| echo: false
+#| output: asis
+for name, run in runs.items():
+    problems = validate_meta(run.meta)
+    stats = run.meta.get("stream_stats", {})
+    print(f"\n**{name}** — {stats.get('records', '?')} records; "
+          + ("metadata complete" if not problems
+             else "metadata problems: " + "; ".join(problems)) + "\n")
+```
+
+## A section that computes something
+
+```{python}
+#| label: compute
+# Visible: this is the part a student edits.
+```
+
+```{python}
+#| label: out-something
+#| echo: false
+#| output: asis
+# Hidden: formatting only. Note the leading newline, and the caption carrying
+# the crossref label -- never put a tbl- label on the cell itself.
+print("""
+| Quantity | Value |
+|---|---|
+| | |
+
+: A caption {#tbl-{{IDL}}-something}
+""")
+```
+
+```{python}
+#| label: fig-{{IDL}}-something
+#| echo: false
+#| fig-cap: "What the figure shows, and what the reader should conclude from it."
+fig, ax = plt.subplots()
+ax.set_xlabel("x")
+ax.set_ylabel("y")
+fig.tight_layout()
+plt.show()
+```
+
+## Uncertainty budget
+
+```{python}
+#| label: budget
+components = [
+    dict(quantity="TODO (Paolo)", value=0.0, unit="V",
+         distribution="type-a", std=0.0, sensitivity=1.0),
+]
+budget = budget_table(components, k=2)
+```
+
+```{python}
+#| label: out-budget
+#| echo: false
+#| output: asis
+print(budget.to_markdown(caption="Uncertainty budget",
+                         label="tbl-{{IDL}}-budget"))
+```
+
+## What to report
+
+1. ...

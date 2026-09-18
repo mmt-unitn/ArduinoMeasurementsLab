@@ -1,0 +1,109 @@
+---
+title: "{{ID}} — Analysis template (R)"
+subtitle: "{{TITLE}}"
+description: "One line"
+engine: knitr
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+The Python template [`analysis-py.qmd`](analysis-py.qmd) has the same
+sections, the same figure labels and the same output tables, and produces the
+same numbers from the same data.
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+library(ggplot2)
+library(patchwork)
+
+source("../../shared/R/labtools.R")
+
+theme_set(theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25)))
+
+RUNS <- c(reference = "data/reference.csv")
+```
+
+```{r}
+#| label: load
+runs <- lapply(RUNS, read_run)
+primary <- runs[["reference"]]
+```
+
+```{r}
+#| label: banner
+#| echo: false
+#| output: asis
+cat(synthetic_banner(primary$meta))
+```
+
+## Data quality
+
+```{r}
+#| label: quality
+#| echo: false
+#| output: asis
+for (name in names(runs)) {
+  meta <- runs[[name]]$meta
+  problems <- validate_meta(meta)
+  cat("\n**", name, "** — ", meta$stream_stats$records, " records; ",
+      if (length(problems) == 0) "metadata complete"
+      else paste0("metadata problems: ", paste(problems, collapse = "; ")),
+      "\n", sep = "")
+}
+```
+
+## A section that computes something
+
+```{r}
+#| label: compute
+# Visible: this is the part a student edits.
+```
+
+```{r}
+#| label: out-something
+#| echo: false
+#| output: asis
+cat('
+| Quantity | Value |
+|---|---|
+| | |
+
+: A caption {#tbl-{{IDL}}-something}
+')
+```
+
+```{r}
+#| label: fig-{{IDL}}-something
+#| echo: false
+#| fig-cap: "What the figure shows, and what the reader should conclude from it."
+ggplot(data.frame(x = 0, y = 0), aes(x, y)) + geom_blank() + labs(x = "x", y = "y")
+```
+
+## Uncertainty budget
+
+```{r}
+#| label: budget
+components <- list(
+  list(quantity = "TODO (Paolo)", value = 0, unit = "V",
+       distribution = "type-a", std = 0, sensitivity = 1)
+)
+budget <- budget_table(components, k = 2)
+```
+
+```{r}
+#| label: out-budget
+#| echo: false
+#| output: asis
+cat(budget_to_markdown(budget, caption = "Uncertainty budget",
+                       label = "tbl-{{IDL}}-budget"))
+```
+
+## What to report
+
+1. ...

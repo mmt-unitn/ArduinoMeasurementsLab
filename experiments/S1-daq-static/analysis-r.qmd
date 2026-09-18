@@ -1,0 +1,522 @@
+---
+title: "S1 — Analysis template (R)"
+subtitle: "Static characterization of the DAQ"
+description: "Offset, gain, noise, effective bits and timestamp quality, in R"
+engine: knitr
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment, so you can read the whole analysis before you touch a board. To
+analyse your own measurements, replace the files in `data/` and change the
+paths in the first chunk — nothing else.
+
+The Python template [`analysis-py.qmd`](analysis-py.qmd) has the same
+sections, the same figure labels and the same output tables, and produces the
+same numbers from the same data.
+
+::: {.callout-note collapse="true"}
+## How the chunks are organised
+
+Chunks that compute something show their code: they are the part you edit.
+Chunks that only format a result into a table are hidden, because reading them
+teaches nothing about measurement. Every table is emitted as markdown from a
+chunk with `#| output: asis`, which is what lets the same table appear in the
+HTML page and in the PDF handbook.
+:::
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+library(ggplot2)
+library(patchwork)
+
+source("../../shared/R/labtools.R")
+
+theme_set(theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25)))
+
+# The five runs of the procedure. Point these at your own files.
+CAL_RUNS <- c("data/cal-0v.csv", "data/cal-1v25.csv", "data/cal-2v50.csv")
+NOISE_RUNS <- c(linux = "data/noise-linux.csv", macos = "data/noise-macos.csv")
+PRIMARY <- "linux"        # the host whose run carries the main analysis
+PIN_REFERENCE <- 15       # the pin fed by the voltage reference
+PIN_SHORTED <- 16         # the pin shorted to GND
+```
+
+```{r}
+#| label: load
+runs <- lapply(NOISE_RUNS, read_run)
+primary <- runs[[PRIMARY]]
+board <- primary$meta$board
+
+LSB <- lsb_volts(primary$meta)          # volts per code, 2^n - 1 full scale
+FSR <- board$vref_mV / 1000             # full-scale range, volts
+N_BITS <- board$adc_bits
+```
+
+```{r}
+#| label: banner
+#| echo: false
+#| output: asis
+cat(synthetic_banner(primary$meta))
+```
+
+## Data quality
+
+Before any number is computed, the metadata must be complete and the recording
+must be intact. A run with lost records is not a slow run: it is a run with
+holes in its time axis.
+
+```{r}
+#| label: quality
+#| echo: false
+#| output: asis
+for (name in names(runs)) {
+  meta <- runs[[name]]$meta
+  problems <- validate_meta(meta)
+  stats <- meta$stream_stats
+  counters <- stats[setdiff(names(stats), "records")]
+  lossy <- counters[vapply(counters, function(v) is.numeric(v) && v > 0, logical(1))]
+  cat("\n**", name, "** — ", stats$records, " records; ",
+      if (length(problems) == 0) "metadata complete"
+      else paste0("metadata problems: ", paste(problems, collapse = "; ")),
+      "; ",
+      if (length(lossy) == 0) "no losses reported"
+      else paste0("losses: ",
+                  paste(names(lossy), unlist(lossy), sep = " = ", collapse = ", ")),
+      "\n", sep = "")
+}
+```
+
+```{r}
+#| label: out-board
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| Board | `%s` |
+| Reported ADC resolution | %d bit |
+| Reference voltage $V_\\mathrm{ref}$ | %.3f V |
+| One LSB, $q = V_\\mathrm{ref}/(2^{n}-1)$ | %.2f µV |
+| Quantization uncertainty $u_q = q/\\sqrt{12}$ | %.2f µV |
+
+: What the board says about itself {#tbl-s1-board}
+', board$model, N_BITS, FSR, LSB * 1e6, u_quantization(LSB) * 1e6))
+```
+
+## Static calibration
+
+Each calibration run is a few hundred readings of a voltage measured
+independently with the DMM. The mean indication at each point, fitted against
+the reference value, gives the offset and the gain error of the
+[calibration model](handbook.qmd#eq-s1-fit) in the handbook.
+
+```{r}
+#| label: calibration
+points <- lapply(CAL_RUNS, function(path) {
+  run <- read_run(path)
+  pin <- run$meta$acquisition$pins[[1]]
+  channel <- Filter(function(c) c$pin == pin, run$meta$channels)[[1]]
+  volts <- run$data$volts[run$data$pin == pin]
+  data.frame(
+    run = run$meta$run,
+    reference_V = channel$reference_value,
+    u_reference_V = channel$reference_u,
+    mean_indicated_V = mean(volts),
+    sd_V = sd(volts),
+    n = length(volts)
+  )
+})
+cal <- do.call(rbind, points)
+cal <- cal[order(cal$reference_V), ]
+rownames(cal) <- NULL
+
+# Ordinary least squares of the indication on the reference value.
+x <- cal$reference_V
+y <- cal$mean_indicated_V
+n_pts <- length(x)
+sxx <- sum((x - mean(x))^2)
+b <- sum((x - mean(x)) * (y - mean(y))) / sxx
+a <- mean(y) - b * mean(x)
+cal$residual_V <- y - (a + b * x)
+
+# Standard errors of the fit, from the residuals (n - 2 degrees of freedom).
+s_res <- sqrt(sum(cal$residual_V^2) / (n_pts - 2))
+u_b <- s_res / sqrt(sxx)
+u_a <- s_res * sqrt(1 / n_pts + mean(x)^2 / sxx)
+```
+
+```{r}
+#| label: out-cal
+#| echo: false
+#| output: asis
+rows <- sprintf("| %s | %.4f | %.5f | %.6f | %.6f | %d | %+.1f |",
+                cal$run, cal$reference_V, cal$u_reference_V,
+                cal$mean_indicated_V, cal$sd_V, cal$n, cal$residual_V * 1e6)
+cat(sprintf('
+| Run | Reference [V] | $u$(ref) [V] | Mean indication [V] | $s$ [V] | $n$ | Residual [µV] |
+|---|---|---|---|---|---|---|
+%s
+
+: Calibration points and fit residuals {#tbl-s1-cal}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: out-cal-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+Fitted offset $a = %.3f$ mV with $u(a) = %.3f$ mV; fitted
+slope $b = %.6f$, that is a gain error of $%+.3f\\,\\%%$, with
+$u(b) = %.6f$. The largest residual is
+$%.1f$ µV, or
+$%.1f$ LSB — the bound that enters the
+budget as residual nonlinearity, because three points cannot correct it.
+', a * 1e3, u_a * 1e3, b, (b - 1) * 100, u_b,
+   max(abs(cal$residual_V)) * 1e6, max(abs(cal$residual_V)) / LSB))
+```
+
+```{r}
+#| label: fig-s1-cal
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 5.2
+#| fig-cap: "Calibration: indication against reference (top) and fit residuals (bottom). Three points give one degree of freedom — enough to see nonlinearity, not enough to correct it."
+p_fit <- ggplot(cal, aes(reference_V, mean_indicated_V)) +
+  geom_abline(intercept = a, slope = b, linewidth = 0.5) +
+  geom_point(size = 2.4) +
+  labs(x = NULL, y = "Indicated voltage [V]",
+       subtitle = sprintf("V_ind = %.2f mV + %.5f V", a * 1e3, b))
+
+p_res <- ggplot(cal, aes(reference_V, residual_V * 1e6)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.4) +
+  geom_point(size = 2.4) +
+  labs(x = "Reference voltage [V]", y = "Residual [µV]")
+
+p_fit / p_res + plot_layout(heights = c(2, 1))
+```
+
+## Noise floor
+
+The long run carries two channels: the reference, and an input shorted to
+ground. The shorted channel is the floor — whatever appears there is the
+board's, not the source's.
+
+```{r}
+#| label: noise
+wide <- pivot_channels(primary$data, "volts")
+v_ref <- wide[[as.character(PIN_REFERENCE)]]
+v_short <- wide[[as.character(PIN_SHORTED)]]
+
+noise <- data.frame(
+  channel = c("reference", "shorted"),
+  pin = c(PIN_REFERENCE, PIN_SHORTED),
+  mean_V = c(mean(v_ref), mean(v_short)),
+  sd_V = c(sd(v_ref), sd(v_short)),
+  n = c(length(v_ref), length(v_short))
+)
+noise$sd_LSB <- noise$sd_V / LSB
+noise$peak_to_peak_LSB <- c(diff(range(v_ref)), diff(range(v_short))) / LSB
+noise$u_mean_V <- noise$sd_V / sqrt(noise$n)
+```
+
+```{r}
+#| label: out-noise
+#| echo: false
+#| output: asis
+rows <- sprintf("| %s | %d | %.6f | %.6f | %.1f | %.0f | %.2f |",
+                noise$channel, noise$pin, noise$mean_V, noise$sd_V,
+                noise$sd_LSB, noise$peak_to_peak_LSB, noise$u_mean_V * 1e6)
+cat(sprintf('
+| Channel | Pin | Mean [V] | $\\sigma$ [V] | $\\sigma$ [LSB] | Peak-to-peak [LSB] | $\\sigma/\\sqrt{n}$ [µV] |
+|---|---|---|---|---|---|---|
+%s
+
+: Noise on the two channels of the `%s` run, $n = %d$ {#tbl-s1-noise}
+', paste(rows, collapse = "\n"), PRIMARY, nrow(wide)))
+```
+
+```{r}
+#| label: fig-s1-hist
+#| echo: false
+#| fig-width: 7.4
+#| fig-height: 3.4
+#| fig-cap: "Distribution of the readings on each channel, in ADC codes relative to the channel mean, with a Gaussian of the same standard deviation. A converter limited by quantization alone would put every reading in one or two bins."
+hist_data <- do.call(rbind, lapply(
+  list(c("reference", PIN_REFERENCE), c("shorted", PIN_SHORTED)),
+  function(spec) {
+    pin <- as.integer(spec[2])
+    codes <- primary$data$raw[primary$data$pin == pin]
+    centred <- codes - round(mean(codes))
+    data.frame(panel = sprintf("%s (pin %d), sigma = %.1f LSB",
+                               spec[1], pin, sd(centred)),
+               centred = centred)
+  }))
+
+gaussians <- do.call(rbind, lapply(split(hist_data, hist_data$panel), function(d) {
+  grid <- seq(min(d$centred), max(d$centred), length.out = 200)
+  data.frame(panel = d$panel[1], centred = grid,
+             density = dnorm(grid, 0, sd(d$centred)))
+}))
+
+ggplot(hist_data, aes(centred)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 1, alpha = 0.75,
+                 fill = "#2a7fa8") +
+  geom_line(data = gaussians, aes(y = density), linewidth = 0.5, colour = "grey20") +
+  facet_wrap(~panel, scales = "free_x") +
+  labs(x = "Code − mean code [LSB]", y = "Density")
+```
+
+## Effective number of bits
+
+The [ENOB definition](handbook.qmd#eq-s1-enob) turns the measured spread into
+the resolution an ideal converter would need to produce it. This is the
+*static* effective resolution: measured on a constant input, it says nothing
+about behaviour at speed, which is what S2 measures.
+
+```{r}
+#| label: effective-bits
+sigma_ref <- noise$sd_V[noise$channel == "reference"]
+sigma_short <- noise$sd_V[noise$channel == "shorted"]
+
+enob_ref <- enob(FSR, sigma_ref)
+enob_short <- enob(FSR, sigma_short)
+enob_nf <- log2(FSR / (6.6 * sigma_ref))    # noise-free, +-3.3 sigma span
+q_eff <- FSR / 2^enob_ref                   # effective quantization step
+```
+
+```{r}
+#| label: out-enob
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Reference channel | Shorted channel |
+|---|---|---|
+| Nominal resolution | %d bit | %d bit |
+| Effective number of bits | %.2f bit | %.2f bit |
+| Noise-free resolution | %.2f bit | — |
+| Effective quantization step $q_\\mathrm{eff}$ | %.1f µV | — |
+| Nominal step $q$ | %.2f µV | %.2f µV |
+
+: Effective resolution against the nominal one {#tbl-s1-enob}
+', N_BITS, N_BITS, enob_ref, enob_short, enob_nf, q_eff * 1e6,
+   LSB * 1e6, LSB * 1e6))
+```
+
+```{r}
+#| label: out-enob-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+The board reports **%d bits** and delivers **%.1f**. The
+effective quantization step is %.0f times the nominal one, and it
+is that number, not $q$, that belongs in the uncertainty budget below.
+', N_BITS, enob_ref, q_eff / LSB))
+```
+
+## Timestamps
+
+Every record carries the device's own `micros()`. Fitting the
+[sampling grid](handbook.qmd#eq-s1-grid) and reading the residuals says
+whether the sampling was regular, and if not, how it failed.
+
+```{r}
+#| label: timing
+timing <- lapply(runs, function(run) timing_summary(run$data))
+primary_timing <- timing[[PRIMARY]]
+ts <- primary_timing$stats
+```
+
+```{r}
+#| label: fig-s1-timing
+#| echo: false
+#| fig-width: 7.6
+#| fig-height: 3.4
+#| fig-cap: "Sampling grid of the primary run. Left: the interval between consecutive records. Right: the residuals of the least-squares grid fit. A flat band is bounded jitter, a slope is a wrong period, a step is a schedule restart."
+p_int <- ggplot(data.frame(i = seq_along(primary_timing$intervals_us),
+                           d = primary_timing$intervals_us),
+                aes(i, d)) +
+  geom_line(linewidth = 0.2) +
+  geom_hline(yintercept = ts$median_interval_us, linetype = "dashed",
+             linewidth = 0.3, colour = "grey30") +
+  labs(x = "Record index", y = "Interval [µs]",
+       subtitle = sprintf("median %.0f µs", ts$median_interval_us))
+
+p_res <- ggplot(data.frame(i = seq_along(primary_timing$residuals_us),
+                           r = primary_timing$residuals_us),
+                aes(i, r)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.25) +
+  labs(x = "Record index", y = "Grid-fit residual [µs]")
+
+p_int | p_res
+```
+
+```{r}
+#| label: out-timing
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| Requested period | %d µs |
+| Fitted period $\\hat{T}$ | %.2f µs |
+| Achieved rate | %.2f Hz |
+| Interval: median / min / max | %.0f / %.0f / %.0f µs |
+| Interval standard deviation | %.1f µs |
+| Residual RMS | %.1f µs |
+| Largest absolute residual | %.1f µs |
+| Intervals longer than $1.5\\times$ the median | %d |
+| Timestamp quantization $u_q$ | %.2f µs |
+
+: Sampling grid of the `%s` run {#tbl-s1-timing}
+', primary$meta$acquisition$requested_period_us, ts$period_us,
+   ts$achieved_rate_hz, ts$median_interval_us, ts$min_interval_us,
+   ts$max_interval_us, ts$sd_interval_us, ts$residual_rms_us,
+   ts$residual_max_abs_us, ts$n_long_intervals, u_quantization(1), PRIMARY))
+```
+
+## The host as an influence quantity
+
+The same board, the same firmware and the same request, recorded on two
+different hosts. Nothing about the measurand changed.
+
+```{r}
+#| label: out-hosts
+#| echo: false
+#| output: asis
+rows <- vapply(names(runs), function(name) {
+  s <- timing[[name]]$stats
+  meta <- runs[[name]]$meta
+  sprintf("| %s | `%s` | %.2f | %.2f | %.1f | %.1f | %d | %s |",
+          meta$host$os, meta$host$machine, s$achieved_rate_hz, s$period_us,
+          s$sd_interval_us, s$residual_rms_us, s$n_long_intervals,
+          as.character(meta$stream_stats$device_overruns))
+}, character(1))
+cat(sprintf('
+| Host | Machine | Achieved [Hz] | $\\hat{T}$ [µs] | $s$(interval) [µs] | Residual RMS [µs] | Long intervals | Device overruns |
+|---|---|---|---|---|---|---|---|
+%s
+
+: The same acquisition on two hosts {#tbl-s1-hosts}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: fig-s1-hosts
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 3.2
+#| fig-cap: "Grid-fit residuals for both hosts on the same axes. The board is identical in the two runs; what differs is how often the host was late to drain the endpoint."
+host_residuals <- do.call(rbind, lapply(names(runs), function(name) {
+  data.frame(host = runs[[name]]$meta$host$os,
+             i = seq_along(timing[[name]]$residuals_us),
+             r = timing[[name]]$residuals_us)
+}))
+
+ggplot(host_residuals, aes(i, r, colour = host)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.25) +
+  labs(x = "Record index", y = "Grid-fit residual [µs]", colour = NULL) +
+  theme(legend.position = "top")
+```
+
+## Uncertainty budget
+
+The measurand is the [corrected voltage](handbook.qmd#eq-s1-correct)
+$\hat{V} = (V_\mathrm{ind} - a)/b$, evaluated at the reference point, with the
+[sensitivity coefficients](handbook.qmd#eq-s1-sensitivity) of the handbook.
+
+```{r}
+#| label: budget
+v_ind <- noise$mean_V[noise$channel == "reference"]
+n_avg <- noise$n[noise$channel == "reference"]
+v_hat <- (v_ind - a) / b
+
+c_vind <- 1 / b
+c_a <- -1 / b
+c_b <- -(v_ind - a) / b^2
+
+u_dmm <- max(cal$u_reference_V)
+inl_bound <- max(abs(cal$residual_V))
+
+components <- list(
+  list(quantity = "Repeatability of the mean", value = v_ind, unit = "V",
+       distribution = "type-a", std = sigma_ref / sqrt(n_avg),
+       sensitivity = c_vind),
+  list(quantity = "Effective quantization", value = 0, unit = "V",
+       distribution = "rectangular", half_width = q_eff / 2, sensitivity = c_vind),
+  list(quantity = "Offset a from the fit", value = a, unit = "V",
+       distribution = "type-a", std = u_a, sensitivity = c_a),
+  list(quantity = "Slope b from the fit", value = b, unit = "V",
+       distribution = "type-a", std = u_b, sensitivity = c_b),
+  list(quantity = "Reference value (DMM)", value = 0, unit = "V",
+       distribution = "type-a", std = u_dmm, sensitivity = 1),
+  list(quantity = "Residual nonlinearity", value = 0, unit = "V",
+       distribution = "rectangular", half_width = inl_bound, sensitivity = c_vind)
+)
+budget <- budget_table(components, k = 2)
+```
+
+```{r}
+#| label: out-budget
+#| echo: false
+#| output: asis
+cat(budget_to_markdown(
+  budget,
+  caption = sprintf("Uncertainty budget for the corrected reading at $V_\\mathrm{ind} = %.4f$ V", v_ind),
+  label = "tbl-s1-budget"))
+```
+
+```{r}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant <- budget$table[which.max(budget$table$index_pct), ]
+quant <- budget$table$index_pct[budget$table$quantity == "Effective quantization"]
+cat(sprintf('
+Corrected value $\\hat{V} = %.5f$ V, against a reference value of
+%.4f V, with an expanded uncertainty
+$U = %.3f$ mV at $k = 2$. The dominant component is
+**%s** at %.0f %% of the combined
+variance; the effective quantization contributes %.1f %%.
+', v_hat, max(cal$reference_V), budget$U * 1e3, dominant$quantity,
+   dominant$index_pct, quant))
+```
+
+::: {.callout-note}
+## What this budget assumes
+
+The components are treated as uncorrelated, which $a$ and $b$ are not: they
+come from the same fit. The correlation matters most at the ends of the
+calibrated range, and propagating the covariance matrix of the fit instead is
+the natural extension (see
+[Calibrating offset and gain](handbook.qmd#sec-s1-calibration)). The budget
+also uses the *effective* quantization step from @tbl-s1-enob rather than the
+nominal LSB, because the converter's own noise, not its code width, is what
+sets the resolution here.
+:::
+
+## What to report
+
+1. @tbl-s1-cal and @fig-s1-cal: the fit, with offset and gain and their
+   uncertainties.
+2. @fig-s1-hist and @tbl-s1-noise: the noise on both channels, in volts and in
+   LSB, with the shorted channel identified as the floor.
+3. @tbl-s1-enob: effective bits against nominal, and which of the two you
+   would quote in a specification, and why.
+4. @fig-s1-timing and @tbl-s1-timing: the residual pattern classified as band,
+   slope or step, and the number of long intervals.
+5. @tbl-s1-hosts and @fig-s1-hosts: the host comparison, with a recommendation
+   you can defend from your own numbers.
+6. @tbl-s1-budget: the budget, the dominant component, and what you would
+   change first to reduce it.

@@ -1,0 +1,111 @@
+### Session timing {#sec-s1-instructor-timing}
+
+Three hours, for a pair of students at one bench:
+
+| Time | Activity | Watch for |
+|---|---|---|
+| 0:00–0:20 | Slides, and `arduino-io info` on their own board | They write down `adc_bits` and believe it |
+| 0:20–0:50 | Wiring and DMM measurement of the three points | Probing at the source instead of at the pin |
+| 0:50–1:20 | The three calibration recordings | Reusing an old DMM reading after re-wiring |
+| 1:20–1:45 | The five-second two-channel run | Forgetting to copy the summary line |
+| 1:45–2:05 | Repeat on the second host | Changing the cable or the hub at the same time |
+| 2:05–2:50 | Analysis template | See below |
+| 2:50–3:00 | Budget discussion | — |
+
+The analysis is the part that overruns. If time is short, drop the second host
+(@sec-s1-step-host) and hand out the shipped `noise-macos` reference run
+instead: the comparison is the lesson, not the act of moving the board.
+
+### Expected results {#sec-s1-instructor-expected}
+
+On the reference bench, with the shipped synthetic data, the numbers come out
+as follows. [TODO (Paolo)]{.todo}: replace this table with the values measured
+on the real bench once the hardware validation is done — until then these are
+the generator's parameters, not measurements, and should be presented to
+students as "roughly what to expect", never as target values to reproduce.
+
+- Offset: of the order of $1$–$2$ mV, i.e. tens of LSB. Students are usually
+  surprised it is not zero, and more surprised it is *stable*.
+- Gain error: a few parts in a thousand. Almost entirely the reference
+  voltage, not the converter.
+- Noise: around $0.5$ mV RMS, about 11 LSB at 16 bits.
+- Effective bits: near 11, against 16 nominal. **This is the headline result**
+  and the one worth ten minutes of discussion.
+- Interval standard deviation on a good host: tens of microseconds, bounded,
+  because a record lands on the next `loop()` iteration.
+- Long intervals: a handful on Linux, several times more on macOS.
+
+### Common failures, in the order they happen {#sec-s1-instructor-failures}
+
+1. **The input is left floating** between wiring changes. The readings wander
+   over hundreds of LSB and look like enormous noise. Ask them what the input
+   impedance of a sample-and-hold looks like and they find it themselves.
+2. **The DMM is read once and reused.** The reference IC drifts as it warms;
+   the calibration residuals then look like nonlinearity. This is the most
+   instructive failure in the experiment — let it happen to one group and have
+   them explain it to the others.
+3. **Only two calibration points.** With two points the fit is exact and the
+   residual is identically zero, so the nonlinearity term silently disappears
+   from the budget. Insist on three.
+4. **`stream_stats` not copied.** Then nobody can tell whether a strange
+   timing result is the board or a lost record. The analysis template prints a
+   warning when the counters are missing; point at it.
+5. **The second host run differs in more than the host** — different cable, no
+   hub, a different pin. The comparison then proves nothing. Make them write
+   down what they changed *before* they move the board.
+6. **Averaging is expected to fix everything.** Some group will average 20 000
+   readings and expect microvolt accuracy. The budget answers them: the Type A
+   term is already below the calibration terms after a few hundred samples.
+
+### Discussion questions and where they should land {#sec-s1-instructor-discussion}
+
+**"Why is the effective resolution 11 bits when the board says 16?"** Because
+`adc_bits` is the width of the code word the driver converts with, not a claim
+about information content. The extra bits are not a lie — they are what the
+conversion in @eq-s1-lsb needs — but reading them as resolution is. Connect
+this to how converters are specified commercially.
+
+**"Should we correct the offset?"** Yes, and then argue about what remains.
+The correction is only as good as the calibration, so the budget gains a term
+it did not have; it is still worth it because the term is much smaller than
+the offset was. This is the general shape of every correction in metrology.
+
+**"The quantization term is tiny. Why did we bother?"** Because they did not
+know it was tiny until they computed it, and because on a 12-bit board with a
+gain of 100 ahead of it, it is not. Have them redo the budget for
+$\mathrm{ENOB} = 11$ as the effective quantization step and watch the term
+move.
+
+**"Which host should we use?"** Let them answer from their own table rather
+than from the site's recommendation. The conclusion should be Linux, but
+reached by measurement.
+
+### Assessment rubric {#sec-s1-instructor-rubric}
+
+Out of 100, for the report:
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Sidecar completeness | 10 | Every run reconstructible from its metadata alone; `reference_u` present and justified |
+| Calibration | 20 | Fit shown with residuals; offset and gain reported with their uncertainties; three points, not two |
+| Noise and effective bits | 20 | $\sigma$ in both volts and LSB; ENOB computed and its *static* nature stated; the shorted channel used as a floor |
+| Timing analysis | 20 | Residuals of @eq-s1-grid plotted and classified as band, slope or step; long intervals counted, not ignored |
+| Host comparison | 10 | Same-board, same-request comparison with a defensible conclusion |
+| Uncertainty budget | 20 | Correct sensitivity coefficients from @eq-s1-sensitivity; components identified as Type A or B; the dominant term named and a concrete way to reduce it proposed |
+
+Deduct across the board for any number quoted without a unit, for any
+uncertainty quoted without saying whether it is standard or expanded, and for
+any plot without axis labels. Those three are not pedantry: they are the three
+things that make a report unusable by the next person.
+
+### If a group finishes early {#sec-s1-instructor-extension}
+
+- Characterize the INL properly by adding intermediate points with a
+  potentiometer, and replace the nonlinearity bound in the budget with a
+  correction plus its uncertainty.
+- Propagate the covariance of $a$ and $b$ instead of treating them as
+  independent (@sec-s1-calibration), and quantify how much the budget changes
+  at the ends of the range.
+- Repeat the noise run at 10 kHz and again free-running, and show where the
+  bounded-jitter band stops being negligible against the period — which is the
+  bridge to S2.

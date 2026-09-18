@@ -1,0 +1,42 @@
+---
+title: "{{ID}} — {{TITLE}}"
+subtitle: "A question the session answers"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before the bench {.center}
+
+### What you are about to measure
+
+Three bullets, no more.
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will build
+
+The rig, in one table or one figure.
+
+### Then
+
+Open [the handbook](handbook.qmd), and one of the analysis templates —
+[Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+## What you should come away with {.center}
+
+### Sentences you should be able to defend
+
+1. "..."
+2. "..."

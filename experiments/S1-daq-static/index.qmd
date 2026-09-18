@@ -13,10 +13,93 @@ experiment:
   validated:
     usbio: "TODO (Paolo)"
     driver: "TODO (Paolo)"
+toc: true
 ---
 
-::: {.callout-note}
-## Experiment not written yet
-This folder is part of the AMLab scaffold. The overview, slides, handbook and
-the two analysis templates will be added.
+A board advertises a 16-bit analog input. This experiment finds out how many
+of those bits carry information, how far the zero and the scale are from
+nominal, and whether the timestamps on the samples describe the sampling grid
+that was requested.
+
+It is the first experiment on this site because every later uncertainty budget
+quotes its results: the effective resolution of the converter, and the quality
+of the sampling grid, are inputs to the thermal and mechanical experiments
+just as much as to S2 and S3.
+
+## Materials {#sec-s1-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — 15 minutes, before the bench
+- [Handbook](handbook.qmd) — theory, procedure, tasks, questions
+  ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd) — Jupyter engine
+- [R template](analysis-r.qmd) — knitr engine
+
+Both ship with reference data and produce the same numbers.
+:::
+
+:::
+
+## What you measure {#sec-s1-index-measure}
+
+| Quantity | How | Where it is used later |
+|---|---|---|
+| Offset and gain error | Three-point calibration against a DMM | Every voltage measurement on this site |
+| Noise floor $\sigma$ | Repeated readings of a constant input, and of a shorted input | The Type A term of every budget |
+| Effective number of bits | $\log_2\left(\mathrm{FSR}/(\sqrt{12}\,\sigma)\right)$ | The quantization term of every budget; compared with S2's dynamic ENOB |
+| Sampling-grid quality | Least-squares grid fit of the device timestamps | S2's timing penalty, S3's aliasing, M3's modal analysis |
+| Host dependence | The same acquisition on two hosts | The recommendation of which host to run a bench on |
+
+: What S1 produces {#tbl-s1-index-outputs}
+
+## Bench {#sec-s1-index-bench}
+
+**Tier 1.** A supported board, a USB cable and a hub, a voltage reference IC,
+two resistors and a digital multimeter. No signal generator, no oscilloscope.
+
+**Board.** The static measurements work on any supported board. The timestamp
+analysis needs streaming, which the Renesas boards (UNO R4 Minima, Nano R4)
+do not have — see [Supported boards](../../setup/boards.qmd).
+
+**Host.** Linux is recommended, and one of the experiment's results is the
+evidence for that recommendation.
+
+## Reference data {#sec-s1-index-data}
+
+Five generated runs ship with the experiment, in `data/`:
+
+| File | Contents |
+|---|---|
+| `cal-0v`, `cal-1v25`, `cal-2v50` | 200 records each at 1 kHz, one channel, at the three calibration points |
+| `noise-linux` | 5 s at 1 kHz, reference and shorted channel, Linux host |
+| `noise-macos` | The same acquisition, macOS host |
+
+: Reference data shipped with S1 {#tbl-s1-index-data}
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+It is produced by a seeded generator (`tools/synth/s1_daq_static.py`) whose
+parameters are plausible placeholders, not measurements — they are marked
+`TODO (Paolo)` in `tools/synth/params/`. It exists so the analysis templates
+render, and are checked in continuous integration, with no hardware attached.
+Every page that uses it says so.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+Three hours, tier 1, no prerequisites — this is the session to run first, and
+the one where the effective-bits result does the most teaching. Full notes,
+expected values, common failures and the rubric are in the
+[handbook](handbook.qmd#sec-s1-instructor).
 :::

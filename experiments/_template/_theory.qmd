@@ -1,0 +1,22 @@
+### First idea {#sec-{{IDL}}-theory-first}
+
+Theory is written once, here, and included by both `slides.qmd` and
+`handbook.qmd`. Use `###` headings: `slides.qmd` sets `slide-level: 3`, so each
+one becomes a slide, and in the handbook they nest under "Theory".
+
+All mathematics in LaTeX, with labelled display equations:
+
+$$
+y = a + b\,x
+$$ {#eq-{{IDL}}-model}
+
+::: {.content-hidden when-format="revealjs"}
+Material that belongs in the handbook but would not fit on a slide goes in a
+block like this one — derivations, caveats, the second-order treatment. It is
+still written once; only its audience differs.
+:::
+
+### Second idea {#sec-{{IDL}}-theory-second}
+
+Keep each idea to one screen. If a section cannot be said in one slide, it is
+two ideas.

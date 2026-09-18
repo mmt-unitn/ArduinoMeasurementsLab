@@ -1,0 +1,216 @@
+### What a data acquisition system does to a voltage {#sec-s1-chain}
+
+Between the quantity you care about and the number in your file there is a
+chain, and every link adds something of its own. For S1 the chain is short on
+purpose — a voltage straight into an analog input — so that what we measure is
+the acquisition system itself and nothing else.
+
+$$
+\underbrace{V}_{\text{measurand}}
+\;\longrightarrow\;
+\underbrace{(1 + \varepsilon_G)\,V + V_{os} + \mathrm{INL}(V)}_{\text{static errors}}
+\;\longrightarrow\;
+\underbrace{+\,\eta}_{\text{noise}}
+\;\longrightarrow\;
+\underbrace{\mathrm{round}(\cdot/q)}_{\text{quantization}}
+\;\longrightarrow\;
+\underbrace{N}_{\text{code}}
+$$ {#eq-s1-chain}
+
+The four terms are different in kind, and the whole experiment is about
+telling them apart:
+
+- $\varepsilon_G$, the **gain error**, and $V_{os}$, the **offset**, are
+  systematic and *correctable*. You measure them once and subtract them
+  afterwards; what remains in the budget is the uncertainty of the correction,
+  not the error itself.
+- $\mathrm{INL}(V)$, the **integral nonlinearity**, is systematic but not
+  described by two numbers. Unless you characterize it point by point it
+  remains as a bound: an interval you cannot correct within.
+- $\eta$, the **noise**, is random. It averages down as $1/\sqrt{N}$, which is
+  why it is the one term you can trade measurement time against.
+- **Quantization** is deterministic given the input, but over a population of
+  inputs it behaves like a bounded random error, and that is how the GUM
+  treats it.
+
+### Quantization {#sec-s1-quantization}
+
+The converter reports an integer code $N$. The driver turns it back into volts
+with full scale $2^n - 1$:
+
+$$
+V_\mathrm{ind} = N\,q, \qquad q = \frac{V_\mathrm{ref}}{2^{n} - 1}
+$$ {#eq-s1-lsb}
+
+$q$ is one **LSB**. Any voltage within $\pm q/2$ of a code produces that code,
+so the code tells you the voltage only to within that interval. Knowing
+nothing else, the GUM assigns a rectangular distribution of half-width $q/2$,
+whose standard deviation is
+
+$$
+u_q = \frac{q}{\sqrt{12}}
+$$ {#eq-s1-uq}
+
+::: {.content-hidden when-format="revealjs"}
+The $\sqrt{12}$ is not a convention, it is the standard deviation of a uniform
+distribution on an interval of width $q$: $\int_{-q/2}^{q/2} x^2\,\mathrm{d}x/q
+= q^2/12$. It appears again in @eq-s1-enob and again, with $q = 1\,\mu$s, for
+the timestamps in @sec-s1-timing. Whenever you know a bound and nothing about
+what happens inside it, this is the number you use.
+:::
+
+On a board reporting $n = 16$ bits with $V_\mathrm{ref} = 3.3$ V,
+$q \approx 50.4\ \mu$V and $u_q \approx 14.5\ \mu$V. Hold on to those figures:
+by the end of the experiment you will find that they are the *smallest* term
+in the budget by a wide margin, and that is the first real result.
+
+### Noise, and how many bits are actually there {#sec-s1-enob}
+
+Feed the converter a constant voltage and read it many times. If the only
+imperfection were quantization you would get one code, or two adjacent codes
+if the input sat near a transition. What you actually get is a distribution
+several codes wide: the input stage, the reference and the converter itself
+all contribute noise, and the result is that the last few bits of the reading
+carry no information.
+
+The usual way to say how many bits are left is to ask what resolution an
+*ideal* converter would need to produce the observed spread. An ideal $m$-bit
+converter over a full-scale range FSR has quantization noise
+$\mathrm{FSR}/(2^m\sqrt{12})$; setting that equal to the measured standard
+deviation $\sigma$ gives the **effective number of bits**
+
+$$
+\mathrm{ENOB} = \log_2\!\left(\frac{\mathrm{FSR}}{\sqrt{12}\,\sigma}\right)
+$$ {#eq-s1-enob}
+
+::: {.content-hidden when-format="revealjs"}
+Two warnings about @eq-s1-enob. First, it is the *static* effective resolution:
+it describes a converter fed a constant, and it says nothing about what happens
+at 10 kHz, where aperture jitter and settling matter. The dynamic ENOB of IEEE
+Std 1241 [@ieee1241], measured from the residuals of a fitted sine, is a
+different and generally smaller number; S2 measures it and the two should be
+compared. Second, manufacturers often quote *noise-free* resolution instead,
+
+$$
+\mathrm{ENOB}_\mathrm{nf} = \log_2\!\left(\frac{\mathrm{FSR}}{6.6\,\sigma}\right)
+$$ {#eq-s1-enob-nf}
+
+using a $\pm 3.3\sigma$ peak-to-peak span, which is about $0.9$ bits fewer.
+Neither is wrong; quoting one and calling it the other is.
+:::
+
+### Averaging, and what it cannot fix {#sec-s1-averaging}
+
+The mean of $N$ independent readings has standard deviation $\sigma/\sqrt{N}$.
+Take 200 readings and the random part of your reading improves by a factor of
+14. Take 20 000 and it improves by 141.
+
+What does not improve at all is $V_{os}$, $\varepsilon_G$ and
+$\mathrm{INL}(V)$. They are the same on every reading, so the mean converges
+to the *wrong* value with beautiful precision. This is the single most
+important practical lesson of S1, and the uncertainty budget at the end makes
+it arithmetic rather than rhetoric: once $N$ is a few hundred, the Type A term
+drops below the calibration terms and buying more time buys nothing.
+
+### Calibrating offset and gain {#sec-s1-calibration}
+
+Apply $k$ known voltages $V_i$, each measured with a reference instrument, and
+record the mean indication $\bar{V}_{\mathrm{ind},i}$ at each. Fit
+
+$$
+\bar{V}_\mathrm{ind} = a + b\,V
+$$ {#eq-s1-fit}
+
+so that $a$ estimates the offset and $b - 1$ the gain error. The corrected
+reading of an unknown is then
+
+$$
+\hat{V} = \frac{V_\mathrm{ind} - a}{b}
+$$ {#eq-s1-correct}
+
+::: {.content-hidden when-format="revealjs"}
+Three points is the minimum that gives you a residual at all, and a tier-1
+bench can produce exactly three: a shorted input, a voltage reference IC, and
+the reference through a resistive divider. With three points you get one degree
+of freedom for the residual, which is enough to notice nonlinearity but not
+enough to characterize it — so it enters the budget as a bound, from the
+largest residual, rather than as a correction.
+
+The uncertainties of $a$ and $b$ come from the fit, and they are correlated.
+Ignoring that correlation is a simplification this experiment makes
+deliberately and states in the budget; @eq-s1-correct with independent $a$ and
+$b$ overestimates the uncertainty at the ends of the range and underestimates
+it in the middle. A full treatment propagates the covariance matrix of the fit,
+which is the natural extension for a postgraduate group.
+:::
+
+The sensitivity coefficients of @eq-s1-correct, needed for the budget, are
+
+$$
+\frac{\partial \hat V}{\partial V_\mathrm{ind}} = \frac{1}{b},
+\qquad
+\frac{\partial \hat V}{\partial a} = -\frac{1}{b},
+\qquad
+\frac{\partial \hat V}{\partial b} = -\frac{V_\mathrm{ind} - a}{b^{2}}
+$$ {#eq-s1-sensitivity}
+
+### Timestamps: is the sampling grid real? {#sec-s1-timing}
+
+Every streamed record carries the device's own `micros()` value. Sampling runs
+from `loop()`, not from a timer interrupt, so the grid is *requested*, not
+guaranteed, and part of S1 is finding out what was actually delivered.
+
+Fit the timestamps against their index by least squares,
+
+$$
+\hat{t}_i = \hat{t}_0 + i\,\hat{T},
+\qquad
+r_i = t_i - \left(\hat{t}_0 + i\,\hat{T}\right)
+$$ {#eq-s1-grid}
+
+and read the residuals. There are three signatures, and they mean different
+things:
+
+| Residual pattern | Mechanism | Consequence |
+|---|---|---|
+| Flat band, no trend | Bounded jitter: the record lands on the first `loop()` iteration after its due time | Adds noise to any time-derivative; harmless for static work |
+| Straight slope | $\hat{T}$ is not the true period — a clock or rate error | Frequencies are all wrong by the same factor; correctable |
+| Steps | Schedule restart after a late record | The grid is piecewise; a periodogram over the whole record is meaningless |
+
+: Reading the residuals of @eq-s1-grid {#tbl-s1-residuals}
+
+::: {.content-hidden when-format="revealjs"}
+The step case deserves attention because the firmware chooses it deliberately.
+When a record is late, the device restarts its schedule from that moment
+instead of emitting a burst of catch-up records. That is the right decision —
+catch-up records would carry timestamps that are lies — but it means a hiccup
+appears as one long interval and a permanent shift of everything after it.
+Detecting the long intervals and either splitting the record or discarding it
+is part of the analysis, not an optional refinement.
+
+Since `t_us` is an integer, every timestamp carries $u_q = 1\,\mu\mathrm{s}/\sqrt{12}
+\approx 0.29\ \mu$s of quantization uncertainty from @eq-s1-uq. At 1 kHz that
+is $3 \times 10^{-4}$ of the period and you may ignore it; at 30 kHz it is
+about 1 % and you may not.
+:::
+
+### Two influence quantities you cannot see in the data {#sec-s1-influence}
+
+An **influence quantity** is something that affects the result without being
+the measurand. S1 has two worth naming.
+
+**Inter-channel skew.** When several pins are streamed, the firmware reads them
+in one pass of `loop()` — sequentially — and gives every sample in the record
+*the same* timestamp. The samples are therefore not simultaneous, and the
+difference is one conversion time per channel of separation. For a constant
+input this changes nothing. For a signal changing at $\dot{V}$ it is a
+systematic error of $\dot{V}\,\Delta t$ on the later channel, and it is
+invisible in the file, because the timestamps claim simultaneity.
+
+**The host operating system.** The board samples on its own, but the host has
+to drain the bulk endpoint. A host that is late makes the device's buffer
+overrun and the schedule restart. Nothing about the board changed; the numbers
+in your file did. This is why every sidecar records the host, and why S1 ends
+by acquiring the same signal twice on two different hosts and comparing the
+timing statistics — the honest way to establish which host your later
+experiments should run on.

@@ -1,0 +1,256 @@
+---
+title: "S1 — Static characterization of the DAQ"
+subtitle: "Laboratory handbook"
+description: "Offset, gain, noise floor, effective bits and timestamp quality"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-s1-outcomes}
+
+By the end of this session you should be able to:
+
+1. Read a board's own description of its converter — resolution, reference
+   voltage, capabilities — and say precisely what each figure does and does
+   not promise.
+2. Separate the four error terms of a conversion chain — offset, gain,
+   nonlinearity, noise — and say which of them averaging can reduce.
+3. Calibrate offset and gain against a reference instrument, and quote the
+   uncertainty of the *correction* rather than the magnitude of the error.
+4. Measure a noise floor and convert it into an effective number of bits, and
+   explain why that number is smaller than the nominal resolution.
+5. Decide, from the residuals of a grid fit, whether a set of timestamps
+   describes a regular sampling grid, and classify the failure when it does
+   not.
+6. Treat the host operating system as an influence quantity and quantify its
+   effect by measurement rather than assertion.
+7. Build a GUM uncertainty budget with correct sensitivity coefficients, name
+   the dominant component, and propose the change that would reduce it.
+
+## Prerequisites {#sec-s1-prerequisites}
+
+- A bench set up and verified: see [Setting up a bench](../../setup/index.qmd)
+  and [Verifying a bench](../../setup/verify.qmd). You should already have run
+  `arduino-io info` successfully.
+- Basic familiarity with either Python or R. The analysis templates are
+  parallel; use the language you know.
+- Statistics: mean, standard deviation, least squares. No more.
+
+Nothing in this experiment depends on any other experiment. Everything else on
+this site depends on this one.
+
+## Hardware and cost tier {#sec-s1-hardware}
+
+::: {.callout-note}
+## Tier 1 — the cheapest bench that can do real metrology
+
+Everything below is either already on the bench or costs less than a textbook.
+No signal generator, no oscilloscope, no data acquisition card.
+:::
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Supported board with `UsbIo` | The instrument under test | Streaming needed for the timestamp analysis; see [Supported boards](../../setup/boards.qmd) |
+| Host computer | Acquisition | Linux recommended; see [Linux host](../../setup/host-linux.qmd) |
+| USB cable, and a hub | The link | A hub is not optional on a Portenta H7; see [macOS host](../../setup/host-macos.qmd) |
+| Voltage reference IC | The known voltage | Any reference whose output the DMM can resolve well |
+| Two resistors | A divider, for the mid-scale point | Equal nominal value; the exact ratio is measured, not assumed |
+| Digital multimeter | The reference instrument | Its specification provides `reference_u`; see [Bill of materials](../../hardware/bom.qmd) |
+| Breadboard and wires | — | — |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+The one requirement students underestimate: the DMM must be *better* than the
+board, and you must be able to say by how much. A meter with no specification
+is not a reference.
+
+## Theory {#sec-s1-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-s1-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-s1-recording}
+
+Five runs, five CSV files, five sidecars. The format is specified in
+[Data format](../../data-format/index.qmd); the checklist in
+@sec-s1-step-sidecar is the version to work through at the bench.
+
+A sidecar for one of the calibration runs looks like this — copy it, do not
+retype it:
+
+```{.yaml filename="data/cal-2v50.yaml"}
+experiment: S1
+run: cal-2v50
+date: 2026-09-18
+operator: "your name"
+synthetic: false
+
+board:
+  model: portenta-h7
+  serial: "from arduino-io list"
+  usbio_version: "from arduino-io info"
+  adc_bits: 16
+  vref_mV: 3300
+
+host:
+  os: linux
+  os_version: "from uname -a"
+  machine: "which bench"
+  hub: true
+
+driver_version: "0.4.0"
+binding: cli
+
+acquisition:
+  pins: [15]
+  requested_period_us: 1000
+  achieved_rate_hz: 0.0      # from the stream summary
+  duration_s: 0.2
+
+stream_stats:                 # all six, from the summary line
+  records: 0
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+
+channels:
+  - pin: 15
+    quantity: voltage
+    unit: V
+    sensor: "voltage reference IC"
+    conditioning: {gain: 1.0, offset: 0.0, filter: none}
+    calibration_reference: "DMM at the pin"
+    reference_value: 2.5000   # what the DMM read
+    reference_u: 0.00019      # from the DMM specification
+
+environment:
+  ambient_temperature_C: 23.0
+  notes: ""
+
+references:
+  - instrument: DMM
+    model: "the model you used"
+    calibration: "certificate or none"
+```
+
+::: {.callout-warning}
+## `achieved_rate_hz` is not `requested_period_us`
+
+Copy the rate the summary line reports, not the one you asked for. Half of
+this experiment consists of showing that the two differ, and a sidecar that
+records the request as though it were the outcome destroys that evidence.
+:::
+
+## Analysis tasks {#sec-s1-tasks}
+
+Open one of the two templates —
+[Python](analysis-py.qmd) or [R](analysis-r.qmd) — point it at your files, and
+work through it. They contain the same sections and produce the same numbers;
+choose by language, not by capability.
+
+1. **Data quality.** Run `validate_meta()` on every sidecar and read the
+   stream counters. Decide, before analysing anything, which runs are usable.
+2. **Calibration.** Fit @eq-s1-fit to the three points. Report $a$, $b$, their
+   standard uncertainties, and the residuals. State the gain error as a
+   percentage and the offset in both volts and LSB.
+3. **Noise floor.** Compute $\sigma$ on the reference and on the shorted
+   channel, in volts and in LSB. Say which of the two is the floor and why.
+4. **Effective bits.** Apply @eq-s1-enob. Compare with the nominal resolution
+   and with @eq-s1-enob-nf. Compute the effective quantization step, and say
+   which step belongs in the budget.
+5. **Timestamps.** Fit @eq-s1-grid, plot the residuals, and classify them
+   using @tbl-s1-residuals. Count the intervals longer than $1.5\times$ the
+   median and say what they are.
+6. **Host comparison.** Tabulate the two hosts side by side. Recommend one,
+   and justify it with your own numbers.
+7. **Budget.** Build the budget of @sec-s1-budget below.
+
+## Uncertainty budget {#sec-s1-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+For S1 the measurand is the corrected reading of @eq-s1-correct,
+$\hat{V} = (V_\mathrm{ind} - a)/b$, and the components are:
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| Repeatability of the mean | A | — | $\sigma/\sqrt{n}$ from the long run | $1/b$ |
+| Effective quantization | B | Rectangular | Half-width $q_\mathrm{eff}/2$ from @eq-s1-enob | $1/b$ |
+| Offset $a$ | A | — | Standard error of the fit | $-1/b$ |
+| Slope $b$ | A | — | Standard error of the fit | $-(V_\mathrm{ind}-a)/b^{2}$ |
+| Reference value | B | — | The DMM specification, via `reference_u` | $1$ |
+| Residual nonlinearity | B | Rectangular | Largest fit residual, as a bound | $1/b$ |
+
+: Components of the S1 budget {#tbl-s1-components}
+
+Report $u_c$ and $U = 2u_c$, the index $h_i$ of every component, and one
+sentence naming the dominant term and what you would change to reduce it.
+
+::: {.callout-important}
+## Two simplifications you must state
+
+The budget treats $a$ and $b$ as independent. They are not: both come from the
+same fit, and their correlation is strong and negative. The effect is largest
+at the ends of the calibrated range. Say so in your report; propagating the
+covariance matrix is the correct treatment and a natural extension.
+
+The budget also uses the *effective* quantization step rather than the nominal
+LSB. Using the nominal step would understate the term by a factor of about
+thirty here, which is exactly the kind of error that makes a budget look
+precise and be wrong.
+:::
+
+## Questions {#sec-s1-questions}
+
+1. The board reports 16-bit resolution and delivers roughly 11 effective bits.
+   Is the specification wrong? What would an honest specification say?
+2. You average 10 000 readings instead of 5 000. By what factor does the Type
+   A component fall, and by what factor does $u_c$ fall? Explain the
+   difference.
+3. Your calibration used three points. What changes in the budget if you use
+   two? If you use ten?
+4. The timestamp residuals show a band of $\pm 20\ \mu$s with no trend. Is the
+   sampling rate accurate? Is it precise? Are those the same question?
+5. A colleague reports a sampling rate of exactly 1000.00 Hz because that is
+   what they requested. What is wrong with that statement, and what evidence
+   in your own data contradicts it?
+6. Two analog channels are streamed together and given the same timestamp. For
+   what class of signal does that matter, and how large is the error?
+7. You must measure a 0–50 mV sensor output with this board. Using your
+   measured noise floor, what gain would you put ahead of it, and what would
+   the budget look like then?
+
+## Instructor notes {#sec-s1-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

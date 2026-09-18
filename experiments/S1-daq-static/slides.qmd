@@ -1,0 +1,104 @@
+---
+title: "S1 — Static characterization of the DAQ"
+subtitle: "How many of those bits are real?"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    incremental: false
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before the bench {.center}
+
+### What you are about to measure
+
+You have a board that says it has a **16-bit** converter.
+
+By the end of the session you will know:
+
+- how many bits it actually delivers;
+- how far off its zero and its scale are, and how well you can correct them;
+- whether the samples arrived when the board says they did;
+- and whether any of it depends on the computer you plugged it into.
+
+None of those numbers is in a datasheet. All of them are measurable in three
+hours with a voltage reference and a multimeter.
+
+### The rule of the session
+
+::: {.callout-important}
+## A number without an uncertainty is not a measurement
+
+Everything today ends in an uncertainty budget. Not because the budget is the
+point, but because it is the only way to find out which part of the
+measurement is worth improving.
+:::
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will build
+
+A voltage reference, a divider, and two wires.
+
+::: {.smaller}
+| Point | Source | Purpose |
+|---|---|---|
+| 0 V | Pin shorted to GND | Offset |
+| $\approx V_\mathrm{ref}/2$ | Reference through a divider | The middle of the range |
+| $V_\mathrm{ref,IC}$ | Reference IC | Gain |
+:::
+
+Plus one long recording with a second channel **shorted to ground** — the
+noise floor with no source in it — and the same recording repeated on a second
+host.
+
+### Five runs, five sidecars
+
+```bash
+arduino-io mode 15 analog
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/cal-0v.csv
+# ... re-wire, re-measure with the DMM, repeat for 1v25 and 2v50
+
+arduino-io mode 16 analog
+arduino-io stream 15,16 --hz 1000 --seconds 5 --csv data/noise-linux.csv
+```
+
+::: {.callout-warning}
+## Two things that ruin the session
+
+Measure the DMM reading **at the pin**, every time you re-wire. And copy the
+**whole** stream summary line into the sidecar: it is the only evidence that
+the recording is complete.
+:::
+
+### Then
+
+Open [the handbook](handbook.qmd) for the full procedure, and one of the two
+analysis templates — [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+They have the same sections and produce the same numbers. Both ship with
+reference data, so you can read the whole analysis before you wire anything.
+
+## What you should come away with {.center}
+
+### Three sentences you should be able to defend
+
+1. "This board's converter reports $n$ bits and delivers about $m$ effective
+   bits, measured as the spread of $N$ readings of a constant input."
+2. "Its sampling grid over five seconds was regular to within
+   $\pm x\ \mu$s, with $k$ schedule restarts, and the departure is
+   *bounded* / *accumulating* / *stepped*."
+3. "The dominant term in the budget is $\dots$, at $h\,\%$ of the variance, and
+   the way to reduce it is $\dots$."
+
+If you can say those three with your own numbers in them, the session worked.

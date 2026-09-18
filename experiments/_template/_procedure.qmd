@@ -1,0 +1,28 @@
+::: {.callout-warning}
+## Safety
+
+Whatever can hurt a student or the hardware, stated before the first step:
+mains-powered instruments, hot water, heat guns, voltages above the board's
+$V_\mathrm{io}$.
+:::
+
+### 1. Identify the board {#sec-{{IDL}}-step-identify}
+
+```bash
+arduino-io list
+arduino-io info
+```
+
+### 2. TODO (Paolo) {#sec-{{IDL}}-step-two}
+
+One numbered step per thing the student does, each with the exact command.
+
+### N. Fill the sidecars {#sec-{{IDL}}-step-sidecar}
+
+- [ ] `board.adc_bits`, `board.vref_mV`, `board.usbio_version`
+- [ ] `host.os`, `host.machine`, `host.hub`
+- [ ] `acquisition.requested_period_us` **and** `acquisition.achieved_rate_hz`
+- [ ] all six `stream_stats` counters
+- [ ] per channel: `reference_value` and `reference_u`
+- [ ] `references[]`: instrument models and calibration state
+- [ ] `synthetic: false`

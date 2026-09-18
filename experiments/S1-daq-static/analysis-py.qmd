@@ -1,0 +1,510 @@
+---
+title: "S1 — Analysis template (Python)"
+subtitle: "Static characterization of the DAQ"
+description: "Offset, gain, noise, effective bits and timestamp quality, in Python"
+engine: jupyter
+jupyter: python3
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment, so you can read the whole analysis before you touch a board. To
+analyse your own measurements, replace the files in `data/` and change the
+paths in the first cell — nothing else.
+
+The R template [`analysis-r.qmd`](analysis-r.qmd) has the same sections, the
+same figure labels and the same output tables, and produces the same numbers
+from the same data.
+
+::: {.callout-note collapse="true"}
+## How the cells are organised
+
+Cells that compute something show their code: they are the part you edit.
+Cells that only format a result into a table are hidden, because reading them
+teaches nothing about measurement. Every table is emitted as markdown from a
+cell with `#| output: asis`, which is what lets the same table appear in the
+HTML page and in the PDF handbook.
+:::
+
+## Setup
+
+```{python}
+#| label: setup
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd().parents[1] / "shared" / "python"))
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from labtools import (budget_table, enob, lsb_volts, pivot_channels, read_run,
+                      synthetic_banner, timing_summary, u_quantization,
+                      validate_meta)
+
+plt.rcParams.update({
+    "figure.figsize": (7.0, 4.0),
+    "axes.grid": True,
+    "grid.alpha": 0.3,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+})
+
+# The five runs of the procedure. Point these at your own files.
+CAL_RUNS = ["data/cal-0v.csv", "data/cal-1v25.csv", "data/cal-2v50.csv"]
+NOISE_RUNS = {"linux": "data/noise-linux.csv", "macos": "data/noise-macos.csv"}
+PRIMARY = "linux"          # the host whose run carries the main analysis
+PIN_REFERENCE = 15         # the pin fed by the voltage reference
+PIN_SHORTED = 16           # the pin shorted to GND
+```
+
+```{python}
+#| label: load
+runs = {name: read_run(path) for name, path in NOISE_RUNS.items()}
+primary = runs[PRIMARY]
+board = primary.meta["board"]
+
+LSB = lsb_volts(primary.meta)          # volts per code, 2^n - 1 full scale
+FSR = board["vref_mV"] / 1000.0        # full-scale range, volts
+N_BITS = board["adc_bits"]
+```
+
+```{python}
+#| label: banner
+#| echo: false
+#| output: asis
+print(synthetic_banner(primary.meta))
+```
+
+## Data quality
+
+Before any number is computed, the metadata must be complete and the recording
+must be intact. A run with lost records is not a slow run: it is a run with
+holes in its time axis.
+
+```{python}
+#| label: quality
+#| echo: false
+#| output: asis
+for name, run in runs.items():
+    problems = validate_meta(run.meta)
+    stats = run.meta.get("stream_stats", {})
+    lossy = {k: v for k, v in stats.items()
+             if k != "records" and isinstance(v, int) and v > 0}
+    print(f"\n**{name}** — {stats.get('records', '?')} records; "
+          + ("metadata complete" if not problems
+             else "metadata problems: " + "; ".join(problems))
+          + "; "
+          + ("no losses reported" if not lossy
+             else "losses: " + ", ".join(f"{k} = {v}" for k, v in lossy.items()))
+          + "\n")
+```
+
+```{python}
+#| label: out-board
+#| echo: false
+#| output: asis
+print(f"""
+| Quantity | Value |
+|---|---|
+| Board | `{board['model']}` |
+| Reported ADC resolution | {N_BITS} bit |
+| Reference voltage $V_\\mathrm{{ref}}$ | {FSR:.3f} V |
+| One LSB, $q = V_\\mathrm{{ref}}/(2^{{n}}-1)$ | {LSB * 1e6:.2f} µV |
+| Quantization uncertainty $u_q = q/\\sqrt{{12}}$ | {u_quantization(LSB) * 1e6:.2f} µV |
+
+: What the board says about itself {{#tbl-s1-board}}
+""")
+```
+
+## Static calibration
+
+Each calibration run is a few hundred readings of a voltage measured
+independently with the DMM. The mean indication at each point, fitted against
+the reference value, gives the offset and the gain error of the
+[calibration model](handbook.qmd#eq-s1-fit) in the handbook.
+
+```{python}
+#| label: calibration
+points = []
+for path in CAL_RUNS:
+    run = read_run(path)
+    pin = run.meta["acquisition"]["pins"][0]
+    channel = next(c for c in run.meta["channels"] if c["pin"] == pin)
+    volts = run.data.loc[run.data["pin"] == pin, "volts"]
+    points.append({
+        "run": run.meta["run"],
+        "reference_V": channel["reference_value"],
+        "u_reference_V": channel["reference_u"],
+        "mean_indicated_V": volts.mean(),
+        "sd_V": volts.std(ddof=1),
+        "n": len(volts),
+    })
+cal = pd.DataFrame(points).sort_values("reference_V").reset_index(drop=True)
+
+# Ordinary least squares of the indication on the reference value.
+x = cal["reference_V"].to_numpy()
+y = cal["mean_indicated_V"].to_numpy()
+n_pts = len(x)
+sxx = ((x - x.mean()) ** 2).sum()
+b = ((x - x.mean()) * (y - y.mean())).sum() / sxx
+a = y.mean() - b * x.mean()
+cal["residual_V"] = y - (a + b * x)
+
+# Standard errors of the fit, from the residuals (n - 2 degrees of freedom).
+s_res = np.sqrt((cal["residual_V"] ** 2).sum() / (n_pts - 2))
+u_b = s_res / np.sqrt(sxx)
+u_a = s_res * np.sqrt(1.0 / n_pts + x.mean() ** 2 / sxx)
+```
+
+```{python}
+#| label: out-cal
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.run} | {r.reference_V:.4f} | {r.u_reference_V:.5f} | "
+    f"{r.mean_indicated_V:.6f} | {r.sd_V:.6f} | {r.n} | {r.residual_V * 1e6:+.1f} |"
+    for r in cal.itertuples())
+print(f"""
+| Run | Reference [V] | $u$(ref) [V] | Mean indication [V] | $s$ [V] | $n$ | Residual [µV] |
+|---|---|---|---|---|---|---|
+{rows}
+
+: Calibration points and fit residuals {{#tbl-s1-cal}}
+""")
+```
+
+```{python}
+#| label: out-cal-text
+#| echo: false
+#| output: asis
+print(f"""
+Fitted offset $a = {a * 1e3:.3f}$ mV with $u(a) = {u_a * 1e3:.3f}$ mV; fitted
+slope $b = {b:.6f}$, that is a gain error of ${(b - 1) * 100:+.3f}\\,\\%$, with
+$u(b) = {u_b:.6f}$. The largest residual is
+${cal['residual_V'].abs().max() * 1e6:.1f}$ µV, or
+${cal['residual_V'].abs().max() / LSB:.1f}$ LSB — the bound that enters the
+budget as residual nonlinearity, because three points cannot correct it.
+""")
+```
+
+```{python}
+#| label: fig-s1-cal
+#| echo: false
+#| fig-cap: "Calibration: indication against reference (top) and fit residuals (bottom). Three points give one degree of freedom — enough to see nonlinearity, not enough to correct it."
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.2), sharex=True,
+                               gridspec_kw={"height_ratios": [2, 1]})
+grid = np.linspace(x.min(), x.max(), 100)
+ax1.plot(grid, a + b * grid, "-", lw=1.2,
+         label=f"$V_{{ind}} = {a * 1e3:.2f}$ mV $+\\ {b:.5f}\\,V$")
+ax1.plot(x, y, "o", ms=7, label="measured")
+ax1.set_ylabel("Indicated voltage [V]")
+ax1.legend(loc="upper left", frameon=False)
+
+ax2.axhline(0.0, lw=0.8, color="0.4")
+ax2.plot(x, cal["residual_V"] * 1e6, "o-", ms=7, lw=1.0)
+ax2.set_xlabel("Reference voltage [V]")
+ax2.set_ylabel("Residual [µV]")
+fig.tight_layout()
+plt.show()
+```
+
+## Noise floor
+
+The long run carries two channels: the reference, and an input shorted to
+ground. The shorted channel is the floor — whatever appears there is the
+board's, not the source's.
+
+```{python}
+#| label: noise
+wide = pivot_channels(primary.data, "volts")
+noise = pd.DataFrame({
+    "channel": ["reference", "shorted"],
+    "pin": [PIN_REFERENCE, PIN_SHORTED],
+    "mean_V": [wide[PIN_REFERENCE].mean(), wide[PIN_SHORTED].mean()],
+    "sd_V": [wide[PIN_REFERENCE].std(ddof=1), wide[PIN_SHORTED].std(ddof=1)],
+    "n": [len(wide), len(wide)],
+})
+noise["sd_LSB"] = noise["sd_V"] / LSB
+noise["peak_to_peak_LSB"] = [
+    (wide[PIN_REFERENCE].max() - wide[PIN_REFERENCE].min()) / LSB,
+    (wide[PIN_SHORTED].max() - wide[PIN_SHORTED].min()) / LSB,
+]
+noise["u_mean_V"] = noise["sd_V"] / np.sqrt(noise["n"])
+```
+
+```{python}
+#| label: out-noise
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.channel} | {r.pin} | {r.mean_V:.6f} | {r.sd_V:.6f} | {r.sd_LSB:.1f} | "
+    f"{r.peak_to_peak_LSB:.0f} | {r.u_mean_V * 1e6:.2f} |"
+    for r in noise.itertuples())
+print(f"""
+| Channel | Pin | Mean [V] | $\\sigma$ [V] | $\\sigma$ [LSB] | Peak-to-peak [LSB] | $\\sigma/\\sqrt{{n}}$ [µV] |
+|---|---|---|---|---|---|---|
+{rows}
+
+: Noise on the two channels of the `{PRIMARY}` run, $n = {len(wide)}$ {{#tbl-s1-noise}}
+""")
+```
+
+```{python}
+#| label: fig-s1-hist
+#| echo: false
+#| fig-cap: "Distribution of the readings on each channel, in ADC codes relative to the channel mean, with a Gaussian of the same standard deviation. A converter limited by quantization alone would put every reading in one or two bins."
+fig, axes = plt.subplots(1, 2, figsize=(7.4, 3.4), sharey=True)
+for ax, (label, pin) in zip(axes, [("reference", PIN_REFERENCE),
+                                   ("shorted", PIN_SHORTED)]):
+    codes = primary.data.loc[primary.data["pin"] == pin, "raw"].to_numpy()
+    centred = codes - np.round(codes.mean())
+    bins = np.arange(centred.min() - 0.5, centred.max() + 1.5, 1.0)
+    ax.hist(centred, bins=bins, density=True, alpha=0.75)
+    sigma = centred.std(ddof=1)
+    grid = np.linspace(centred.min(), centred.max(), 200)
+    ax.plot(grid, np.exp(-0.5 * (grid / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi)),
+            lw=1.2, color="0.2")
+    ax.set_title(f"{label} (pin {pin}), $\\sigma$ = {sigma:.1f} LSB")
+    ax.set_xlabel("Code − mean code [LSB]")
+axes[0].set_ylabel("Density")
+fig.tight_layout()
+plt.show()
+```
+
+## Effective number of bits
+
+The [ENOB definition](handbook.qmd#eq-s1-enob) turns the measured spread into
+the resolution an ideal converter would need to produce it. This is the
+*static* effective resolution: measured on a constant input, it says nothing
+about behaviour at speed, which is what S2 measures.
+
+```{python}
+#| label: effective-bits
+sigma_ref = float(noise.loc[noise["channel"] == "reference", "sd_V"].iloc[0])
+sigma_short = float(noise.loc[noise["channel"] == "shorted", "sd_V"].iloc[0])
+
+enob_ref = enob(FSR, sigma_ref)
+enob_short = enob(FSR, sigma_short)
+enob_nf = np.log2(FSR / (6.6 * sigma_ref))    # noise-free, +-3.3 sigma span
+q_eff = FSR / 2 ** enob_ref                   # effective quantization step
+```
+
+```{python}
+#| label: out-enob
+#| echo: false
+#| output: asis
+print(f"""
+| Quantity | Reference channel | Shorted channel |
+|---|---|---|
+| Nominal resolution | {N_BITS} bit | {N_BITS} bit |
+| Effective number of bits | {enob_ref:.2f} bit | {enob_short:.2f} bit |
+| Noise-free resolution | {enob_nf:.2f} bit | — |
+| Effective quantization step $q_\\mathrm{{eff}}$ | {q_eff * 1e6:.1f} µV | — |
+| Nominal step $q$ | {LSB * 1e6:.2f} µV | {LSB * 1e6:.2f} µV |
+
+: Effective resolution against the nominal one {{#tbl-s1-enob}}
+""")
+```
+
+```{python}
+#| label: out-enob-text
+#| echo: false
+#| output: asis
+print(f"""
+The board reports **{N_BITS} bits** and delivers **{enob_ref:.1f}**. The
+effective quantization step is {q_eff / LSB:.0f} times the nominal one, and it
+is that number, not $q$, that belongs in the uncertainty budget below.
+""")
+```
+
+## Timestamps
+
+Every record carries the device's own `micros()`. Fitting the
+[sampling grid](handbook.qmd#eq-s1-grid) and reading the residuals says
+whether the sampling was regular, and if not, how it failed.
+
+```{python}
+#| label: timing
+timing = {name: timing_summary(run.data) for name, run in runs.items()}
+primary_timing = timing[PRIMARY]
+ts = primary_timing.stats
+```
+
+```{python}
+#| label: fig-s1-timing
+#| echo: false
+#| fig-cap: "Sampling grid of the primary run. Left: the interval between consecutive records. Right: the residuals of the least-squares grid fit. A flat band is bounded jitter, a slope is a wrong period, a step is a schedule restart."
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.6, 3.4))
+ax1.plot(primary_timing.intervals_us, lw=0.6)
+ax1.axhline(ts["median_interval_us"], color="0.3", lw=1.0, ls="--",
+            label=f"median {ts['median_interval_us']:.0f} µs")
+ax1.set_xlabel("Record index")
+ax1.set_ylabel("Interval [µs]")
+ax1.legend(frameon=False, loc="upper right")
+
+ax2.plot(primary_timing.residuals_us, lw=0.7)
+ax2.axhline(0.0, color="0.3", lw=0.8)
+ax2.set_xlabel("Record index")
+ax2.set_ylabel("Grid-fit residual [µs]")
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-timing
+#| echo: false
+#| output: asis
+print(f"""
+| Quantity | Value |
+|---|---|
+| Requested period | {primary.meta['acquisition']['requested_period_us']} µs |
+| Fitted period $\\hat{{T}}$ | {ts['period_us']:.2f} µs |
+| Achieved rate | {ts['achieved_rate_hz']:.2f} Hz |
+| Interval: median / min / max | {ts['median_interval_us']:.0f} / {ts['min_interval_us']:.0f} / {ts['max_interval_us']:.0f} µs |
+| Interval standard deviation | {ts['sd_interval_us']:.1f} µs |
+| Residual RMS | {ts['residual_rms_us']:.1f} µs |
+| Largest absolute residual | {ts['residual_max_abs_us']:.1f} µs |
+| Intervals longer than $1.5\\times$ the median | {ts['n_long_intervals']} |
+| Timestamp quantization $u_q$ | {u_quantization(1.0):.2f} µs |
+
+: Sampling grid of the `{PRIMARY}` run {{#tbl-s1-timing}}
+""")
+```
+
+## The host as an influence quantity
+
+The same board, the same firmware and the same request, recorded on two
+different hosts. Nothing about the measurand changed.
+
+```{python}
+#| label: out-hosts
+#| echo: false
+#| output: asis
+rows = []
+for name, run in runs.items():
+    s = timing[name].stats
+    rows.append(
+        f"| {run.meta['host']['os']} | `{run.meta['host']['machine']}` | "
+        f"{s['achieved_rate_hz']:.2f} | {s['period_us']:.2f} | "
+        f"{s['sd_interval_us']:.1f} | {s['residual_rms_us']:.1f} | "
+        f"{s['n_long_intervals']} | "
+        f"{run.meta.get('stream_stats', {}).get('device_overruns', '?')} |")
+table = "\n".join(rows)
+print(f"""
+| Host | Machine | Achieved [Hz] | $\\hat{{T}}$ [µs] | $s$(interval) [µs] | Residual RMS [µs] | Long intervals | Device overruns |
+|---|---|---|---|---|---|---|---|
+{table}
+
+: The same acquisition on two hosts {{#tbl-s1-hosts}}
+""")
+```
+
+```{python}
+#| label: fig-s1-hosts
+#| echo: false
+#| fig-cap: "Grid-fit residuals for both hosts on the same axes. The board is identical in the two runs; what differs is how often the host was late to drain the endpoint."
+fig, ax = plt.subplots(figsize=(7.0, 3.2))
+for name in runs:
+    ax.plot(timing[name].residuals_us, lw=0.7, label=runs[name].meta["host"]["os"])
+ax.axhline(0.0, color="0.3", lw=0.8)
+ax.set_xlabel("Record index")
+ax.set_ylabel("Grid-fit residual [µs]")
+ax.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+## Uncertainty budget
+
+The measurand is the [corrected voltage](handbook.qmd#eq-s1-correct)
+$\hat{V} = (V_\mathrm{ind} - a)/b$, evaluated at the reference point, with the
+[sensitivity coefficients](handbook.qmd#eq-s1-sensitivity) of the handbook.
+
+```{python}
+#| label: budget
+v_ind = float(noise.loc[noise["channel"] == "reference", "mean_V"].iloc[0])
+n_avg = int(noise.loc[noise["channel"] == "reference", "n"].iloc[0])
+v_hat = (v_ind - a) / b
+
+c_vind = 1.0 / b
+c_a = -1.0 / b
+c_b = -(v_ind - a) / b ** 2
+
+u_dmm = float(cal["u_reference_V"].max())
+inl_bound = float(cal["residual_V"].abs().max())
+
+components = [
+    dict(quantity="Repeatability of the mean", value=v_ind, unit="V",
+         distribution="type-a", std=sigma_ref / np.sqrt(n_avg),
+         sensitivity=c_vind),
+    dict(quantity="Effective quantization", value=0.0, unit="V",
+         distribution="rectangular", half_width=q_eff / 2, sensitivity=c_vind),
+    dict(quantity="Offset a from the fit", value=a, unit="V",
+         distribution="type-a", std=u_a, sensitivity=c_a),
+    dict(quantity="Slope b from the fit", value=b, unit="V",
+         distribution="type-a", std=u_b, sensitivity=c_b),
+    dict(quantity="Reference value (DMM)", value=0.0, unit="V",
+         distribution="type-a", std=u_dmm, sensitivity=1.0),
+    dict(quantity="Residual nonlinearity", value=0.0, unit="V",
+         distribution="rectangular", half_width=inl_bound, sensitivity=c_vind),
+]
+budget = budget_table(components, k=2)
+```
+
+```{python}
+#| label: out-budget
+#| echo: false
+#| output: asis
+print(budget.to_markdown(
+    caption=f"Uncertainty budget for the corrected reading at "
+            f"$V_\\mathrm{{ind}} = {v_ind:.4f}$ V",
+    label="tbl-s1-budget"))
+```
+
+```{python}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant = budget.table.loc[budget.table["index_pct"].idxmax()]
+quant = budget.table.loc[budget.table["quantity"] == "Effective quantization",
+                         "index_pct"].iloc[0]
+print(f"""
+Corrected value $\\hat{{V}} = {v_hat:.5f}$ V, against a reference value of
+{cal['reference_V'].max():.4f} V, with an expanded uncertainty
+$U = {budget.U * 1e3:.3f}$ mV at $k = 2$. The dominant component is
+**{dominant['quantity']}** at {dominant['index_pct']:.0f} % of the combined
+variance; the effective quantization contributes {quant:.1f} %.
+""")
+```
+
+::: {.callout-note}
+## What this budget assumes
+
+The components are treated as uncorrelated, which $a$ and $b$ are not: they
+come from the same fit. The correlation matters most at the ends of the
+calibrated range, and propagating the covariance matrix of the fit instead is
+the natural extension (see
+[Calibrating offset and gain](handbook.qmd#sec-s1-calibration)). The budget
+also uses the *effective* quantization step from @tbl-s1-enob rather than the
+nominal LSB, because the converter's own noise, not its code width, is what
+sets the resolution here.
+:::
+
+## What to report
+
+1. @tbl-s1-cal and @fig-s1-cal: the fit, with offset and gain and their
+   uncertainties.
+2. @fig-s1-hist and @tbl-s1-noise: the noise on both channels, in volts and in
+   LSB, with the shorted channel identified as the floor.
+3. @tbl-s1-enob: effective bits against nominal, and which of the two you
+   would quote in a specification, and why.
+4. @fig-s1-timing and @tbl-s1-timing: the residual pattern classified as band,
+   slope or step, and the number of long intervals.
+5. @tbl-s1-hosts and @fig-s1-hosts: the host comparison, with a recommendation
+   you can defend from your own numbers.
+6. @tbl-s1-budget: the budget, the dominant component, and what you would
+   change first to reduce it.

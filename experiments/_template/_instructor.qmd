@@ -1,0 +1,30 @@
+### Session timing {#sec-{{IDL}}-instructor-timing}
+
+| Time | Activity | Watch for |
+|---|---|---|
+| 0:00–0:20 | | |
+
+### Expected results {#sec-{{IDL}}-instructor-expected}
+
+[TODO (Paolo)]{.todo}: replace with values measured on the real bench. Until
+then, present the generator's parameters as "roughly what to expect", never as
+targets to reproduce.
+
+### Common failures {#sec-{{IDL}}-instructor-failures}
+
+1. The one that happens every time, and the question that makes them find it.
+
+### Discussion questions {#sec-{{IDL}}-instructor-discussion}
+
+**"..."** Where the answer should land.
+
+### Assessment rubric {#sec-{{IDL}}-instructor-rubric}
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Sidecar completeness | 10 | |
+| Uncertainty budget | 20 | |
+
+### If a group finishes early {#sec-{{IDL}}-instructor-extension}
+
+- An extension that deepens rather than repeats.

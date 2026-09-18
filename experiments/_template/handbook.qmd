@@ -1,0 +1,92 @@
+---
+title: "{{ID}} — {{TITLE}}"
+subtitle: "Laboratory handbook"
+description: "One line"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-{{IDL}}-outcomes}
+
+By the end of this session you should be able to:
+
+1. ...
+
+## Prerequisites {#sec-{{IDL}}-prerequisites}
+
+- A bench set up and verified: see [Setting up a bench](../../setup/index.qmd).
+- Which earlier experiments this one assumes.
+
+## Hardware and cost tier {#sec-{{IDL}}-hardware}
+
+| Item | Purpose | Notes |
+|---|---|---|
+| | | |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+## Theory {#sec-{{IDL}}-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-{{IDL}}-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-{{IDL}}-recording}
+
+The format is specified in [Data format](../../data-format/index.qmd); the
+checklist in @sec-{{IDL}}-step-sidecar is the version to work through at the
+bench. Include a filled-in sidecar example here.
+
+## Analysis tasks {#sec-{{IDL}}-tasks}
+
+Open [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+1. ...
+
+## Uncertainty budget {#sec-{{IDL}}-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+For {{ID}} the measurand is ..., and the components are:
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| | | | | |
+
+: Components of the {{ID}} budget {#tbl-{{IDL}}-components}
+
+## Questions {#sec-{{IDL}}-questions}
+
+1. ...
+
+## Instructor notes {#sec-{{IDL}}-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::

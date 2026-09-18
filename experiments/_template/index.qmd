@@ -1,0 +1,79 @@
+---
+title: "{{ID}} — {{TITLE}}"
+description: "One line that appears in the listing and under the page title"
+categories: [{{CATEGORIES}}]
+experiment:
+  id: {{ID}}
+  tier: 1
+  duration: "3 h"
+  level: [undergraduate]
+  boards: [any]
+  host: any
+  needs: []
+  validated:
+    usbio: "TODO (Paolo)"
+    driver: "TODO (Paolo)"
+toc: true
+---
+
+Two or three paragraphs: what is measured, why it is worth measuring, and
+which later experiments depend on the result.
+
+## Materials {#sec-{{IDL}}-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — before the bench
+- [Handbook](handbook.qmd) — theory, procedure, tasks ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd)
+- [R template](analysis-r.qmd)
+:::
+
+:::
+
+## What you measure {#sec-{{IDL}}-index-measure}
+
+| Quantity | How | Where it is used later |
+|---|---|---|
+| TODO (Paolo) | | |
+
+: What {{ID}} produces {#tbl-{{IDL}}-index-outputs}
+
+## Bench {#sec-{{IDL}}-index-bench}
+
+**Tier N.** What the bench needs beyond the previous tier.
+
+**Board.** Which boards can run it, and why the others cannot.
+
+**Host.** Any, or Linux, and why.
+
+## Reference data {#sec-{{IDL}}-index-data}
+
+| File | Contents |
+|---|---|
+| TODO (Paolo) | |
+
+: Reference data shipped with {{ID}} {#tbl-{{IDL}}-index-data}
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+Produced by `tools/synth/{{IDL}}_*.py` from placeholder parameters marked
+`TODO (Paolo)` in `tools/synth/params/{{IDL}}.yaml`. It exists so the analysis
+templates render, and are checked in continuous integration, with no hardware
+attached.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+One paragraph. Full notes in the [handbook](handbook.qmd#sec-{{IDL}}-instructor).
+:::

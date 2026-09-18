@@ -1,0 +1,129 @@
+::: {.callout-warning}
+## Before you connect anything
+
+An analog input pin tolerates $0$ to $V_\mathrm{io}$ and nothing else — 3.3 V
+on most supported boards, 5 V on the Renesas ones. There is no protection
+worth relying on. Measure every source with the DMM **before** it touches a
+pin, check the board's own logic voltage with `arduino-io info`, and never
+assume a bench supply is where you left it.
+
+On a Portenta H7, pins A0–A3 read up to 3.3 V through on-board dividers, so
+the voltage at the pad and the voltage at the connector are not the same
+number. Use a pin whose divider ratio you have verified, or verify it as part
+of this experiment.
+:::
+
+### 1. Identify the board {#sec-s1-step-identify}
+
+```bash
+arduino-io list
+arduino-io info
+```
+
+Write down, into the sidecar, four things from `info`: the board model, the
+ADC resolution (`adc_bits`), the reference voltage (`vref_mV`), and whether
+the `flags` line contains `streaming`. Everything downstream depends on them,
+and `adc_bits` in particular is what the board *reports* — S1 will tell you
+how many of those bits carry information.
+
+If `streaming` is missing, the board is a Renesas one or carries firmware
+older than the streaming support. The static half of this experiment still
+works with `arduino-io monitor`; the timestamp analysis of
+@sec-s1-step-noise does not, and needs one of the boards listed on this
+experiment's overview page.
+
+### 2. Wire the reference {#sec-s1-step-wire}
+
+You need three input voltages and a way to know each of them better than the
+board does. A tier-1 bench gives exactly that:
+
+1. **0 V** — the input pin shorted to GND.
+2. **$V_\mathrm{ref}/2$** — the reference IC through a two-resistor divider.
+3. **$V_\mathrm{ref,IC}$** — the reference IC directly.
+
+Build the divider from two resistors of the same nominal value; its exact
+ratio does not matter, because you are going to measure the voltage it
+produces rather than compute it.
+
+::: {.callout-important}
+## Measure at the pin, not at the source
+
+Put the DMM probes on the pin and the ground closest to it, with the board
+powered and the wiring exactly as it will be during the acquisition. A
+contact resistance, a shared ground return or a divider loaded by the input
+impedance all show up here and nowhere else. Record the DMM reading and its
+uncertainty (from the instrument's specification, for the range you used) in
+`channels[].reference_value` and `channels[].reference_u`.
+:::
+
+### 3. The three calibration points {#sec-s1-step-cal}
+
+Put the pin in analog mode once, then take one recording per point. Two
+hundred records at 1 kHz is a fifth of a second and is plenty:
+
+```bash
+arduino-io mode 15 analog
+arduino-io stream 15 --hz 1000 --seconds 0.2 --csv data/cal-0v.csv
+```
+
+Between points, change the wiring, **re-measure with the DMM**, and write a
+new sidecar. Do not reuse a DMM reading from ten minutes ago: the reference IC
+warms up, and so does the room.
+
+Name the files after the point (`cal-0v`, `cal-1v25`, `cal-2v50`), so the
+analysis can find them without a lookup table.
+
+### 4. The noise and timing run {#sec-s1-step-noise}
+
+Leave the reference on the first pin, short a second pin to GND, and record
+both together for five seconds:
+
+```bash
+arduino-io mode 15 analog && arduino-io mode 16 analog
+arduino-io stream 15,16 --hz 1000 --seconds 5 --csv data/noise-linux.csv
+```
+
+The shorted channel is not a formality. It shows the noise floor of the
+converter and the board's own ground with no contribution from the source, so
+comparing the two channels separates "the reference is noisy" from "the
+converter is noisy".
+
+Copy the whole summary line into `stream_stats`. All six counters at zero
+means a complete recording; anything else has to be either explained or
+re-acquired, and the analysis template will say so.
+
+### 5. The same acquisition on a second host {#sec-s1-step-host}
+
+Move the board — the same board, the same firmware, the same cable — to a
+host running a different operating system, and repeat @sec-s1-step-noise
+exactly:
+
+```bash
+arduino-io stream 15,16 --hz 1000 --seconds 5 --csv data/noise-macos.csv
+```
+
+Nothing about the measurand changed. Whatever differs between the two files is
+the host, and quantifying that difference is the point of this step.
+
+::: {.callout-tip}
+## If you only have one host
+
+Approximate it: run the second acquisition while the host is busy — a large
+file copy, or a build — and record what you did in `environment.notes`. The
+comparison is then between an idle and a loaded host rather than between two
+operating systems, which demonstrates the same mechanism and is honest as long
+as you say so.
+:::
+
+### 6. Fill the sidecars {#sec-s1-step-sidecar}
+
+Before you leave the bench, every one of the five runs needs its sidecar
+complete. The fields nobody can reconstruct afterwards:
+
+- [ ] `board.adc_bits`, `board.vref_mV`, `board.usbio_version` — from `arduino-io info`
+- [ ] `host.os`, `host.machine`, `host.hub` — including whether a USB hub was in the path
+- [ ] `acquisition.requested_period_us` **and** `acquisition.achieved_rate_hz`
+- [ ] all six `stream_stats` counters, from the summary line
+- [ ] per channel: `reference_value` and `reference_u`, from the DMM at the pin
+- [ ] `references[]`: the DMM model and its calibration state
+- [ ] `synthetic: false`
