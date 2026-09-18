@@ -1,0 +1,89 @@
+### Session timing {#sec-t2-instructor-timing}
+
+Three hours, for a pair of students at one bench:
+
+| Time | Activity | Watch for |
+|---|---|---|
+| 0:00–0:15 | Slides; T1's calibration recalled | They know why volts are not temperature |
+| 0:15–0:35 | Baths set up and stirred, calibration checked | An unstirred hot bath |
+| 0:35–1:30 | The four plunges | Recording *from* the plunge instead of before it |
+| 1:30–1:50 | The sheathed probe and the ramp | — |
+| 1:50–2:40 | Analysis template | The linearised-versus-nonlinear comparison |
+| 2:40–3:00 | Ramp error discussion | — |
+
+Still air takes ten minutes of real time to reach five time constants and
+cannot be hurried. Start it first and run the faster media while it settles.
+
+### Expected results {#sec-t2-instructor-expected}
+
+[TODO (Paolo)]{.todo}: replace with values measured on the real bench. These
+are the generator's parameters and must be presented as "the shape to expect".
+
+- $\tau$ spanning more than an order of magnitude between still air and
+  stirred water, in that order.
+- $h$ ratios following @eq-t2-h-ratio, and an absolute $h$ only as good as the
+  assumed $\rho c V/A$.
+- The sheathed probe showing a visible inflection in its first second, and a
+  first-order fit to it leaving an arc-shaped residual.
+- A ramp error close to $\tau\dot{T}$, with $\tau$ from the step test — the
+  cross-check that ties the whole session together.
+
+### Common failures, in the order they happen {#sec-t2-instructor-failures}
+
+1. **The recording starts at the plunge.** No baseline, so $T_0$ is a guess
+   and the fit has nothing to anchor it. Insist on the baseline before the
+   first run rather than after it fails.
+2. **Too short a record.** Stopping at $2\tau$ leaves $T_\infty$ unidentified,
+   and a nonlinear fit will happily trade $T_\infty$ against $\tau$ to
+   compensate. The symptom is a $\tau$ that changes when the record is
+   truncated — a good thing to have them try deliberately.
+3. **The linearised fit is used and believed.** It is fast, it looks like a
+   straight line, and it is wrong by several percent. The template shows both
+   for exactly this reason.
+4. **The bath is not stirred.** $T_\infty$ drifts through the record, and the
+   residual shows a slow trend that gets blamed on the sensor.
+5. **The transfer is slow.** In stirred water a one-second transfer against a
+   2.5 s time constant is a large bias. Make them time it.
+6. **T1's calibration is not actually theirs.** A group that re-wired between
+   sessions, or changed the excitation, is applying someone else's curve.
+
+### Discussion questions and where they should land {#sec-t2-instructor-discussion}
+
+**"Which $\tau$ is the sensor's?"** None of them. $\tau$ belongs to the
+sensor *and* the medium; only $\rho c V/A$ is the sensor's. This is the
+conceptual point of the session.
+
+**"Why is the ramp error not reduced by averaging?"** Because it is
+systematic. Averaging reduces the random part and leaves $\tau\dot{T}$
+untouched, and more averaging makes the wrong answer more precise. Connect it
+back to S1's lesson about offset.
+
+**"The sheathed probe is slower. Is it worse?"** Not necessarily — it is
+mechanically protected and electrically isolated. Ask what they would choose
+for a stirred chemical reactor, and the answer stops being obvious.
+
+**"Our $h$ for stirred water disagrees with the textbook."** Ask what
+$\rho c V/A$ they used and where it came from. The ratio of two media is a
+measurement; the absolute value is an estimate resting on a number they
+assumed.
+
+### Assessment rubric {#sec-t2-instructor-rubric}
+
+| Criterion | Weight | Full marks means |
+|---|:--:|---|
+| Records and baselines | 10 | Baseline before every plunge; at least $5\tau$ recorded; transfer time measured |
+| Fitting | 25 | Nonlinear fit with $T_\infty$ estimated; residuals plotted; linearised fit shown and its difference explained |
+| $\tau$ against medium | 20 | Four media; ratios reported as measurements and absolute $h$ as an estimate with its assumption stated |
+| Second-order evidence | 15 | The inflection identified; a first-order fit's residual shown to be arc-shaped |
+| Ramp error | 15 | $e_\infty$ measured and compared with $\tau\dot{T}$ from the step test |
+| Uncertainty budget | 15 | T1's calibration present as a component; the transfer time bounded |
+
+Deduct for any $\tau$ quoted without naming the medium.
+
+### If a group finishes early {#sec-t2-instructor-extension}
+
+- Fit the sheathed probe with the full two-exponential @eq-t2-second-order and
+  compare both time constants with the first-order fit's single one.
+- Estimate the Biot number for the bare and sheathed probes and predict, in
+  advance, which one the lumped model should fail for.
+- Repeat one medium at two stirring rates and show that $\tau$ tracks $h$.

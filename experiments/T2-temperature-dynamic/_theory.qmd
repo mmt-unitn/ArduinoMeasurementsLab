@@ -1,0 +1,152 @@
+### A step is the cheapest interrogation of a dynamic system {#sec-t2-why-step}
+
+[T1](../T1-temperature-static/index.qmd) calibrated two sensors against a
+reference thermometer, holding each bath point until nothing moved. Every
+number it produced was a *static* one, and every one of them assumed the
+sensor had finished responding.
+
+This experiment removes that assumption. Plunge a sensor from one medium into
+another and its reading does not jump: it approaches the new temperature over
+a time set by how fast heat crosses into it. A step is the cheapest possible
+interrogation of that behaviour — one action, no instrumentation beyond what
+T1 already used, and a response that contains the whole first-order dynamics.
+
+### The first-order model {#sec-t2-first-order}
+
+Treat the sensor as a lump of material at a single temperature $T$, exchanging
+heat with a medium at $T_\infty$ through a surface $A$ with convection
+coefficient $h$. Conservation of energy gives
+
+$$
+\rho c V \frac{\mathrm{d}T}{\mathrm{d}t} = hA\left(T_\infty - T\right)
+$$ {#eq-t2-ode}
+
+whose solution from an initial $T_0$ is the exponential approach
+
+$$
+T(t) = T_\infty + \left(T_0 - T_\infty\right)e^{-t/\tau},
+\qquad
+\tau = \frac{\rho c V}{hA}
+$$ {#eq-t2-step}
+
+::: {.content-hidden when-format="revealjs"}
+The lumped assumption — one temperature for the whole sensor — is what makes
+@eq-t2-ode first order, and it is exactly what fails for the sheathed probe of
+@sec-t2-second-order. Its validity is usually stated through the Biot number
+$\mathrm{Bi} = hL_c/k$, with $L_c$ a characteristic length and $k$ the
+sensor's own thermal conductivity: below about $0.1$ the internal gradient is
+negligible and one lump is enough. A bare thermistor bead in air is
+comfortably in that regime; the same bead inside a stainless sheath is not.
+:::
+
+**$\tau$ is a property of the sensor *and* the medium together**, not of the
+sensor alone. The same probe has a $\tau$ in still air tens of times larger
+than in stirred water, because $h$ changes by that factor while $\rho c V$
+does not. A datasheet quoting "response time" without naming the medium is
+quoting nothing.
+
+### Fitting $\tau$ {#sec-t2-fit}
+
+Two routes, and the choice matters.
+
+**Linearised.** Rearranging @eq-t2-step,
+
+$$
+\ln\left|T(t) - T_\infty\right| = \ln\left|T_0 - T_\infty\right| - \frac{t}{\tau}
+$$ {#eq-t2-linearised}
+
+is a straight line whose slope is $-1/\tau$, fitted by ordinary least squares.
+It is quick, and it is what a hurried analysis reaches for.
+
+**Nonlinear.** Fit $T_\infty$, $T_0$ and $\tau$ of @eq-t2-step directly by
+least squares on the residuals in temperature.
+
+::: {.callout-warning}
+## The linearised fit is not the same fit
+
+Taking the logarithm compresses the tail and stretches nothing, so equal
+weight in $\ln|T-T_\infty|$ is *unequal* weight in $T$: the last few samples,
+where $T - T_\infty$ is a few millikelvin and almost entirely noise,
+dominate the slope. Worse, $T_\infty$ must be assumed before the line can be
+drawn, and any error in it curves the supposed straight line — which is then
+usually blamed on the sensor.
+
+This template fits @eq-t2-step **nonlinearly**, estimating $T_\infty$ along
+with $\tau$, and shows the linearised fit alongside so the difference is
+visible rather than asserted.
+:::
+
+### From $\tau$ to the convection coefficient {#sec-t2-h}
+
+Rearranging the definition in @eq-t2-step,
+
+$$
+h = \frac{\rho c V}{\tau A}
+$$ {#eq-t2-h}
+
+so a measured $\tau$, plus the sensor's own thermal mass, estimates $h$ for
+that medium. The thermal mass $\rho c V$ and the area $A$ are properties of
+the probe, identical across media, so the **ratio** of two media's
+coefficients,
+
+$$
+\frac{h_2}{h_1} = \frac{\tau_1}{\tau_2}
+$$ {#eq-t2-h-ratio}
+
+needs no probe geometry at all — which is fortunate, because
+$\rho c V/A$ for a real encapsulated sensor is not something a laboratory can
+easily know. Report the ratios as measurements and any absolute $h$ as an
+estimate resting on a stated $\rho c V/A$.
+
+### Ramp input: the error that never goes away {#sec-t2-ramp}
+
+A step is a laboratory idealisation. A real process often ramps. Substituting
+$T_\infty(t) = T_0 + \dot{T}t$ into @eq-t2-ode and solving, the transient dies
+and what remains is a constant lag:
+
+$$
+e_\infty = T(t) - T_\infty(t) \longrightarrow -\tau\dot{T}
+$$ {#eq-t2-ramp}
+
+The sensor reads **low by $\tau\dot{T}$**, for ever, and no amount of waiting
+improves it. This is the single most practically useful result in the
+experiment: a $\tau$ of 2.5 s on a bath ramping at $0.5\,\mathrm{K\,s^{-1}}$
+is a steady $1.25$ K error that a static calibration would never reveal, and
+that averaging makes *more* confident rather than smaller.
+
+### Second order: what a sheath does {#sec-t2-second-order}
+
+A sheathed probe is two lumps — the sheath, and the element inside it — in
+series. Its step response is the sum of two exponentials,
+
+$$
+T(t) = T_\infty + \left(T_0 - T_\infty\right)
+\left[\frac{\tau_1 e^{-t/\tau_1} - \tau_2 e^{-t/\tau_2}}{\tau_1 - \tau_2}\right]
+$$ {#eq-t2-second-order}
+
+and the signature is at the very beginning: a first-order response has its
+**maximum slope at $t = 0$**, while this one starts with zero slope and
+inflects. The element cannot feel the medium until the sheath has warmed.
+
+::: {.content-hidden when-format="revealjs"}
+A first-order fit to second-order data does not fail loudly. It returns a
+plausible $\tau$ and a residual that looks small — until it is plotted against
+time, where it shows a clear arc: negative early, positive through the middle,
+negative again. That shape, not the residual's magnitude, is the diagnostic,
+and it is why every fit in this experiment is followed by a residual plot
+rather than by a single goodness number.
+:::
+
+### Reading temperature at all {#sec-t2-calibration}
+
+Nothing above can be done in volts. Each record must first be converted to
+temperature, and the conversion is [T1](../T1-temperature-static/index.qmd)'s:
+invert the divider or the bridge for the sensor's resistance, then apply the
+Steinhart–Hart or Callendar–Van Dusen curve **fitted in T1**, not a datasheet
+one.
+
+This is the first experiment on this site whose result depends on an earlier
+experiment's calibration, and it is worth noticing what that implies: T1's fit
+residuals and T1's own uncertainty propagate into every $\tau$ measured here,
+and appear in the budget as a component. A calibration is not a one-off
+ceremony; it is an input quantity with an uncertainty, used downstream.

@@ -13,10 +13,103 @@ experiment:
   validated:
     usbio: "TODO (Paolo)"
     driver: "TODO (Paolo)"
+toc: true
 ---
 
-::: {.callout-note}
-## Experiment not written yet
-This folder is part of the AMLab scaffold. The overview, slides, handbook and
-the two analysis templates will be added.
+[T1](../T1-temperature-static/index.qmd) held each bath point until nothing
+moved, and every number it produced assumed the sensor had finished
+responding. This experiment removes that assumption.
+
+Plunge a sensor from one medium into another and it approaches the new
+temperature exponentially, over a time constant set by how fast heat crosses
+into it. Measuring that time constant in four media — still air, forced air,
+still water, stirred water — separates what belongs to the sensor from what
+belongs to the medium, and turns a datasheet's "response time" into a number
+with conditions attached.
+
+The result worth carrying away is the **ramp error**: a sensor with time
+constant $\tau$ following an input changing at $\dot{T}$ reads low by
+$\tau\dot{T}$, permanently, and averaging makes that wrong answer more
+confident rather than smaller.
+
+## Materials {#sec-t2-index-materials}
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### Start here
+
+- [Slides](slides.qmd) — before the bench
+- [Handbook](handbook.qmd) — theory, procedure, tasks ([PDF](handbook.pdf))
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### Analysis
+
+- [Python template](analysis-py.qmd) — Jupyter engine
+- [R template](analysis-r.qmd) — knitr engine
+:::
+
+:::
+
+## What you measure {#sec-t2-index-measure}
+
+| Quantity | How | Where it is used later |
+|---|---|---|
+| Time constant $\tau$, per medium | Nonlinear fit of the step response | Any measurement of a changing temperature |
+| Convection coefficient ratios | $h_2/h_1 = \tau_1/\tau_2$ | Choosing a medium, and sizing a probe |
+| Ramp dynamic error | Measured, and predicted as $\tau\dot{T}$ | The systematic error a static calibration cannot see |
+| Second-order signature | The sheathed probe's inflection | When the lumped model stops applying |
+
+: What T2 produces {#tbl-t2-index-outputs}
+
+## Bench {#sec-t2-index-bench}
+
+**Tier 2.** The [thermal rig](../../hardware/thermal-rig.qmd) and the same two
+sensors T1 calibrated, at the same excitation.
+
+**Board.** Any supported board. The fastest medium here needs a few tens of
+samples per second, which control transfers alone can supply.
+
+**Host.** Any.
+
+::: {.callout-important}
+## This experiment depends on T1's calibration
+
+Volts become temperature through the Steinhart–Hart and Callendar–Van Dusen
+curves **fitted in T1**, not from a datasheet. If the sensors have been
+re-wired or the excitation changed since, T1 must be repeated first — and T1's
+own uncertainty propagates into every time constant measured here, which is
+why it appears as a component in the budget.
+:::
+
+## Reference data {#sec-t2-index-data}
+
+Six generated runs in `data/`:
+
+| File | Contents |
+|---|---|
+| `step-still-air`, `step-forced-air`, `step-still-water`, `step-stirred-water` | Plunge tests, one per medium, each at a rate and duration suited to its own time constant |
+| `step-sheathed` | The stirred-water plunge with a sheathed probe — two lumps, not one |
+| `ramp-stirred-water` | A steady ramp, for the dynamic error |
+
+: Reference data shipped with T2 {#tbl-t2-index-data}
+
+::: {.callout-warning}
+## The reference data is synthetic
+
+Produced by a seeded generator (`tools/synth/t2_temperature_dynamic.py`) whose
+parameters are placeholders marked `TODO (Paolo)` in
+`tools/synth/params/t2.yaml`. It exists so the analysis templates render, and
+are checked in continuous integration, with no hardware attached.
+:::
+
+::: {.content-visible when-profile="instructor"}
+## Instructor summary {.instructor-note}
+
+Three hours, tier 2. Still air takes ten minutes per run and cannot be
+hurried — start it first and run the faster media while it settles. The two
+things worth the discussion time are that $\tau$ belongs to the sensor *and*
+the medium, and that the ramp error is systematic. Full notes in the
+[handbook](handbook.qmd#sec-t2-instructor).
 :::

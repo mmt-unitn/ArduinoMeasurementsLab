@@ -177,7 +177,12 @@ def generate() -> None:
         )
         n = int(round(medium["duration_s"] * 1.0e6 / medium["period_us"]))
         t_us = timing.grid(n, rng)
-        t_s = t_us / 1.0e6
+        # Relative to the FIRST sample, not to the device clock: the
+        # timing model starts t_us at the board's uptime, while every
+        # declared plunge_time_s / ramp_start_time_s in the sidecar is an
+        # offset into the record. Using the absolute axis would shift
+        # every trajectory by that uptime.
+        t_s = (t_us - t_us[0]) / 1.0e6
         t_true = first_order_step(t_s, t0_c, t_inf_c, medium["tau_s"],
                                   medium["baseline_s"])
 
@@ -217,7 +222,8 @@ def generate() -> None:
     )
     n = int(round(sh["duration_s"] * 1.0e6 / sh["period_us"]))
     t_us = timing.grid(n, rng)
-    t_s = t_us / 1.0e6
+    # Relative to the first sample; see the note in the plunge emitter.
+    t_s = (t_us - t_us[0]) / 1.0e6
     t_true = second_order_step(t_s, sh["initial_temperature_c"],
                                sh["target_temperature_c"], sh["tau_sheath_s"],
                                sh["tau_element_s"], sh["baseline_s"])
@@ -262,7 +268,8 @@ def generate() -> None:
     total_s = ramp["baseline_s"] + ramp["ramp_duration_s"]
     n = int(round(total_s * 1.0e6 / ramp["period_us"]))
     t_us = timing.grid(n, rng)
-    t_s = t_us / 1.0e6
+    # Relative to the first sample; see the note in the plunge emitter.
+    t_s = (t_us - t_us[0]) / 1.0e6
     t_true = ramp_response(t_s, ramp["initial_temperature_c"],
                            ramp["ramp_rate_c_per_s"], ramp["tau_s"],
                            ramp["baseline_s"])

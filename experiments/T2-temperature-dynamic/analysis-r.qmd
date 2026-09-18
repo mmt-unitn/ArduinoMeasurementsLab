@@ -1,0 +1,696 @@
+---
+title: "T2 — Analysis template (R)"
+subtitle: "Dynamic response of temperature sensors"
+description: "Time constants, convection coefficients, the ramp error and a second-order probe, in R"
+engine: knitr
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment. To analyse your own measurements, replace the files in `data/`
+and change the paths in the first chunk — nothing else.
+
+The Python template [`analysis-py.qmd`](analysis-py.qmd) has the same
+sections, the same figure labels and the same output tables, and produces the
+same numbers from the same data.
+
+::: {.callout-note collapse="true"}
+## Two things this template does deliberately
+
+**It refits T1's calibration rather than hard-coding it.** Volts become
+temperature through the Steinhart–Hart and Callendar–Van Dusen curves fitted
+from T1's own recordings, read from `../T1-temperature-static/data/`. A
+calibration is an input quantity with an uncertainty, not a constant.
+
+**Every fit is written out.** The nonlinear fits are explicit damped
+Gauss–Newton loops rather than `scipy.optimize.curve_fit` against R's `nls`,
+which choose their own convergence criteria and do not reach the same
+parameters on the same data.
+:::
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+library(ggplot2)
+library(patchwork)
+
+source("../../shared/R/labtools.R")
+
+theme_set(theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25)))
+
+STEP_RUNS <- c("step-still-air", "step-forced-air", "step-still-water",
+               "step-stirred-water")
+SHEATHED_RUN <- "step-sheathed"
+RAMP_RUN <- "ramp-stirred-water"
+PRIMARY_MEDIUM <- "stirred-water"     # the budget's medium
+
+T1_DATA <- "../T1-temperature-static/data"
+B_IEC <- -5.775e-7                    # IEC 60751, fixed
+MAX_FIT_ITERATIONS <- 200
+
+# rho*c*V/A for the bare probe, in J/(m^2 K). An absolute h rests entirely on
+# this number, which this experiment does not measure.
+# TODO (Paolo): measure or estimate for the probe actually used.
+RHO_C_V_OVER_A <- 4.0e3
+```
+
+```{r}
+#| label: helpers
+# Inverts the divider for the NTC's resistance, as in T1.
+r_ntc_from_v <- function(v, r_fixed, vcc) vcc * r_fixed / v - r_fixed
+
+# Steinhart-Hart from a fitted (A, B, C), degrees Celsius.
+t_ntc_from_r <- function(r, coef) {
+  ln_r <- log(r)
+  1 / (coef[1] + coef[2] * ln_r + coef[3] * ln_r^3) - 273.15
+}
+
+# Inverts the bridge for the Pt1000's resistance, as in T1.
+r_pt_from_v <- function(v, r_bridge, v_exc, gain, offset) {
+  deflection <- (v - offset) / (gain * v_exc)
+  r_bridge * (0.5 + deflection) / (0.5 - deflection)
+}
+
+# Callendar-Van Dusen, positive root of the quadratic in t.
+t_pt_from_r <- function(r, r0, a, b = B_IEC) {
+  cc <- 1 - r / r0
+  (-a + sqrt(a^2 - 4 * b * cc)) / (2 * b)
+}
+
+# Damped Gauss-Newton on an arbitrary model. `rj(p)` returns list(r, j) with r
+# the residual vector and j its Jacobian. The step is halved until the sum of
+# squares does not increase, which is deterministic and therefore identical in
+# both languages; an undamped step diverges on the slower media, where the
+# baseline pins T_0 much harder than the tail pins tau.
+gauss_newton <- function(rj, p0, n_obs) {
+  p <- as.numeric(p0)
+  for (i in seq_len(MAX_FIT_ITERATIONS)) {
+    out <- rj(p)
+    sse <- sum(out$r^2)
+    step <- as.numeric(solve(crossprod(out$j), crossprod(out$j, out$r)))
+    lam <- 1
+    while (lam > 1e-8) {
+      if (sum(rj(p + lam * step)$r^2) <= sse) break
+      lam <- lam / 2
+    }
+    p <- p + lam * step
+    if (max(abs(lam * step) / pmax(abs(p), 1e-12)) < 1e-12) break
+  }
+  out <- rj(p)
+  dof <- max(n_obs - length(p), 1)
+  s <- sqrt(sum(out$r^2) / dof)
+  cov <- solve(crossprod(out$j)) * s^2
+  list(p = p, u = sqrt(diag(cov)), s = s, residual = out$r)
+}
+
+# Fits the first-order step response, returning all three parameters.
+fit_first_order <- function(t, y) {
+  rj <- function(p) {
+    t_inf <- p[1]; t_0 <- p[2]; tau <- p[3]
+    e <- exp(-t / tau)
+    list(r = y - (t_inf + (t_0 - t_inf) * e),
+         j = cbind(1 - e, e, (t_0 - t_inf) * e * t / tau^2))
+  }
+  p0 <- c(y[length(y)], y[1], max((t[length(t)] - t[1]) / 5, 1e-3))
+  fit <- gauss_newton(rj, p0, length(y))
+  list(T_inf = fit$p[1], T_0 = fit$p[2], tau = fit$p[3],
+       u_tau = fit$u[3], u_T_inf = fit$u[1], s_res = fit$s,
+       residual = fit$residual, t = t, y = y)
+}
+
+# The log-linear estimator, for comparison with the nonlinear fit.
+fit_linearised <- function(t, y, t_inf) {
+  z <- abs(y - t_inf)
+  keep <- z > 1e-9
+  x <- t[keep]; w <- log(z[keep])
+  sxx <- sum((x - mean(x))^2)
+  slope <- sum((x - mean(x)) * (w - mean(w))) / sxx
+  -1 / slope
+}
+
+# Fits the two-lump second-order response.
+fit_second_order <- function(t, y) {
+  shape <- function(t1, t2) {
+    (t1 * exp(-t / t1) - t2 * exp(-t / t2)) / (t1 - t2)
+  }
+  rj <- function(p) {
+    t_inf <- p[1]; t_0 <- p[2]; t1 <- p[3]; t2 <- p[4]
+    g <- shape(t1, t2)
+    # Numerical columns for the two time constants: their closed forms are
+    # long and the step size below is far smaller than the fit's own
+    # precision, so both languages get the same derivative.
+    eps <- 1e-6
+    d1 <- (shape(t1 + eps, t2) - shape(t1 - eps, t2)) / (2 * eps)
+    d2 <- (shape(t1, t2 + eps) - shape(t1, t2 - eps)) / (2 * eps)
+    list(r = y - (t_inf + (t_0 - t_inf) * g),
+         j = cbind(1 - g, g, (t_0 - t_inf) * d1, (t_0 - t_inf) * d2))
+  }
+  span <- t[length(t)] - t[1]
+  p0 <- c(y[length(y)], y[1], span / 20, span / 6)
+  fit <- gauss_newton(rj, p0, length(y))
+  list(T_inf = fit$p[1], T_0 = fit$p[2], tau1 = fit$p[3], tau2 = fit$p[4],
+       u_tau1 = fit$u[3], u_tau2 = fit$u[4], s_res = fit$s,
+       residual = fit$residual)
+}
+
+ols <- function(x, y) {
+  sxx <- sum((x - mean(x))^2)
+  slope <- sum((x - mean(x)) * (y - mean(y))) / sxx
+  intercept <- mean(y) - slope * mean(x)
+  resid <- y - (intercept + slope * x)
+  s <- sqrt(sum(resid^2) / max(length(x) - 2, 1))
+  list(slope = slope, intercept = intercept, u_slope = s / sqrt(sxx), s_res = s)
+}
+```
+
+## Refitting T1's calibration
+
+```{r}
+#| label: t1-calibration
+t1_runs <- lapply(sort(Sys.glob(file.path(T1_DATA, "cal-*.csv"))), read_run)
+
+ntc_r <- c(); pt_r <- c(); t_ref <- c()
+for (run in t1_runs) {
+  for (ch in run$meta$channels) {
+    v <- mean(run$data$volts[run$data$pin == ch$pin])
+    if (!is.null(ch$divider_r_fixed_ohm)) {
+      ntc_r <- c(ntc_r, r_ntc_from_v(v, ch$divider_r_fixed_ohm, ch$excitation_v))
+    } else {
+      pt_r <- c(pt_r, r_pt_from_v(v, ch$bridge_r_ohm, ch$excitation_v,
+                                  ch$conditioning$gain, ch$conditioning$offset))
+    }
+  }
+  t_ref <- c(t_ref, run$meta$channels[[1]]$reference_value)
+}
+
+# Steinhart-Hart: linear in (1, ln R, (ln R)^3) against 1/T in kelvin.
+ln_r <- log(ntc_r)
+design <- cbind(rep(1, length(ln_r)), ln_r, ln_r^3)
+sh_coef <- as.numeric(solve(crossprod(design),
+                            crossprod(design, 1 / (t_ref + 273.15))))
+ntc_resid_k <- t_ntc_from_r(ntc_r, sh_coef) - t_ref
+
+# Callendar-Van Dusen with B fixed: linear in (R0, R0*A) against (1+Bt^2, t).
+design_pt <- cbind(1 + B_IEC * t_ref^2, t_ref)
+pt_x <- as.numeric(solve(crossprod(design_pt), crossprod(design_pt, pt_r)))
+R0 <- pt_x[1]; A_CVD <- pt_x[2] / pt_x[1]
+pt_resid_k <- t_pt_from_r(pt_r, R0, A_CVD) - t_ref
+```
+
+```{r}
+#| label: load
+steps <- lapply(STEP_RUNS, function(n) read_run(file.path("data", paste0(n, ".csv"))))
+names(steps) <- STEP_RUNS
+sheathed <- read_run(file.path("data", paste0(SHEATHED_RUN, ".csv")))
+ramp <- read_run(file.path("data", paste0(RAMP_RUN, ".csv")))
+board <- steps[[1]]$meta$board
+LSB <- lsb_volts(steps[[1]]$meta)
+```
+
+```{r}
+#| label: banner
+#| echo: false
+#| output: asis
+cat(synthetic_banner(steps[[1]]$meta))
+```
+
+```{r}
+#| label: out-calibration
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| T1 calibration points used | %d |
+| Steinhart–Hart $A$ | %.6e |
+| Steinhart–Hart $B$ | %.6e |
+| Steinhart–Hart $C$ | %.6e |
+| NTC fit residual (RMS) | %.1f mK |
+| Pt1000 $R_0$ | %.3f Ω |
+| Pt1000 $A$ | %.6e K⁻¹ |
+| Pt1000 fit residual (RMS) | %.1f mK |
+
+: T1\'s calibration, refitted here from T1\'s own recordings {#tbl-t2-calibration}
+', length(t1_runs), sh_coef[1], sh_coef[2], sh_coef[3],
+   sqrt(mean(ntc_resid_k^2)) * 1e3, R0, A_CVD, sqrt(mean(pt_resid_k^2)) * 1e3))
+```
+
+## Data quality
+
+```{r}
+#| label: quality
+#| echo: false
+#| output: asis
+all_runs <- c(steps, list(sheathed), list(ramp))
+bad <- sum(vapply(all_runs, function(r) length(validate_meta(r$meta)) > 0, logical(1)))
+lossy <- character(0)
+for (r in all_runs) {
+  st <- r$meta$stream_stats
+  counters <- st[setdiff(names(st), "records")]
+  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+    lossy <- c(lossy, r$meta$run)
+  }
+}
+cat(sprintf('
+%d runs read: %d plunges, one sheathed probe and one ramp.
+%s
+%s
+', length(all_runs), length(steps),
+   if (bad == 0) "All sidecars are complete."
+   else sprintf("%d sidecar(s) have missing fields.", bad),
+   if (length(lossy) == 0) "No run reports a lost record."
+   else paste0("Runs with losses: ", paste(lossy, collapse = ", "))))
+```
+
+## Converting to temperature
+
+```{r}
+#| label: to-temperature
+# Volts to degrees Celsius, through T1's refitted curve for that sensor.
+temperature_of <- function(run) {
+  ch <- run$meta$channels[[1]]
+  d <- run$data[run$data$pin == ch$pin, ]
+  t_s <- d$t_us / 1e6
+  t_s <- t_s - t_s[1]
+  v <- d$volts
+  temp <- if (!is.null(ch$divider_r_fixed_ohm)) {
+    t_ntc_from_r(r_ntc_from_v(v, ch$divider_r_fixed_ohm, ch$excitation_v), sh_coef)
+  } else {
+    t_pt_from_r(r_pt_from_v(v, ch$bridge_r_ohm, ch$excitation_v,
+                            ch$conditioning$gain, ch$conditioning$offset),
+                R0, A_CVD)
+  }
+  list(t = t_s, temp = temp, ch = ch)
+}
+
+# The record from the plunge onward, with time measured from it.
+after_plunge <- function(run) {
+  o <- temperature_of(run)
+  t0 <- o$ch$plunge_time_s
+  keep <- o$t >= t0
+  list(t_rel = o$t[keep] - t0, temp = o$temp[keep],
+       t_full = o$t, temp_full = o$temp, ch = o$ch)
+}
+```
+
+## Time constants
+
+```{r}
+#| label: step-fits
+fits <- list()
+rows <- list()
+for (name in STEP_RUNS) {
+  a <- after_plunge(steps[[name]])
+  fit <- fit_first_order(a$t_rel, a$temp)
+  tau_lin <- fit_linearised(a$t_rel, a$temp, fit$T_inf)
+  fits[[name]] <- list(fit = fit, t_rel = a$t_rel, temp = a$temp, ch = a$ch)
+  rows[[name]] <- data.frame(
+    medium = a$ch$medium, n = length(a$temp),
+    T_0 = fit$T_0, T_inf = fit$T_inf,
+    tau_s = fit$tau, u_tau_s = fit$u_tau,
+    tau_lin_s = tau_lin,
+    lin_diff_pct = (tau_lin / fit$tau - 1) * 100,
+    s_res_mK = fit$s_res * 1e3,
+    span_over_tau = (a$t_rel[length(a$t_rel)] - a$t_rel[1]) / fit$tau)
+}
+steps_df <- do.call(rbind, rows)
+steps_df <- steps_df[order(-steps_df$tau_s), ]
+rownames(steps_df) <- NULL
+```
+
+```{r}
+#| label: out-steps
+#| echo: false
+#| output: asis
+rows <- sprintf("| %s | %d | %.2f | %.2f | %.3f | %.1f | %.1f | %.1f |",
+                steps_df$medium, steps_df$n, steps_df$T_0, steps_df$T_inf,
+                steps_df$tau_s, steps_df$u_tau_s * 1e3,
+                steps_df$span_over_tau, steps_df$s_res_mK)
+cat(sprintf('
+| Medium | $n$ | $T_0$ [°C] | $T_\\infty$ [°C] | $\\tau$ [s] | $u(\\tau)$ [ms] | Record / $\\tau$ | Residual [mK] |
+|---|---|---|---|---|---|---|---|
+%s
+
+: Time constants from the nonlinear fit of the [step response](handbook.qmd#eq-t2-step) {#tbl-t2-tau}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: fig-t2-steps
+#| echo: false
+#| fig-width: 7.8
+#| fig-height: 3.6
+#| fig-cap: "The four plunges, each on its own time axis scaled by its own fitted time constant. On this scaling a first-order response is the same curve in every medium — which is the claim the experiment is testing."
+raw <- do.call(rbind, lapply(STEP_RUNS, function(n) {
+  f <- fits[[n]]
+  data.frame(medium = f$ch$medium, t = f$t_rel, temp = f$temp,
+             norm = (f$temp - f$fit$T_inf) / (f$fit$T_0 - f$fit$T_inf),
+             t_over_tau = f$t_rel / f$fit$tau)
+}))
+
+p1 <- ggplot(raw[raw$t > 0, ], aes(t, temp, colour = medium)) +
+  geom_line(linewidth = 0.3) +
+  scale_x_log10() +
+  labs(x = "Time since plunge [s]", y = "Temperature [°C]", colour = NULL) +
+  theme(legend.position = "bottom", legend.text = element_text(size = 7))
+
+grid <- data.frame(x = seq(0, 5, length.out = 200))
+grid$y <- exp(-grid$x)
+p2 <- ggplot(raw[raw$t_over_tau <= 5, ], aes(t_over_tau, norm, colour = medium)) +
+  geom_line(linewidth = 0.3, show.legend = FALSE) +
+  geom_line(data = grid, aes(x, y), inherit.aes = FALSE,
+            linetype = "dashed", linewidth = 0.4) +
+  labs(x = "Time since plunge, in units of tau", y = "Normalised approach")
+
+p1 | p2
+```
+
+```{r}
+#| label: out-estimators
+#| echo: false
+#| output: asis
+rows <- sprintf("| %s | %.3f | %.3f | %+.2f |",
+                steps_df$medium, steps_df$tau_s, steps_df$tau_lin_s,
+                steps_df$lin_diff_pct)
+cat(sprintf('
+| Medium | $\\tau$ nonlinear [s] | $\\tau$ linearised [s] | Difference |
+|---|---|---|---|
+%s
+
+: The two estimators of the handbook do not agree {#tbl-t2-estimators}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: out-estimators-text
+#| echo: false
+#| output: asis
+worst <- steps_df[which.max(abs(steps_df$lin_diff_pct)), ]
+cat(sprintf('
+The linearised estimator differs from the nonlinear one by up to
+%.1f %% (in %s), which is far larger
+than either fit\'s own standard error. The log transform gives the tail — where
+$T-T_\\infty$ is a few millikelvin and almost entirely noise — the same weight
+as the first, most informative, part of the curve. Report the nonlinear
+figure, and quote the linearised one only to show the difference.
+', abs(worst$lin_diff_pct), worst$medium))
+```
+
+## Convection coefficients
+
+```{r}
+#| label: convection
+fastest <- steps_df[nrow(steps_df), ]      # smallest tau
+conv <- steps_df[, c("medium", "tau_s", "u_tau_s")]
+conv$h_ratio <- fastest$tau_s / conv$tau_s
+conv$h_absolute <- RHO_C_V_OVER_A / conv$tau_s
+```
+
+```{r}
+#| label: out-convection
+#| echo: false
+#| output: asis
+rows <- sprintf("| %s | %.3f | %.3f | %.0f |",
+                conv$medium, conv$tau_s, conv$h_ratio, conv$h_absolute)
+cat(sprintf('
+| Medium | $\\tau$ [s] | $h/h_\\mathrm{%s}$ | $h$ [W m⁻² K⁻¹] |
+|---|---|---|---|
+%s
+
+: Convection, as ratios (measured) and as absolute values (estimated) {#tbl-t2-convection}
+', fastest$medium, paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: out-convection-text
+#| echo: false
+#| output: asis
+slowest <- conv[1, ]
+cat(sprintf('
+The ratio column is a **measurement**: the [ratio form](handbook.qmd#eq-t2-h-ratio) needs no probe geometry,
+because $\\rho cV/A$ is identical in every row and cancels. Stirred water
+removes heat %.0f times faster than
+%s does, and that number stands on its own.
+
+The absolute column is an **estimate**. It rests entirely on the assumed
+$\\rho cV/A = %.0f$ J m⁻² K⁻¹, which this experiment does not
+measure and which is marked TODO in the template. Quote the ratios as results
+and the absolute values with that assumption attached, or not at all.
+', 1 / slowest$h_ratio, slowest$medium, RHO_C_V_OVER_A))
+```
+
+## The ramp error
+
+```{r}
+#| label: ramp
+o_ramp <- temperature_of(ramp)
+t_ramp <- o_ramp$t; temp_ramp <- o_ramp$temp; ch_ramp <- o_ramp$ch
+rate <- ch_ramp$ramp_rate_c_per_s
+t_start <- ch_ramp$ramp_start_time_s
+t0_ramp <- ch_ramp$initial_temperature_c
+
+# The true bath temperature the sensor is following.
+true_temp <- ifelse(t_ramp < t_start, t0_ramp,
+                    t0_ramp + rate * (t_ramp - t_start))
+error <- temp_ramp - true_temp
+
+tau_stirred <- steps_df$tau_s[steps_df$medium == PRIMARY_MEDIUM]
+u_tau_stirred <- steps_df$u_tau_s[steps_df$medium == PRIMARY_MEDIUM]
+predicted <- -tau_stirred * rate
+
+# Measure the settled error only where the transient has genuinely died. The
+# procedure's own rule -- five time constants -- leaves exp(-5) = 0.7 % of the
+# initial lag, well under the scatter of the mean below; stopping at four
+# leaves 1.8 %, which is the same size as the whole discrepancy and would be
+# read as a disagreement with theory rather than as an impatient window.
+SETTLE_TAUS <- 5
+settled <- t_ramp > t_start + SETTLE_TAUS * tau_stirred
+measured <- mean(error[settled])
+u_measured <- sd(error[settled]) / sqrt(sum(settled))
+```
+
+```{r}
+#| label: fig-t2-ramp
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 4.6
+#| fig-cap: "A sensor following a ramp. Top: the bath and the sensor. Bottom: their difference, which settles to a constant lag rather than decaying to zero. The dashed line is the prediction from the step test, with no free parameter."
+traces <- rbind(
+  data.frame(t = t_ramp, y = true_temp, what = "bath"),
+  data.frame(t = t_ramp, y = temp_ramp, what = "sensor"))
+p_t <- ggplot(traces, aes(t, y, colour = what, linetype = what)) +
+  geom_line(linewidth = 0.4) +
+  labs(x = NULL, y = "Temperature [°C]", colour = NULL, linetype = NULL) +
+  theme(legend.position = "top")
+
+p_e <- ggplot(data.frame(t = t_ramp, e = error), aes(t, e)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.3) +
+  geom_hline(yintercept = predicted, linewidth = 0.4, linetype = "dashed") +
+  labs(x = "Time [s]", y = "Sensor − bath [K]",
+       subtitle = sprintf("dashed: -tau*rate = %.3f K", predicted))
+
+p_t / p_e + plot_layout(heights = c(2, 1))
+```
+
+```{r}
+#| label: out-ramp
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| Ramp rate $\\dot{T}$ | %.3f K s⁻¹ |
+| $\\tau$ from the step test (%s) | %.3f ± %.3f s |
+| Predicted steady error $-\\tau\\dot{T}$ | %.3f K |
+| Measured steady error | %.3f ± %.3f K |
+| Difference | %+.3f K |
+
+: The ramp error, predicted from the step test and measured {#tbl-t2-ramp}
+', rate, PRIMARY_MEDIUM, tau_stirred, u_tau_stirred, predicted,
+   measured, u_measured, measured - predicted))
+```
+
+```{r}
+#| label: out-ramp-text
+#| echo: false
+#| output: asis
+agree <- abs(measured - predicted) < 2 * sqrt(u_measured^2 + (u_tau_stirred * rate)^2)
+cat(sprintf('
+The prediction uses **no free parameter**: $\\tau$ comes from a different
+recording, in a different experiment section, and $\\dot{T}$ from the
+controller. The two
+%s.
+
+Note what kind of error this is. It does not decay, it does not average down,
+and a static calibration cannot see it — the sensor is perfectly calibrated and
+still reads %.2f K low for as long as the ramp continues.
+', if (agree) "agree within their combined uncertainty"
+   else "do not agree within their combined uncertainty, which is itself a result worth explaining",
+   abs(measured)))
+```
+
+## A second-order probe
+
+```{r}
+#| label: sheathed
+a_sh <- after_plunge(sheathed)
+t_sh <- a_sh$t_rel; temp_sh <- a_sh$temp
+fit1 <- fit_first_order(t_sh, temp_sh)
+fit2 <- fit_second_order(t_sh, temp_sh)
+```
+
+```{r}
+#| label: fig-t2-sheathed
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 4.8
+#| fig-cap: "The sheathed probe. Top: the first seconds, where a first-order model must have its maximum slope at the plunge and this response does not. Bottom: the residual of the first-order fit, whose arc — negative, positive, negative — is the diagnostic, not its magnitude."
+early <- t_sh <= min(6 * fit1$tau, t_sh[length(t_sh)])
+model1 <- fit1$T_inf + (fit1$T_0 - fit1$T_inf) * exp(-t_sh / fit1$tau)
+g <- (fit2$tau1 * exp(-t_sh / fit2$tau1) - fit2$tau2 * exp(-t_sh / fit2$tau2)) /
+  (fit2$tau1 - fit2$tau2)
+model2 <- fit2$T_inf + (fit2$T_0 - fit2$T_inf) * g
+
+p_fit <- ggplot() +
+  geom_point(data = data.frame(t = t_sh[early], y = temp_sh[early]),
+             aes(t, y), size = 0.6) +
+  geom_line(data = data.frame(t = t_sh[early], y = model1[early], w = "first order"),
+            aes(t, y, colour = w), linewidth = 0.45) +
+  geom_line(data = data.frame(t = t_sh[early], y = model2[early], w = "second order"),
+            aes(t, y, colour = w), linewidth = 0.45) +
+  labs(x = NULL, y = "Temperature [°C]", colour = NULL) +
+  theme(legend.position = "top")
+
+res <- rbind(
+  data.frame(t = t_sh[early], r = fit1$residual[early] * 1e3, w = "first order"),
+  data.frame(t = t_sh[early], r = fit2$residual[early] * 1e3, w = "second order"))
+p_res <- ggplot(res, aes(t, r, colour = w)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.3, show.legend = FALSE) +
+  labs(x = "Time since plunge [s]", y = "Residual [mK]")
+
+p_fit / p_res + plot_layout(heights = c(2, 1))
+```
+
+```{r}
+#| label: out-sheathed
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Model | Parameters | Residual RMS |
+|---|---|---|
+| First order | $\\tau = %.3f \\pm %.3f$ s | %.1f mK |
+| Second order | $\\tau_1 = %.3f \\pm %.3f$ s, $\\tau_2 = %.3f \\pm %.3f$ s | %.1f mK |
+
+: One lump against two, on the sheathed probe {#tbl-t2-sheathed}
+', fit1$tau, fit1$u_tau, fit1$s_res * 1e3,
+   fit2$tau1, fit2$u_tau1, fit2$tau2, fit2$u_tau2, fit2$s_res * 1e3))
+```
+
+```{r}
+#| label: out-sheathed-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+The second model reduces the residual by a factor of %.1f, but
+the number to look at is the **shape** in @fig-t2-sheathed. The first-order
+residual is not scatter: it is negative at the start, positive through the
+middle and negative again, which is what an unmodelled second lag always looks
+like. A single goodness-of-fit number would have hidden it, and a first-order
+$\\tau$ of %.2f s would have been reported without anyone
+noticing that the probe does not have one.
+', fit1$s_res / fit2$s_res, fit1$tau))
+```
+
+## Uncertainty budget
+
+The measurand is $\tau$ in stirred water, the fastest medium and therefore
+the one where every systematic effect is largest.
+
+```{r}
+#| label: budget
+primary <- fits[[paste0("step-", PRIMARY_MEDIUM)]]
+fit_p <- primary$fit
+ch_p <- primary$ch
+
+# The transfer is not instantaneous; the bound is the measured transfer time.
+# TODO (Paolo): replace with the transfer duration timed at the bench.
+T_TRANSFER_S <- 0.2
+
+# T1's calibration residual, referred to tau through the fit's own sensitivity
+# dtau/dT: a temperature offset of dT shifts the fitted tau by roughly
+# tau * dT / (T_0 - T_inf).
+cal_resid_k <- sqrt(mean(ntc_resid_k^2))
+c_cal <- fit_p$tau / abs(fit_p$T_0 - fit_p$T_inf)
+
+# The time axis is only as good as the sampling grid (S1).
+grid_stats <- timing_summary(steps[[paste0("step-", PRIMARY_MEDIUM)]]$data)$stats
+grid_bound_s <- grid_stats$residual_max_abs_us / 1e6
+
+components <- list(
+  list(quantity = "Fit repeatability", value = fit_p$tau, unit = "s",
+       distribution = "type-a", std = fit_p$u_tau, sensitivity = 1),
+  list(quantity = "Transfer time", value = 0, unit = "s",
+       distribution = "rectangular", half_width = T_TRANSFER_S / 2,
+       sensitivity = 1),
+  list(quantity = "T1 calibration", value = 0, unit = "s",
+       distribution = "type-a", std = cal_resid_k, sensitivity = c_cal),
+  list(quantity = "Sampling grid", value = 0, unit = "s",
+       distribution = "rectangular", half_width = grid_bound_s, sensitivity = 1),
+  list(quantity = "Bath stability", value = 0, unit = "s",
+       distribution = "type-a", std = fit_p$u_T_inf, sensitivity = c_cal)
+)
+budget <- budget_table(components, k = 2)
+```
+
+```{r}
+#| label: out-budget
+#| echo: false
+#| output: asis
+cat(budget_to_markdown(
+  budget,
+  caption = sprintf("Uncertainty budget for $\\tau$ in %s", ch_p$medium),
+  label = "tbl-t2-budget"))
+```
+
+```{r}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant <- budget$table[which.max(budget$table$index_pct), ]
+cat(sprintf('
+$\\tau = %.3f$ s with an expanded uncertainty
+$U = %.0f$ ms at $k = 2$, a relative uncertainty of
+%.1f %%.
+
+The dominant component is **%s** at
+%.0f %% of the combined variance. If that is the
+transfer time, the way to improve this measurement is a faster plunge, not a
+longer record or a quieter converter — and the fit\'s own standard error,
+%.0f ms, would have been a badly optimistic thing to
+quote on its own.
+', fit_p$tau, budget$U * 1e3, budget$U / fit_p$tau * 100,
+   dominant$quantity, dominant$index_pct, fit_p$u_tau * 1e3))
+```
+
+## What to report
+
+1. @tbl-t2-calibration: T1's calibration as you refitted it, with its residual.
+2. @tbl-t2-tau and @fig-t2-steps: a time constant per medium, each with the
+   medium named, and the record length in units of $\tau$.
+3. @tbl-t2-estimators: the two estimators, their difference, and which you
+   report.
+4. @tbl-t2-convection: the ratios as measurements and any absolute $h$ with
+   its assumption stated.
+5. @tbl-t2-ramp and @fig-t2-ramp: the predicted and measured ramp error, and
+   one sentence on why averaging does not reduce it.
+6. @tbl-t2-sheathed and @fig-t2-sheathed: the residual's shape, not its size.
+7. @tbl-t2-budget: the budget, the dominant component, and what you would
+   change first.

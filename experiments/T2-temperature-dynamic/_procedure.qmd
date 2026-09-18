@@ -1,0 +1,100 @@
+::: {.callout-warning}
+## Hot water, and a sensor you are about to drop into it
+
+The bath runs at up to 70 °C in this procedure. That is well below boiling and
+still hot enough to scald.
+
+- **Never leave a heated bath unattended**, and never run one outside
+  laboratory hours without agreement.
+- The stirrer and the hotplate are mains powered and stand next to a vessel of
+  water. Check the cables before switching on, keep connectors off the bench
+  top, and know where the local isolator is.
+- The plunge is a fast movement towards hot water. Plan the path, keep the
+  lead clear of the stirrer, and wear eye protection.
+- Let the vessel cool before emptying it, or use tongs.
+:::
+
+### 1. Bring the calibration forward {#sec-t2-step-calibration}
+
+This experiment converts volts to temperature with **T1's fitted curves**, so
+T1 must be complete and its data available. Check before you heat anything:
+
+```bash
+ls ../T1-temperature-static/data/
+```
+
+If the sensors have been re-wired since T1, or the excitation changed, the
+calibration no longer applies and T1 must be repeated. The excitation used
+here is recorded in every sidecar as `excitation_v`, and it must match T1's.
+
+### 2. Set up the two baths {#sec-t2-step-baths}
+
+You need a starting medium at room temperature and a target bath at the
+setpoint, both stable, and a path between them that can be traversed quickly.
+
+Stir the hot bath and confirm it is stirred: move the reference thermometer
+around the vessel and watch for a reading that does not change. A vertical
+gradient of a few kelvin is normal in an unstirred bath and will appear in
+your fit as a $T_\infty$ that drifts.
+
+### 3. The plunge, once per medium {#sec-t2-step-plunge}
+
+Record **before** the plunge, not from it. A baseline of at least a few
+seconds establishes $T_0$ and lets the analysis find the step:
+
+```bash
+arduino-io mode 15 analog && arduino-io mode 16 analog
+arduino-io stream 15,16 --hz 16 --seconds 20 --csv data/step-stirred-water.csv
+```
+
+Start the recording, wait out the baseline, then move the probe in one
+deliberate motion and leave it. Record for at least **five time constants** so
+the tail is real data and not extrapolation.
+
+Repeat for each medium — still air, forced air, still water, stirred water —
+choosing a sampling rate and a duration for each. Slow media need neither a
+high rate nor a short record; stirred water needs both.
+
+::: {.callout-tip}
+## Choosing the sampling rate
+
+A rule that works: at least 20 samples within the first time constant, and a
+total duration of at least $5\tau$. You do not know $\tau$ yet, so estimate it
+from the previous medium and adjust — that is what the first run is for.
+:::
+
+### 4. The transfer is not instantaneous {#sec-t2-step-transfer}
+
+The model assumes the medium changes in zero time. It does not. Time the
+transfer — from video, or from the first deflection in the record — and record
+it as `transition.t_transition_s`. If it is not small compared with $\tau$,
+the fitted $\tau$ is biased high and the budget must carry it as a component.
+In stirred water, where $\tau$ is a couple of seconds, this is a real effect.
+
+### 5. The sheathed probe {#sec-t2-step-sheathed}
+
+Repeat the stirred-water plunge with a sheathed probe. Nothing about the
+procedure changes; the point is the shape of the first second of the response.
+
+### 6. The ramp {#sec-t2-step-ramp}
+
+Instead of a step, drive the bath up at a steady rate with the sensor already
+immersed, and log both the sensor and the reference thermometer. The steady
+difference between them is @eq-t2-ramp, and it is the most directly useful
+number this session produces.
+
+### 7. Fill the sidecars {#sec-t2-step-sidecar}
+
+The same discipline as
+[S1's checklist](../S1-daq-static/handbook.qmd#sec-s1-step-sidecar), with the
+additions this experiment needs:
+
+- [ ] `board.adc_bits`, `board.vref_mV`, `board.usbio_version`
+- [ ] `acquisition.requested_period_us` **and** `acquisition.achieved_rate_hz`
+- [ ] all six `stream_stats` counters
+- [ ] per channel: `excitation_v`, and the divider or bridge resistance — they
+      must match T1's
+- [ ] `medium`, `initial_temperature_c`, `target_temperature_c`
+- [ ] `plunge_time_s`, and the measured transfer duration
+- [ ] `references[]`: the reference thermometer and its calibration
+- [ ] `synthetic: false`

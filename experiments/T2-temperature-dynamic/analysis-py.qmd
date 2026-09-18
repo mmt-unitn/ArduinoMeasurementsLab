@@ -1,0 +1,699 @@
+---
+title: "T2 — Analysis template (Python)"
+subtitle: "Dynamic response of temperature sensors"
+description: "Time constants, convection coefficients, the ramp error and a second-order probe, in Python"
+engine: jupyter
+jupyter: python3
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment. To analyse your own measurements, replace the files in `data/`
+and change the paths in the first cell — nothing else.
+
+The R template [`analysis-r.qmd`](analysis-r.qmd) has the same sections, the
+same figure labels and the same output tables, and produces the same numbers
+from the same data.
+
+::: {.callout-note collapse="true"}
+## Two things this template does deliberately
+
+**It refits T1's calibration rather than hard-coding it.** Volts become
+temperature through the Steinhart–Hart and Callendar–Van Dusen curves fitted
+from T1's own recordings, read from `../T1-temperature-static/data/`. A
+calibration is an input quantity with an uncertainty, not a constant.
+
+**Every fit is written out.** The nonlinear fits are explicit damped
+Gauss–Newton loops rather than `scipy.optimize.curve_fit` against R's `nls`,
+which choose their own convergence criteria and do not reach the same
+parameters on the same data.
+:::
+
+## Setup
+
+```{python}
+#| label: setup
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd().parents[1] / "shared" / "python"))
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from labtools import (budget_table, lsb_volts, read_run, synthetic_banner,
+                      timing_summary, validate_meta)
+
+plt.rcParams.update({
+    "figure.figsize": (7.0, 4.0),
+    "axes.grid": True,
+    "grid.alpha": 0.3,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+})
+
+DATA = Path("data")
+STEP_RUNS = ["step-still-air", "step-forced-air", "step-still-water",
+             "step-stirred-water"]
+SHEATHED_RUN = "step-sheathed"
+RAMP_RUN = "ramp-stirred-water"
+PRIMARY_MEDIUM = "stirred-water"      # the budget's medium
+
+T1_DATA = Path("../T1-temperature-static/data")
+B_IEC = -5.775e-7                     # IEC 60751, fixed
+MAX_FIT_ITERATIONS = 200
+
+# rho*c*V/A for the bare probe, in J/(m^2 K). An absolute h rests entirely on
+# this number, which this experiment does not measure.
+# TODO (Paolo): measure or estimate for the probe actually used.
+RHO_C_V_OVER_A = 4.0e3
+```
+
+```{python}
+#| label: helpers
+def r_ntc_from_v(v, r_fixed, vcc):
+    """Inverts the divider for the NTC's resistance, as in T1."""
+    return vcc * r_fixed / v - r_fixed
+
+
+def t_ntc_from_r(r, coef):
+    """Steinhart-Hart from a fitted (A, B, C), degrees Celsius."""
+    ln_r = np.log(r)
+    return 1.0 / (coef[0] + coef[1] * ln_r + coef[2] * ln_r ** 3) - 273.15
+
+
+def r_pt_from_v(v, r_bridge, v_exc, gain, offset):
+    """Inverts the bridge for the Pt1000's resistance, as in T1."""
+    deflection = (v - offset) / (gain * v_exc)
+    return r_bridge * (0.5 + deflection) / (0.5 - deflection)
+
+
+def t_pt_from_r(r, r0, a, b=B_IEC):
+    """Callendar-Van Dusen, positive root of the quadratic in t."""
+    c = 1.0 - r / r0
+    return (-a + np.sqrt(a ** 2 - 4.0 * b * c)) / (2.0 * b)
+
+
+def gauss_newton(residual_and_jacobian, p0, n_obs):
+    """Damped Gauss-Newton on an arbitrary model.
+
+    `residual_and_jacobian(p)` returns (r, J) with r the residual vector and J
+    its Jacobian with respect to p. The step is halved until the sum of
+    squares does not increase, which is deterministic and therefore identical
+    in both languages; an undamped step diverges on the slower media, where
+    the baseline pins T_0 much harder than the tail pins tau.
+    """
+    p = np.array(p0, dtype=float)
+    for _ in range(MAX_FIT_ITERATIONS):
+        r, j = residual_and_jacobian(p)
+        sse = float((r ** 2).sum())
+        step = np.linalg.solve(j.T @ j, j.T @ r)
+        lam = 1.0
+        while lam > 1e-8:
+            r_try, _ = residual_and_jacobian(p + lam * step)
+            if float((r_try ** 2).sum()) <= sse:
+                break
+            lam /= 2.0
+        p = p + lam * step
+        if np.max(np.abs(lam * step) / np.maximum(np.abs(p), 1e-12)) < 1e-12:
+            break
+    r, j = residual_and_jacobian(p)
+    dof = max(n_obs - p.size, 1)
+    s = float(np.sqrt((r ** 2).sum() / dof))
+    cov = np.linalg.inv(j.T @ j) * s ** 2
+    return p, np.sqrt(np.diag(cov)), s, r
+
+
+def fit_first_order(t, y):
+    """Fits the first-order step response, returning all three parameters."""
+    t = np.asarray(t, float)
+    y = np.asarray(y, float)
+
+    def rj(p):
+        t_inf, t_0, tau = p
+        e = np.exp(-t / tau)
+        model = t_inf + (t_0 - t_inf) * e
+        j = np.column_stack([1.0 - e, e,
+                             (t_0 - t_inf) * e * t / tau ** 2])
+        return y - model, j
+
+    p0 = [y[-1], y[0], max((t[-1] - t[0]) / 5.0, 1e-3)]
+    p, u, s, resid = gauss_newton(rj, p0, y.size)
+    return {"T_inf": p[0], "T_0": p[1], "tau": p[2],
+            "u_tau": u[2], "u_T_inf": u[0], "s_res": s, "residual": resid,
+            "t": t, "y": y}
+
+
+def fit_linearised(t, y, t_inf):
+    """The log-linear estimator, for comparison with the nonlinear fit."""
+    z = np.abs(y - t_inf)
+    keep = z > 1e-9
+    x, w = t[keep], np.log(z[keep])
+    sxx = ((x - x.mean()) ** 2).sum()
+    slope = ((x - x.mean()) * (w - w.mean())).sum() / sxx
+    return -1.0 / slope
+
+
+def fit_second_order(t, y):
+    """Fits the two-lump second-order response."""
+    t = np.asarray(t, float)
+    y = np.asarray(y, float)
+
+    def shape(t1, t2):
+        return (t1 * np.exp(-t / t1) - t2 * np.exp(-t / t2)) / (t1 - t2)
+
+    def rj(p):
+        t_inf, t_0, t1, t2 = p
+        g = shape(t1, t2)
+        model = t_inf + (t_0 - t_inf) * g
+        # Numerical columns for the two time constants: their closed forms are
+        # long and the step size below is far smaller than the fit's own
+        # precision, so both languages get the same derivative.
+        eps = 1e-6
+        d1 = (shape(t1 + eps, t2) - shape(t1 - eps, t2)) / (2 * eps)
+        d2 = (shape(t1, t2 + eps) - shape(t1, t2 - eps)) / (2 * eps)
+        j = np.column_stack([1.0 - g, g,
+                             (t_0 - t_inf) * d1, (t_0 - t_inf) * d2])
+        return y - model, j
+
+    span = t[-1] - t[0]
+    p0 = [y[-1], y[0], span / 20.0, span / 6.0]
+    p, u, s, resid = gauss_newton(rj, p0, y.size)
+    return {"T_inf": p[0], "T_0": p[1], "tau1": p[2], "tau2": p[3],
+            "u_tau1": u[2], "u_tau2": u[3], "s_res": s, "residual": resid}
+
+
+def ols(x, y):
+    x = np.asarray(x, float); y = np.asarray(y, float)
+    sxx = ((x - x.mean()) ** 2).sum()
+    slope = ((x - x.mean()) * (y - y.mean())).sum() / sxx
+    intercept = y.mean() - slope * x.mean()
+    resid = y - (intercept + slope * x)
+    s = np.sqrt((resid ** 2).sum() / max(x.size - 2, 1))
+    return {"slope": float(slope), "intercept": float(intercept),
+            "u_slope": float(s / np.sqrt(sxx)), "s_res": float(s)}
+```
+
+## Refitting T1's calibration
+
+```{python}
+#| label: t1-calibration
+t1_runs = [read_run(p) for p in sorted(T1_DATA.glob("cal-*.csv"))]
+
+ntc_r, pt_r, t_ref, u_t_ref = [], [], [], []
+for run in t1_runs:
+    wide = run.data
+    for ch in run.meta["channels"]:
+        v = wide.loc[wide["pin"] == ch["pin"], "volts"].mean()
+        if "divider_r_fixed_ohm" in ch:
+            ntc_r.append(r_ntc_from_v(v, ch["divider_r_fixed_ohm"],
+                                      ch["excitation_v"]))
+        else:
+            pt_r.append(r_pt_from_v(v, ch["bridge_r_ohm"], ch["excitation_v"],
+                                    ch["conditioning"]["gain"],
+                                    ch["conditioning"]["offset"]))
+    ch0 = run.meta["channels"][0]
+    t_ref.append(ch0["reference_value"])
+    u_t_ref.append(ch0["reference_u"])
+
+ntc_r = np.array(ntc_r); pt_r = np.array(pt_r); t_ref = np.array(t_ref)
+
+# Steinhart-Hart: linear in (1, ln R, (ln R)^3) against 1/T in kelvin.
+ln_r = np.log(ntc_r)
+design = np.column_stack([np.ones_like(ln_r), ln_r, ln_r ** 3])
+sh_coef = np.linalg.solve(design.T @ design, design.T @ (1.0 / (t_ref + 273.15)))
+ntc_resid_k = t_ntc_from_r(ntc_r, sh_coef) - t_ref
+
+# Callendar-Van Dusen with B fixed: linear in (R0, R0*A) against (1+Bt^2, t).
+design_pt = np.column_stack([1.0 + B_IEC * t_ref ** 2, t_ref])
+pt_x = np.linalg.solve(design_pt.T @ design_pt, design_pt.T @ pt_r)
+R0, A_CVD = float(pt_x[0]), float(pt_x[1] / pt_x[0])
+pt_resid_k = t_pt_from_r(pt_r, R0, A_CVD) - t_ref
+```
+
+```{python}
+#| label: load
+steps = {name: read_run(DATA / f"{name}.csv") for name in STEP_RUNS}
+sheathed = read_run(DATA / f"{SHEATHED_RUN}.csv")
+ramp = read_run(DATA / f"{RAMP_RUN}.csv")
+board = steps[STEP_RUNS[0]].meta["board"]
+LSB = lsb_volts(steps[STEP_RUNS[0]].meta)
+```
+
+```{python}
+#| label: banner
+#| echo: false
+#| output: asis
+print(synthetic_banner(steps[STEP_RUNS[0]].meta))
+```
+
+```{python}
+#| label: out-calibration
+#| echo: false
+#| output: asis
+print(f"""
+| Quantity | Value |
+|---|---|
+| T1 calibration points used | {len(t1_runs)} |
+| Steinhart–Hart $A$ | {sh_coef[0]:.6e} |
+| Steinhart–Hart $B$ | {sh_coef[1]:.6e} |
+| Steinhart–Hart $C$ | {sh_coef[2]:.6e} |
+| NTC fit residual (RMS) | {np.sqrt((ntc_resid_k ** 2).mean()) * 1e3:.1f} mK |
+| Pt1000 $R_0$ | {R0:.3f} Ω |
+| Pt1000 $A$ | {A_CVD:.6e} K⁻¹ |
+| Pt1000 fit residual (RMS) | {np.sqrt((pt_resid_k ** 2).mean()) * 1e3:.1f} mK |
+
+: T1's calibration, refitted here from T1's own recordings {{#tbl-t2-calibration}}
+""")
+```
+
+## Data quality
+
+```{python}
+#| label: quality
+#| echo: false
+#| output: asis
+all_runs = list(steps.values()) + [sheathed, ramp]
+bad = sum(1 for r in all_runs if validate_meta(r.meta))
+lossy = [r.meta["run"] for r in all_runs
+         if any(k != "records" and isinstance(v, int) and v > 0
+                for k, v in r.meta.get("stream_stats", {}).items())]
+print(f"""
+{len(all_runs)} runs read: {len(steps)} plunges, one sheathed probe and one ramp.
+{'All sidecars are complete.' if bad == 0 else f'{bad} sidecar(s) have missing fields.'}
+{'No run reports a lost record.' if not lossy else 'Runs with losses: ' + ', '.join(lossy)}
+""")
+```
+
+## Converting to temperature
+
+```{python}
+#| label: to-temperature
+def temperature_of(run):
+    """Volts to degrees Celsius, through T1's refitted curve for that sensor."""
+    ch = run.meta["channels"][0]
+    d = run.data[run.data["pin"] == ch["pin"]]
+    t_s = d["t_us"].to_numpy() / 1e6
+    t_s = t_s - t_s[0]
+    v = d["volts"].to_numpy()
+    if "divider_r_fixed_ohm" in ch:
+        temp = t_ntc_from_r(r_ntc_from_v(v, ch["divider_r_fixed_ohm"],
+                                         ch["excitation_v"]), sh_coef)
+    else:
+        temp = t_pt_from_r(r_pt_from_v(v, ch["bridge_r_ohm"], ch["excitation_v"],
+                                       ch["conditioning"]["gain"],
+                                       ch["conditioning"]["offset"]),
+                           R0, A_CVD)
+    return t_s, temp, ch
+
+
+def after_plunge(run):
+    """The record from the plunge onward, with time measured from it."""
+    t_s, temp, ch = temperature_of(run)
+    t0 = float(ch["plunge_time_s"])
+    keep = t_s >= t0
+    return t_s[keep] - t0, temp[keep], t_s, temp, ch
+```
+
+## Time constants
+
+```{python}
+#| label: step-fits
+fits = {}
+rows = []
+for name, run in steps.items():
+    t_rel, temp, t_full, temp_full, ch = after_plunge(run)
+    fit = fit_first_order(t_rel, temp)
+    tau_lin = fit_linearised(t_rel, temp, fit["T_inf"])
+    fits[name] = dict(fit=fit, t_full=t_full, temp_full=temp_full, ch=ch,
+                      t_rel=t_rel, temp=temp)
+    rows.append({
+        "medium": ch["medium"], "n": temp.size,
+        "T_0": fit["T_0"], "T_inf": fit["T_inf"],
+        "tau_s": fit["tau"], "u_tau_s": fit["u_tau"],
+        "tau_lin_s": tau_lin,
+        "lin_diff_pct": (tau_lin / fit["tau"] - 1.0) * 100.0,
+        "s_res_mK": fit["s_res"] * 1e3,
+        "span_over_tau": (t_rel[-1] - t_rel[0]) / fit["tau"],
+    })
+steps_df = pd.DataFrame(rows).sort_values("tau_s", ascending=False).reset_index(drop=True)
+```
+
+```{python}
+#| label: out-steps
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.medium} | {r.n} | {r.T_0:.2f} | {r.T_inf:.2f} | {r.tau_s:.3f} | "
+    f"{r.u_tau_s * 1e3:.1f} | {r.span_over_tau:.1f} | {r.s_res_mK:.1f} |"
+    for r in steps_df.itertuples())
+print(f"""
+| Medium | $n$ | $T_0$ [°C] | $T_\\infty$ [°C] | $\\tau$ [s] | $u(\\tau)$ [ms] | Record / $\\tau$ | Residual [mK] |
+|---|---|---|---|---|---|---|---|
+{rows}
+
+: Time constants from the nonlinear fit of the [step response](handbook.qmd#eq-t2-step) {{#tbl-t2-tau}}
+""")
+```
+
+```{python}
+#| label: fig-t2-steps
+#| echo: false
+#| fig-cap: "The four plunges, each on its own time axis scaled by its own fitted time constant. On this scaling a first-order response is the same curve in every medium — which is the claim the experiment is testing."
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.8, 3.6))
+for name in STEP_RUNS:
+    f = fits[name]
+    fit = f["fit"]
+    norm = (f["temp"] - fit["T_inf"]) / (fit["T_0"] - fit["T_inf"])
+    ax1.plot(f["t_rel"], f["temp"], lw=0.9, label=f["ch"]["medium"])
+    ax2.plot(f["t_rel"] / fit["tau"], norm, lw=0.9)
+ax1.set_xscale("log")
+ax1.set_xlabel("Time since plunge [s]")
+ax1.set_ylabel("Temperature [°C]")
+ax1.legend(frameon=False, fontsize=8)
+
+grid = np.linspace(0, 5, 200)
+ax2.plot(grid, np.exp(-grid), "k--", lw=1.0, label="$e^{-t/\\tau}$")
+ax2.set_xlim(0, 5)
+ax2.set_xlabel("Time since plunge, in units of $\\tau$")
+ax2.set_ylabel("Normalised approach")
+ax2.legend(frameon=False, fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-estimators
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.medium} | {r.tau_s:.3f} | {r.tau_lin_s:.3f} | {r.lin_diff_pct:+.2f} |"
+    for r in steps_df.itertuples())
+print(f"""
+| Medium | $\\tau$ nonlinear [s] | $\\tau$ linearised [s] | Difference |
+|---|---|---|---|
+{rows}
+
+: The two estimators of the handbook do not agree {{#tbl-t2-estimators}}
+""")
+```
+
+```{python}
+#| label: out-estimators-text
+#| echo: false
+#| output: asis
+worst = steps_df.loc[steps_df["lin_diff_pct"].abs().idxmax()]
+print(f"""
+The linearised estimator differs from the nonlinear one by up to
+{abs(worst['lin_diff_pct']):.1f} % (in {worst['medium']}), which is far larger
+than either fit's own standard error. The log transform gives the tail — where
+$T-T_\\infty$ is a few millikelvin and almost entirely noise — the same weight
+as the first, most informative, part of the curve. Report the nonlinear
+figure, and quote the linearised one only to show the difference.
+""")
+```
+
+## Convection coefficients
+
+```{python}
+#| label: convection
+fastest = steps_df.iloc[-1]        # smallest tau
+conv = steps_df[["medium", "tau_s", "u_tau_s"]].copy()
+conv["h_ratio"] = fastest["tau_s"] / conv["tau_s"]
+conv["h_absolute"] = RHO_C_V_OVER_A / conv["tau_s"]
+```
+
+```{python}
+#| label: out-convection
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.medium} | {r.tau_s:.3f} | {r.h_ratio:.3f} | {r.h_absolute:.0f} |"
+    for r in conv.itertuples())
+print(f"""
+| Medium | $\\tau$ [s] | $h/h_\\mathrm{{{fastest['medium']}}}$ | $h$ [W m⁻² K⁻¹] |
+|---|---|---|---|
+{rows}
+
+: Convection, as ratios (measured) and as absolute values (estimated) {{#tbl-t2-convection}}
+""")
+```
+
+```{python}
+#| label: out-convection-text
+#| echo: false
+#| output: asis
+slowest = conv.iloc[0]
+print(f"""
+The ratio column is a **measurement**: the [ratio form](handbook.qmd#eq-t2-h-ratio) needs no probe geometry,
+because $\\rho cV/A$ is identical in every row and cancels. Stirred water
+removes heat {1.0 / slowest['h_ratio']:.0f} times faster than
+{slowest['medium']} does, and that number stands on its own.
+
+The absolute column is an **estimate**. It rests entirely on the assumed
+$\\rho cV/A = {RHO_C_V_OVER_A:.0f}$ J m⁻² K⁻¹, which this experiment does not
+measure and which is marked TODO in the template. Quote the ratios as results
+and the absolute values with that assumption attached, or not at all.
+""")
+```
+
+## The ramp error
+
+```{python}
+#| label: ramp
+t_ramp, temp_ramp, ch_ramp = temperature_of(ramp)
+rate = float(ch_ramp["ramp_rate_c_per_s"])
+t_start = float(ch_ramp["ramp_start_time_s"])
+t0_ramp = float(ch_ramp["initial_temperature_c"])
+
+# The true bath temperature the sensor is following.
+true_temp = np.where(t_ramp < t_start, t0_ramp,
+                     t0_ramp + rate * (t_ramp - t_start))
+error = temp_ramp - true_temp
+
+tau_stirred = float(steps_df.loc[steps_df["medium"] == PRIMARY_MEDIUM,
+                                 "tau_s"].iloc[0])
+u_tau_stirred = float(steps_df.loc[steps_df["medium"] == PRIMARY_MEDIUM,
+                                   "u_tau_s"].iloc[0])
+predicted = -tau_stirred * rate
+
+# Measure the settled error only where the transient has genuinely died. The
+# procedure's own rule -- five time constants -- leaves exp(-5) = 0.7 % of the
+# initial lag, well under the scatter of the mean below; stopping at four
+# leaves 1.8 %, which is the same size as the whole discrepancy and would be
+# read as a disagreement with theory rather than as an impatient window.
+SETTLE_TAUS = 5.0
+settled = t_ramp > t_start + SETTLE_TAUS * tau_stirred
+measured = float(error[settled].mean())
+u_measured = float(error[settled].std(ddof=1) / np.sqrt(settled.sum()))
+```
+
+```{python}
+#| label: fig-t2-ramp
+#| echo: false
+#| fig-cap: "A sensor following a ramp. Top: the bath and the sensor. Bottom: their difference, which settles to a constant lag rather than decaying to zero. The dashed line is the prediction from the step test, with no free parameter."
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 4.6), sharex=True,
+                               gridspec_kw={"height_ratios": [2, 1]})
+ax1.plot(t_ramp, true_temp, lw=1.0, ls="--", label="bath")
+ax1.plot(t_ramp, temp_ramp, lw=1.0, label="sensor")
+ax1.set_ylabel("Temperature [°C]")
+ax1.legend(frameon=False)
+
+ax2.axhline(0.0, color="0.4", lw=0.8)
+ax2.plot(t_ramp, error, lw=0.9)
+ax2.axhline(predicted, color="0.2", lw=1.0, ls="--",
+            label=f"$-\\tau\\dot{{T}}$ = {predicted:.3f} K")
+ax2.set_xlabel("Time [s]")
+ax2.set_ylabel("Sensor − bath [K]")
+ax2.legend(frameon=False, fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-ramp
+#| echo: false
+#| output: asis
+print(f"""
+| Quantity | Value |
+|---|---|
+| Ramp rate $\\dot{{T}}$ | {rate:.3f} K s⁻¹ |
+| $\\tau$ from the step test ({PRIMARY_MEDIUM}) | {tau_stirred:.3f} ± {u_tau_stirred:.3f} s |
+| Predicted steady error $-\\tau\\dot{{T}}$ | {predicted:.3f} K |
+| Measured steady error | {measured:.3f} ± {u_measured:.3f} K |
+| Difference | {measured - predicted:+.3f} K |
+
+: The ramp error, predicted from the step test and measured {{#tbl-t2-ramp}}
+""")
+```
+
+```{python}
+#| label: out-ramp-text
+#| echo: false
+#| output: asis
+agree = abs(measured - predicted) < 2 * np.hypot(u_measured, u_tau_stirred * rate)
+print(f"""
+The prediction uses **no free parameter**: $\\tau$ comes from a different
+recording, in a different experiment section, and $\\dot{{T}}$ from the
+controller. The two
+{'agree within their combined uncertainty' if agree else 'do not agree within their combined uncertainty, which is itself a result worth explaining'}.
+
+Note what kind of error this is. It does not decay, it does not average down,
+and a static calibration cannot see it — the sensor is perfectly calibrated and
+still reads {abs(measured):.2f} K low for as long as the ramp continues.
+""")
+```
+
+## A second-order probe
+
+```{python}
+#| label: sheathed
+t_sh, temp_sh, _, _, ch_sh = after_plunge(sheathed)
+fit1 = fit_first_order(t_sh, temp_sh)
+fit2 = fit_second_order(t_sh, temp_sh)
+```
+
+```{python}
+#| label: fig-t2-sheathed
+#| echo: false
+#| fig-cap: "The sheathed probe. Top: the first seconds, where a first-order model must have its maximum slope at the plunge and this response does not. Bottom: the residual of the first-order fit, whose arc — negative, positive, negative — is the diagnostic, not its magnitude."
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 4.8), sharex=True,
+                               gridspec_kw={"height_ratios": [2, 1]})
+early = t_sh <= min(6.0 * fit1["tau"], t_sh[-1])
+ax1.plot(t_sh[early], temp_sh[early], "o", ms=2.5, label="samples")
+model1 = fit1["T_inf"] + (fit1["T_0"] - fit1["T_inf"]) * np.exp(-t_sh / fit1["tau"])
+g = ((fit2["tau1"] * np.exp(-t_sh / fit2["tau1"])
+      - fit2["tau2"] * np.exp(-t_sh / fit2["tau2"]))
+     / (fit2["tau1"] - fit2["tau2"]))
+model2 = fit2["T_inf"] + (fit2["T_0"] - fit2["T_inf"]) * g
+ax1.plot(t_sh[early], model1[early], lw=1.1, label="first order")
+ax1.plot(t_sh[early], model2[early], lw=1.1, label="second order")
+ax1.set_ylabel("Temperature [°C]")
+ax1.legend(frameon=False, fontsize=8)
+
+ax2.axhline(0.0, color="0.4", lw=0.8)
+ax2.plot(t_sh[early], fit1["residual"][early] * 1e3, lw=0.9, label="first order")
+ax2.plot(t_sh[early], fit2["residual"][early] * 1e3, lw=0.9, label="second order")
+ax2.set_xlabel("Time since plunge [s]")
+ax2.set_ylabel("Residual [mK]")
+ax2.legend(frameon=False, fontsize=8)
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-sheathed
+#| echo: false
+#| output: asis
+print(f"""
+| Model | Parameters | Residual RMS |
+|---|---|---|
+| First order | $\\tau = {fit1['tau']:.3f} \\pm {fit1['u_tau']:.3f}$ s | {fit1['s_res'] * 1e3:.1f} mK |
+| Second order | $\\tau_1 = {fit2['tau1']:.3f} \\pm {fit2['u_tau1']:.3f}$ s, $\\tau_2 = {fit2['tau2']:.3f} \\pm {fit2['u_tau2']:.3f}$ s | {fit2['s_res'] * 1e3:.1f} mK |
+
+: One lump against two, on the sheathed probe {{#tbl-t2-sheathed}}
+""")
+```
+
+```{python}
+#| label: out-sheathed-text
+#| echo: false
+#| output: asis
+improvement = fit1["s_res"] / fit2["s_res"]
+print(f"""
+The second model reduces the residual by a factor of {improvement:.1f}, but
+the number to look at is the **shape** in @fig-t2-sheathed. The first-order
+residual is not scatter: it is negative at the start, positive through the
+middle and negative again, which is what an unmodelled second lag always looks
+like. A single goodness-of-fit number would have hidden it, and a first-order
+$\\tau$ of {fit1['tau']:.2f} s would have been reported without anyone
+noticing that the probe does not have one.
+""")
+```
+
+## Uncertainty budget
+
+The measurand is $\tau$ in stirred water, the fastest medium and therefore
+the one where every systematic effect is largest.
+
+```{python}
+#| label: budget
+primary = fits[f"step-{PRIMARY_MEDIUM}"]
+fit_p = primary["fit"]
+ch_p = primary["ch"]
+
+# The transfer is not instantaneous; the bound is the measured transfer time.
+# TODO (Paolo): replace with the transfer duration timed at the bench.
+T_TRANSFER_S = 0.2
+
+# T1's calibration residual, referred to tau through the fit's own sensitivity
+# dtau/dT: a temperature offset of dT shifts the fitted tau by roughly
+# tau * dT / (T_0 - T_inf).
+cal_resid_k = float(np.sqrt((ntc_resid_k ** 2).mean()))
+c_cal = fit_p["tau"] / abs(fit_p["T_0"] - fit_p["T_inf"])
+
+# The time axis is only as good as the sampling grid (S1).
+grid = timing_summary(steps[f"step-{PRIMARY_MEDIUM}"].data).stats
+grid_bound_s = grid["residual_max_abs_us"] / 1e6
+
+components = [
+    dict(quantity="Fit repeatability", value=fit_p["tau"], unit="s",
+         distribution="type-a", std=fit_p["u_tau"], sensitivity=1.0),
+    dict(quantity="Transfer time", value=0.0, unit="s",
+         distribution="rectangular", half_width=T_TRANSFER_S / 2,
+         sensitivity=1.0),
+    dict(quantity="T1 calibration", value=0.0, unit="s",
+         distribution="type-a", std=cal_resid_k, sensitivity=c_cal),
+    dict(quantity="Sampling grid", value=0.0, unit="s",
+         distribution="rectangular", half_width=grid_bound_s, sensitivity=1.0),
+    dict(quantity="Bath stability", value=0.0, unit="s",
+         distribution="type-a", std=fit_p["u_T_inf"], sensitivity=c_cal),
+]
+budget = budget_table(components, k=2)
+```
+
+```{python}
+#| label: out-budget
+#| echo: false
+#| output: asis
+print(budget.to_markdown(
+    caption=f"Uncertainty budget for $\\tau$ in {ch_p['medium']}",
+    label="tbl-t2-budget"))
+```
+
+```{python}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant = budget.table.loc[budget.table["index_pct"].idxmax()]
+print(f"""
+$\\tau = {fit_p['tau']:.3f}$ s with an expanded uncertainty
+$U = {budget.U * 1e3:.0f}$ ms at $k = 2$, a relative uncertainty of
+{budget.U / fit_p['tau'] * 100:.1f} %.
+
+The dominant component is **{dominant['quantity']}** at
+{dominant['index_pct']:.0f} % of the combined variance. If that is the
+transfer time, the way to improve this measurement is a faster plunge, not a
+longer record or a quieter converter — and the fit's own standard error,
+{fit_p['u_tau'] * 1e3:.0f} ms, would have been a badly optimistic thing to
+quote on its own.
+""")
+```
+
+## What to report
+
+1. @tbl-t2-calibration: T1's calibration as you refitted it, with its residual.
+2. @tbl-t2-tau and @fig-t2-steps: a time constant per medium, each with the
+   medium named, and the record length in units of $\tau$.
+3. @tbl-t2-estimators: the two estimators, their difference, and which you
+   report.
+4. @tbl-t2-convection: the ratios as measurements and any absolute $h$ with
+   its assumption stated.
+5. @tbl-t2-ramp and @fig-t2-ramp: the predicted and measured ramp error, and
+   one sentence on why averaging does not reduce it.
+6. @tbl-t2-sheathed and @fig-t2-sheathed: the residual's shape, not its size.
+7. @tbl-t2-budget: the budget, the dominant component, and what you would
+   change first.

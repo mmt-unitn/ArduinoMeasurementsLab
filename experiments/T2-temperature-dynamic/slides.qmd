@@ -1,0 +1,77 @@
+---
+title: "T2 — Dynamic response of temperature sensors"
+subtitle: "How long does a thermometer take to tell the truth?"
+author: "Paolo Bosetti"
+format:
+  revealjs:
+    theme: [default, ../../assets/revealjs.scss]
+    slide-level: 3
+    slide-number: c/t
+    width: 1280
+    height: 760
+    transition: none
+    link-external-newwindow: true
+---
+
+## Before the bench {.center}
+
+### What T1 assumed
+
+T1 held every bath point until the reading stopped moving, then wrote it down.
+
+That is a *static* calibration, and it is correct — provided you always wait.
+
+Today: what happens when you cannot wait, which is most of the time.
+
+### The question
+
+A sensor with a time constant $\tau$, following a temperature ramping at
+$\dot T$, reads **low by $\tau\dot T$**.
+
+For ever. Averaging does not help — it makes the wrong number more precise.
+
+By the end of the session you will have measured $\tau$ in four media and
+checked that prediction against a ramp.
+
+## Theory {.center}
+
+{{< include _theory.qmd >}}
+
+## At the bench {.center}
+
+### What you will do
+
+1. Four plunges — still air, forced air, still water, stirred water.
+2. One sheathed probe, in stirred water.
+3. One ramp, with the sensor already immersed.
+
+::: {.callout-warning}
+## Three things that ruin a run
+
+**Start recording before the plunge**, not at it: without a baseline the fit
+has no $T_0$.
+
+**Record for at least $5\tau$**, or $T_\infty$ is a guess and the fit will
+trade it against $\tau$.
+
+**Time the transfer.** The model assumes it is instantaneous. In stirred
+water, where $\tau$ is seconds, it is not.
+:::
+
+### Then
+
+Open [the handbook](handbook.qmd) and one of the analysis templates —
+[Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+Both convert volts to temperature with **your T1 calibration**, so bring it.
+
+## What you should come away with {.center}
+
+### Three sentences you should be able to defend
+
+1. "This probe has $\tau = $ … in stirred water and … in still air; $\tau$
+   belongs to the probe *and* the medium."
+2. "A first-order fit to the sheathed probe leaves an arc-shaped residual,
+   which is how you know one lump is not enough."
+3. "On a bath ramping at $\dot T$, this probe reads low by $\tau\dot T$, and
+   I measured that as well as predicted it."

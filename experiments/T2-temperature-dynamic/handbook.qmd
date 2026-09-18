@@ -1,0 +1,212 @@
+---
+title: "T2 — Dynamic response of temperature sensors"
+subtitle: "Laboratory handbook"
+description: "Plunge test, time constant, convection coefficient and dynamic error"
+author: "Paolo Bosetti — University of Trento"
+date: last-modified
+toc: true
+toc-depth: 3
+number-sections: true
+format:
+  html:
+    default
+  typst:
+    papersize: a4
+    margin:
+      x: 2.4cm
+      y: 2.4cm
+    toc: true
+    number-sections: true
+    section-numbering: "1.1.a"
+---
+
+## Learning outcomes {.unnumbered #sec-t2-outcomes}
+
+By the end of this session you should be able to:
+
+1. Derive the first-order step response from an energy balance, and say which
+   assumption makes it first order.
+2. Fit a time constant by nonlinear least squares, and explain why the
+   linearised log fit is a different and worse estimator.
+3. Report a time constant with the medium named, and explain why a value
+   without one is meaningless.
+4. Convert time constants into convection-coefficient ratios without needing
+   the probe's geometry, and say what an absolute $h$ additionally assumes.
+5. Predict and measure the steady error of a sensor following a ramp, and
+   explain why averaging does not reduce it.
+6. Recognise a second-order response from the shape of its first second, and
+   from the residual of a first-order fit.
+7. Propagate an earlier experiment's calibration uncertainty into this one's
+   budget.
+
+## Prerequisites {#sec-t2-prerequisites}
+
+- [T1](../T1-temperature-static/index.qmd), completed, with its data
+  available and the sensors unchanged since. This experiment reads T1's
+  calibration runs and refits them.
+- [S1](../S1-daq-static/index.qmd), for the converter's noise floor.
+- First-order linear differential equations.
+
+## Hardware and cost tier {#sec-t2-hardware}
+
+::: {.callout-note}
+## Tier 2 — T1's bench, nothing added
+
+The only new requirement is a second medium and a way to move between them
+quickly.
+:::
+
+| Item | Purpose | Notes |
+|---|---|---|
+| Supported board with `UsbIo` | Acquisition | Any board; a few tens of samples per second suffices |
+| Thermal rig | Baths, stirrer, reference thermometer | See [the thermal rig](../../hardware/thermal-rig.qmd) |
+| NTC and Pt1000 probes | The sensors under test | The same parts T1 calibrated, at the same excitation |
+| Sheathed probe | The second-order case | Any sheathed sensor of the same type |
+
+Cost per bench: [TODO (Paolo)]{.todo}.
+
+## Theory {#sec-t2-theory}
+
+{{< include _theory.qmd >}}
+
+## Procedure {#sec-t2-procedure}
+
+{{< include _procedure.qmd >}}
+
+## Data recording {#sec-t2-recording}
+
+One CSV and one sidecar per run, in the format specified in
+[Data format](../../data-format/index.qmd); the checklist in
+@sec-t2-step-sidecar is the bench version.
+
+What distinguishes a T2 sidecar is that it must let a reader reconstruct the
+**calibration**: the excitation and the divider or bridge resistance, matching
+T1's, plus the medium and the plunge.
+
+```{.yaml filename="data/step-stirred-water.yaml"}
+experiment: T2
+run: step-stirred-water
+date: 2026-09-18
+operator: "your name"
+synthetic: false
+
+board: {model: portenta-h7, adc_bits: 16, vref_mV: 3300}
+
+acquisition:
+  pins: [15, 16]
+  requested_period_us: 62500
+  achieved_rate_hz: 0.0        # from the stream summary
+  duration_s: 19.5
+
+stream_stats: {records: 0, device_overruns: 0, seq_gaps: 0,
+               host_drops: 0, resyncs: 0, stale_records: 0}
+
+channels:
+  - pin: 15
+    quantity: temperature
+    unit: degC
+    sensor: "NTC thermistor, resistive divider"
+    conditioning: {gain: 1.0, offset: 0.0, filter: none}
+    medium: stirred-water        # the medium plunged INTO
+    initial_temperature_c: 23.0
+    target_temperature_c: 70.0
+    plunge_time_s: 2.0           # when the plunge happened, into the record
+    excitation_v: 0.9            # must match T1's
+    divider_r_fixed_ohm: 1000.0  # must match T1's
+
+references:
+  - instrument: reference thermometer
+    model: "the model you used"
+    calibration: "certificate or none"
+```
+
+::: {.callout-warning}
+## `medium` is the medium plunged *into*
+
+Every time constant in this experiment is labelled by the medium it was
+measured in, and that label is the difference between a result and a number.
+Record it at the bench, not from memory afterwards.
+:::
+
+## Analysis tasks {#sec-t2-tasks}
+
+Open [Python](analysis-py.qmd) or [R](analysis-r.qmd).
+
+1. **Data quality.** Validate every sidecar and read the stream counters.
+2. **Calibration.** Refit T1's curves from T1's own data, and convert every
+   T2 record to temperature. Confirm the baseline matches room temperature.
+3. **Fit each plunge.** Fit @eq-t2-step nonlinearly, plot the residual, and
+   report $\tau$ per medium with its uncertainty.
+4. **Compare estimators.** Fit the same records with the linearised
+   @eq-t2-linearised and tabulate the difference. Say which you would report.
+5. **Convection.** Report the $h$ ratios of @eq-t2-h-ratio, and an absolute
+   $h$ only with its assumed $\rho c V/A$ stated.
+6. **Second order.** Fit the sheathed probe first-order, show the arc in the
+   residual, then fit @eq-t2-second-order and compare.
+7. **Ramp.** Measure $e_\infty$ and compare with $\tau\dot{T}$ predicted from
+   the step test.
+8. **Budget.** Build the budget of @sec-t2-budget.
+
+## Uncertainty budget {#sec-t2-budget}
+
+{{< include ../../shared/_uncertainty-budget.qmd >}}
+
+**The measurand** is the time constant $\tau$ in stirred water — the fastest
+medium, where every systematic effect is largest and the experiment is
+therefore most honest about itself.
+
+| Component | Type | Distribution | Source | $c_i$ |
+|---|:--:|---|---|---|
+| Fit repeatability | A | — | Standard error of $\tau$ from the nonlinear fit | $1$ |
+| Transfer time | B | Rectangular | The measured transfer duration, as a bound on how much of it is indistinguishable from the response | $1$ |
+| T1 calibration | B | — | T1's fit residual, converted to a temperature error and propagated through the fit | $\partial\tau/\partial T$ |
+| Sampling grid | B | Rectangular | The grid quality from [S1](../S1-daq-static/index.qmd), as a bound on the time axis | $\tau/t_\mathrm{span}$ |
+| Bath stability | B | Rectangular | The drift of $T_\infty$ across the record | $\partial\tau/\partial T_\infty$ |
+
+: Components of the T2 budget {#tbl-t2-components}
+
+Report $u_c$ and $U = 2u_c$, the index $h_i$ of every component, and one
+sentence naming the dominant term.
+
+::: {.callout-important}
+## The transfer time is the component students forget
+
+The model says the medium changes instantaneously. A transfer taking a
+appreciable fraction of $\tau$ biases the fitted $\tau$ **high**, and it is a
+bias, not a scatter — so it does not appear in the fit's own standard error
+and no amount of repetition reveals it. In stirred water it can be the largest
+component in the table. Measure it; do not estimate it afterwards.
+:::
+
+## Questions {#sec-t2-questions}
+
+1. Why is $\tau$ not a property of the sensor alone? Which part of it is?
+2. Your still-air $\tau$ is thirty times your stirred-water one. Which
+   quantity in @eq-t2-step changed, and by how much?
+3. The linearised fit gives a $\tau$ several percent from the nonlinear one.
+   Which is wrong, and what specifically makes it wrong?
+4. A colleague reports "response time 2 s" for a probe. What have they failed
+   to tell you, and what could the true figure be in still air?
+5. A process ramps at $2\,\mathrm{K\,min^{-1}}$ and you need 0.1 K accuracy.
+   What is the largest $\tau$ you can tolerate, and which of your four media
+   would satisfy it?
+6. Your sheathed probe's first-order fit has a small residual RMS but a clear
+   arc. Why is the arc the more important observation?
+7. Averaging reduced your noise by $\sqrt{n}$ but not your ramp error. Explain
+   the difference to someone who has only done T1.
+
+## Instructor notes {#sec-t2-instructor .unnumbered}
+
+::: {.content-visible when-profile="instructor"}
+{{< include _instructor.qmd >}}
+:::
+
+::: {.content-hidden when-profile="instructor"}
+*Instructor material for this experiment is built under the `instructor`
+profile.*
+:::
+
+## References {.unnumbered}
+
+::: {#refs}
+:::
