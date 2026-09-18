@@ -1,0 +1,666 @@
+---
+title: "M2 — Analysis template (R)"
+subtitle: "Hall-effect displacement measurement"
+description: "A nonlinear calibration, a working range, the ratiometric correction and a stiffness cross-check, in R"
+engine: knitr
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment. To analyse your own measurements, replace the files in `data/`
+and change the paths in the first chunk — nothing else.
+
+The Python template [`analysis-py.qmd`](analysis-py.qmd) has the same
+sections, the same figure labels and the same output tables, and produces the
+same numbers from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the fit is written out rather than called from a library
+
+The calibration curve is fitted by an explicit Gauss–Newton iteration, as
+[the handbook explains](handbook.qmd#sec-m2-fit). `scipy.optimize.curve_fit`
+and R's `nls` choose their own convergence criteria and do not reliably reach
+the same parameters on the same data, and an analysis whose numbers depend on
+which language ran it is not an analysis.
+:::
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+library(ggplot2)
+library(patchwork)
+
+source("../../shared/R/labtools.R")
+
+theme_set(theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(linewidth = 0.25)))
+
+CAL_RUNS <- sort(Sys.glob("data/cal-d*.csv"))
+SUPPLY_RUN <- "data/supply-drift.csv"
+CROSSCHECK_RUNS <- sort(Sys.glob("data/crosscheck-*.csv"))
+M1_QUARTER_RUNS <- sort(Sys.glob("../M1-strain-load/data/bridge-quarter-*.csv"))
+
+PIN_OUT <- 15         # Hall output
+PIN_VCC <- 16         # supply-voltage sense
+MAX_FIT_ITERATIONS <- 100
+GRAVITY <- 9.80665    # m/s^2, the conventional standard value
+```
+
+```{r}
+#| label: helpers
+# The ratiometric reading r = V_out / V_cc, sample by sample. The sense
+# channel is divided down by a known ratio, so the supply is recovered before
+# the division. This is the whole point of the second channel: r does not
+# depend on the supply, and V_out alone does.
+ratio_of <- function(run) {
+  wide <- pivot_channels(run$data, "volts")
+  sense_gain <- NULL
+  for (ch in run$meta$channels) if (ch$pin == PIN_VCC) sense_gain <- ch$conditioning$gain
+  v_cc <- wide[[as.character(PIN_VCC)]] / sense_gain
+  v_out <- wide[[as.character(PIN_OUT)]]
+  list(r = v_out / v_cc, v_cc = v_cc, v_out = v_out)
+}
+
+# r(d) = 1/2 + A (1 + d/d0)^-n -- the ratiometric form, free of V_cc.
+model_r <- function(d_mm, a, d0_mm, n) 0.5 + a / (1 + d_mm / d0_mm)^n
+
+# Fits (A, d0) of the decay law by explicit damped Gauss-Newton. Written out,
+# with the Jacobian in closed form, so that R and Python take the same
+# arithmetic path and stop on the same criterion.
+#
+# The damping is not decoration: an undamped step from a plausible starting
+# guess overshoots into negative d0 on this data and the Jacobian goes
+# singular within a dozen iterations. The line search halves the step until d0
+# stays positive and the sum of squares does not increase, which is
+# deterministic and therefore reproduces identically in both languages.
+gauss_newton <- function(d_mm, r_obs, a0, d0_0, n) {
+  a <- a0
+  d0 <- d0_0
+  for (i in seq_len(MAX_FIT_ITERATIONS)) {
+    u <- 1 + d_mm / d0
+    f <- 0.5 + a * u^(-n)
+    sse <- sum((r_obs - f)^2)
+    j <- cbind(u^(-n), a * n * u^(-n - 1) * d_mm / d0^2)
+    step <- solve(crossprod(j), crossprod(j, r_obs - f))
+
+    lam <- 1
+    while (lam > 1e-6) {
+      a_try <- a + lam * step[1]
+      d0_try <- d0 + lam * step[2]
+      if (d0_try > 1e-6) {
+        f_try <- 0.5 + a_try * (1 + d_mm / d0_try)^(-n)
+        if (sum((r_obs - f_try)^2) <= sse) break
+      }
+      lam <- lam / 2
+    }
+    a <- a + lam * step[1]
+    d0 <- d0 + lam * step[2]
+    if (max(abs(lam * step[1]) / max(abs(a), 1e-12),
+            abs(lam * step[2]) / max(abs(d0), 1e-12)) < 1e-12) break
+  }
+
+  u <- 1 + d_mm / d0
+  resid <- r_obs - (0.5 + a * u^(-n))
+  dof <- max(length(d_mm) - 2, 1)
+  s_res <- sqrt(sum(resid^2) / dof)
+  j <- cbind(u^(-n), a * n * u^(-n - 1) * d_mm / d0^2)
+  cov <- solve(crossprod(j)) * s_res^2
+  list(A = as.numeric(a), d0 = as.numeric(d0),
+       u_A = sqrt(cov[1, 1]), u_d0 = sqrt(cov[2, 2]),
+       s_res = s_res, residual = resid)
+}
+
+# d from r: the calibration curve read backwards.
+invert <- function(r, a, d0, n) d0 * ((a / (r - 0.5))^(1 / n) - 1)
+
+# dr/dd -- the sensitivity of the ratiometric reading, per mm.
+d_r_d_d <- function(d_mm, a, d0, n) -a * n / d0 * (1 + d_mm / d0)^(-n - 1)
+
+# Straight-line fit with the standard errors of both coefficients.
+ols <- function(x, y) {
+  n <- length(x)
+  sxx <- sum((x - mean(x))^2)
+  slope <- sum((x - mean(x)) * (y - mean(y))) / sxx
+  intercept <- mean(y) - slope * mean(x)
+  resid <- y - (intercept + slope * x)
+  s <- sqrt(sum(resid^2) / max(n - 2, 1))
+  list(slope = slope, intercept = intercept,
+       u_slope = s / sqrt(sxx),
+       u_intercept = s * sqrt(1 / n + mean(x)^2 / sxx),
+       s_res = s)
+}
+```
+
+```{r}
+#| label: load
+cal <- lapply(CAL_RUNS, read_run)
+supply <- read_run(SUPPLY_RUN)
+cross <- lapply(CROSSCHECK_RUNS, read_run)
+
+board <- cal[[1]]$meta$board
+FSR <- board$vref_mV / 1000
+LSB <- lsb_volts(cal[[1]]$meta)
+N_EXP <- cal[[1]]$meta$channels[[1]]$decay_exponent
+TC_PER_K <- cal[[1]]$meta$channels[[1]]$sensor_temperature_coefficient_per_k
+BEAM <- cross[[1]]$meta$beam
+BASELINE_MM <- cross[[1]]$meta$channels[[1]]$baseline_distance_mm
+```
+
+```{r}
+#| label: banner
+#| echo: false
+#| output: asis
+cat(synthetic_banner(cal[[1]]$meta))
+```
+
+## Data quality
+
+```{r}
+#| label: quality
+#| echo: false
+#| output: asis
+runs <- c(cal, list(supply), cross)
+bad <- sum(vapply(runs, function(r) length(validate_meta(r$meta)) > 0, logical(1)))
+lossy <- character(0)
+for (r in runs) {
+  st <- r$meta$stream_stats
+  counters <- st[setdiff(names(st), "records")]
+  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+    lossy <- c(lossy, r$meta$run)
+  }
+}
+cat(sprintf('
+%d runs read: %d calibration points, one supply-drift record
+and %d beam cross-check points.
+%s
+%s
+', length(runs), length(cal), length(cross),
+   if (bad == 0) "All sidecars are complete."
+   else sprintf("%d sidecar(s) have missing fields.", bad),
+   if (length(lossy) == 0) "No run reports a lost record."
+   else paste0("Runs with losses: ", paste(lossy, collapse = ", "))))
+```
+
+## Calibration fit
+
+Each calibration run holds the magnet at a micrometer-set distance and records
+both channels. The fit is on the **ratio**, not on the output voltage, so the
+supply never enters.
+
+```{r}
+#| label: calibration
+cal_df <- do.call(rbind, lapply(cal, function(run) {
+  ch <- run$meta$channels[[1]]
+  rr <- ratio_of(run)
+  data.frame(run = run$meta$run,
+             d_mm = ch$reference_value,
+             u_d_mm = ch$reference_u,
+             r_mean = mean(rr$r),
+             r_sd = sd(rr$r),
+             n = length(rr$r),
+             v_out_mean = mean(rr$v_out),
+             v_cc_mean = mean(rr$v_cc))
+}))
+cal_df <- cal_df[order(cal_df$d_mm), ]
+rownames(cal_df) <- NULL
+
+fit <- gauss_newton(cal_df$d_mm, cal_df$r_mean,
+                    a0 = max(cal_df$r_mean) - 0.5,
+                    d0_0 = median(cal_df$d_mm), n = N_EXP)
+cal_df$residual <- fit$residual
+```
+
+```{r}
+#| label: out-cal
+#| echo: false
+#| output: asis
+rows <- sprintf("| %.0f | %.3f | %.6f | %.1f | %d | %+.1f |",
+                cal_df$d_mm, cal_df$u_d_mm, cal_df$r_mean, cal_df$r_sd * 1e6,
+                cal_df$n, cal_df$residual * 1e6)
+cat(sprintf('
+| $d$ [mm] | $u(d)$ [mm] | $r = V_\\mathrm{out}/V_\\mathrm{cc}$ | $s(r)$ [ppm] | $n$ | Residual [ppm] |
+|---|---|---|---|---|---|
+%s
+
+: The calibration sweep and the residuals of the fitted decay law {#tbl-m2-cal}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: out-cal-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+Fitted $A = %.5f$ with $u(A) = %.5f$, and
+$d_0 = %.4f$ mm with $u(d_0) = %.4f$ mm, at a fixed
+exponent $n = %d$. The residual standard deviation is
+%.1f ppm of the ratio, and the largest single residual is
+%.1f ppm.
+
+Read the residual column of @tbl-m2-cal as a pattern, not as a number: scatter
+means the two-parameter law is doing its job, while a systematic run of one
+sign across the range would be evidence that the fixed exponent, or the
+functional form itself, is wrong — and no amount of averaging repairs a model
+of the wrong shape.
+', fit$A, fit$u_A, fit$d0, fit$u_d0, N_EXP, fit$s_res * 1e6,
+   max(abs(fit$residual)) * 1e6))
+```
+
+```{r}
+#| label: fig-m2-cal
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 5.2
+#| fig-cap: "The calibration curve. Top: the ratiometric reading against micrometer distance, with the fitted decay law. Bottom: residuals. The curve is steep and useful close in, and flattens into uselessness far out — which is what the next section quantifies."
+grid <- seq(min(cal_df$d_mm), max(cal_df$d_mm), length.out = 300)
+p_cal <- ggplot() +
+  geom_line(data = data.frame(d = grid, r = model_r(grid, fit$A, fit$d0, N_EXP)),
+            aes(d, r), linewidth = 0.5) +
+  geom_point(data = cal_df, aes(d_mm, r_mean), size = 2) +
+  labs(x = NULL, y = "r = V_out / V_cc")
+
+p_res <- ggplot(cal_df, aes(d_mm, residual * 1e6)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.3) +
+  geom_point(size = 2) +
+  labs(x = "Micrometer distance d [mm]", y = "Residual [ppm]")
+
+p_cal / p_res + plot_layout(heights = c(2, 1))
+```
+
+## Working range
+
+Two criteria, pulling in opposite directions: resolution wants to be close to
+the magnet, and linearity wants to be far from it.
+
+```{r}
+#| label: window
+# The ADC's own noise, referred to the ratio, from the quietest calibration
+# point's repeats.
+sigma_r_adc <- min(cal_df$r_sd)
+
+d_grid <- seq(min(cal_df$d_mm), max(cal_df$d_mm), length.out = 400)
+sens <- abs(d_r_d_d(d_grid, fit$A, fit$d0, N_EXP))      # per mm
+resolution_um <- sigma_r_adc / sens * 1e3               # micrometres
+# Curvature, as the fractional change of sensitivity per millimetre.
+curvature <- (N_EXP + 1) / (fit$d0 + d_grid) * 100      # % per mm
+
+# The two criteria, written down before looking at the data. They pull in
+# opposite directions, so the window is their overlap and not either alone;
+# change them and the window moves, which is the point of stating them.
+RESOLUTION_LIMIT_UM <- 40    # resolve 40 um or better
+CURVATURE_LIMIT_PCT <- 30    # and no more than 30 % sensitivity change per mm
+ok <- resolution_um <= RESOLUTION_LIMIT_UM & curvature <= CURVATURE_LIMIT_PCT
+window <- if (any(ok)) range(d_grid[ok]) else c(NA_real_, NA_real_)
+```
+
+```{r}
+#| label: fig-m2-window
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 3.8
+#| fig-cap: "Choosing a working range. Displacement resolution (left axis) improves close to the magnet; the curvature of the calibration curve (right axis) worsens there. The shaded band satisfies both stated criteria at once."
+# The two quantities have different units, so the second is rescaled onto the
+# first axis and given its own labelled secondary axis.
+scale_factor <- max(log10(resolution_um)) / max(curvature)
+plot_df <- data.frame(
+  d = rep(d_grid, 2),
+  value = c(log10(resolution_um), curvature * scale_factor),
+  what = rep(c("resolution [µm]", "curvature [% per mm]"), each = length(d_grid)))
+
+p <- ggplot(plot_df, aes(d, value, colour = what)) +
+  geom_line(linewidth = 0.5) +
+  scale_y_continuous(name = "log10 resolution [µm]",
+                     sec.axis = sec_axis(~ . / scale_factor,
+                                         name = "Sensitivity change [% per mm]")) +
+  geom_hline(yintercept = log10(RESOLUTION_LIMIT_UM), linewidth = 0.3,
+             linetype = "dashed", colour = "grey40") +
+  geom_hline(yintercept = CURVATURE_LIMIT_PCT * scale_factor, linewidth = 0.3,
+             linetype = "dotted", colour = "grey40") +
+  labs(x = "Distance d [mm]", colour = NULL) +
+  theme(legend.position = "top")
+if (any(ok)) {
+  p <- p + annotate("rect", xmin = window[1], xmax = window[2],
+                    ymin = -Inf, ymax = Inf, fill = "grey85", alpha = 0.5)
+}
+p
+```
+
+```{r}
+#| label: out-window
+#| echo: false
+#| output: asis
+d_work <- BASELINE_MM
+sens_work <- abs(d_r_d_d(d_work, fit$A, fit$d0, N_EXP))
+cat(sprintf('
+| Quantity | Value |
+|---|---|
+| Noise on $r$, from repeats | %.1f ppm |
+| Resolution criterion | ≤ %.0f µm |
+| Curvature criterion | ≤ %.0f %% per mm |
+| Usable window | %.1f – %.1f mm |
+| Chosen working point | %.1f mm |
+| Sensitivity there | %.1f ppm per µm |
+| Resolution there | %.2f µm |
+
+: The working range, from two stated criteria {#tbl-m2-window}
+', sigma_r_adc * 1e6, RESOLUTION_LIMIT_UM, CURVATURE_LIMIT_PCT,
+   window[1], window[2], d_work, sens_work * 1e6,
+   sigma_r_adc / sens_work * 1e3))
+```
+
+## Ratiometric correction
+
+The supply is deliberately drifted while the magnet is held still. Nothing
+moves; only the rail does.
+
+```{r}
+#| label: supply
+ch_supply <- supply$meta$channels[[2]]
+sup <- ratio_of(supply)
+t_s <- sort(unique(supply$data$t_us)) / 1e6
+t_s <- t_s - t_s[1]
+
+# Ratiometric: invert the calibration curve at the measured ratio.
+d_ratio <- invert(sup$r, fit$A, fit$d0, N_EXP)
+# Absolute: assume the supply is at its nominal value and never checked.
+v_cc_nominal <- ch_supply$reference_value
+d_absolute <- invert(sup$v_out / v_cc_nominal, fit$A, fit$d0, N_EXP)
+
+drift_pct <- (sup$v_cc[length(sup$v_cc)] / sup$v_cc[1] - 1) * 100
+
+# The *trend* over the record, not its span: the span of any noisy record is
+# about 8 sigma whatever the supply does, which would hide the effect this
+# section exists to show. A straight-line fit separates drift from noise.
+trend_abs <- ols(t_s, d_absolute)
+trend_ratio <- ols(t_s, d_ratio)
+duration_s <- t_s[length(t_s)] - t_s[1]
+drift_abs_um <- trend_abs$slope * duration_s * 1e3
+drift_ratio_um <- trend_ratio$slope * duration_s * 1e3
+u_drift_abs_um <- trend_abs$u_slope * duration_s * 1e3
+u_drift_ratio_um <- trend_ratio$u_slope * duration_s * 1e3
+```
+
+```{r}
+#| label: fig-m2-supply
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 4.6
+#| fig-cap: "The magnet is stationary throughout. Top: the measured supply. Bottom: the displacement each reading implies — absolute, which tracks the rail, and ratiometric, which does not."
+p_vcc <- ggplot(data.frame(t = t_s, v = sup$v_cc), aes(t, v)) +
+  geom_line(linewidth = 0.3) +
+  labs(x = NULL, y = "Vcc [V]")
+
+move <- rbind(
+  data.frame(t = t_s, um = (d_absolute - d_absolute[1]) * 1e3,
+             what = "absolute reading"),
+  data.frame(t = t_s, um = (d_ratio - d_ratio[1]) * 1e3,
+             what = "ratiometric"))
+p_move <- ggplot(move, aes(t, um, colour = what)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+  geom_line(linewidth = 0.3) +
+  labs(x = "Time [s]", y = "Apparent movement [µm]", colour = NULL) +
+  theme(legend.position = "top")
+
+p_vcc / p_move + plot_layout(heights = c(1, 2))
+```
+
+```{r}
+#| label: out-supply
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Quantity | Absolute reading | Ratiometric reading |
+|---|---|---|
+| Supply drift over the record | %+.2f %% | %+.2f %% |
+| Fitted apparent movement | %+.1f µm | %+.3f µm |
+| Its own standard uncertainty | %.2f µm | %.3f µm |
+| Resolved? | %s | %s |
+
+: What the second channel buys {#tbl-m2-supply}
+', drift_pct, drift_pct, drift_abs_um, drift_ratio_um,
+   u_drift_abs_um, u_drift_ratio_um,
+   if (abs(drift_abs_um) > 2 * u_drift_abs_um) "yes" else "no",
+   if (abs(drift_ratio_um) > 2 * u_drift_ratio_um) "yes" else "no"))
+```
+
+```{r}
+#| label: out-supply-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+A supply droop of %.2f %% fakes %.0f µm of
+movement if the rail is assumed rather than measured — around
+%.0f times the uncertainty of the trend
+itself, so it would not look like noise, it would look like a measurement.
+Dividing by the *measured* supply leaves %+.3f µm, against an
+uncertainty of %.3f µm on that number: the apparent movement
+is no longer distinguishable from zero. The error is gone, not reduced.
+
+This is why the supply does not appear as a row in the budget below. One extra
+analog channel removed an entire uncertainty component, which is a better
+trade than any amount of post-processing.
+', abs(drift_pct), abs(drift_abs_um), abs(drift_abs_um) / u_drift_abs_um,
+   drift_ratio_um, u_drift_ratio_um))
+```
+
+## Stiffness cross-check
+
+The same reference masses that M1 weighed with strain gauges, measured again
+as a tip displacement. Two independent routes to the beam's stiffness.
+
+```{r}
+#| label: crosscheck
+cc <- do.call(rbind, lapply(cross, function(run) {
+  ch <- run$meta$channels[[1]]
+  rr <- ratio_of(run)
+  d_mm <- invert(mean(rr$r), fit$A, fit$d0, N_EXP)
+  data.frame(run = run$meta$run, force_N = ch$reference_value,
+             u_force_N = ch$reference_u, d_mm = d_mm,
+             delta_mm = BASELINE_MM - d_mm, r_sd = sd(rr$r), n = length(rr$r))
+}))
+cc <- cc[order(cc$force_N), ]
+rownames(cc) <- NULL
+fit_m2 <- ols(cc$force_N, cc$delta_mm / 1e3)     # m per N
+
+L <- BEAM$length_m; B <- BEAM$width_m; H <- BEAM$thickness_m
+XG <- BEAM$gauge_position_m
+I_BEAM <- B * H^3 / 12
+E_M2 <- L^3 / (3 * I_BEAM * fit_m2$slope)
+U_E_M2 <- E_M2 * fit_m2$u_slope / fit_m2$slope
+
+m1 <- do.call(rbind, lapply(M1_QUARTER_RUNS, function(path) {
+  run <- read_run(path)
+  ch <- run$meta$channels[[1]]
+  data.frame(force_N = ch$reference_value,
+             v_mean = mean(run$data$volts),
+             gain = ch$conditioning$gain,
+             offset = ch$conditioning$offset,
+             k = ch$gauge_factor)
+}))
+m1 <- m1[order(m1$force_N), ]
+rownames(m1) <- NULL
+```
+
+```{r}
+#| label: crosscheck-m1
+# Strain from the quarter-bridge reading: V_adc = G (k eps Vex / 4) + offset.
+m1_meta <- read_run(M1_QUARTER_RUNS[1])$meta
+EXCITATION <- if (!is.null(m1_meta$channels[[1]]$excitation_v)) {
+  m1_meta$channels[[1]]$excitation_v
+} else if (!is.null(cal[[1]]$meta$excitation_v)) {
+  cal[[1]]$meta$excitation_v
+} else 3.3
+
+m1$strain <- 4 * (m1$v_mean - m1$offset) / (m1$gain * m1$k * EXCITATION)
+fit_m1 <- ols(m1$force_N, m1$strain)
+E_M1 <- 6 * (L - XG) / (B * H^2 * fit_m1$slope)
+U_E_M1 <- E_M1 * fit_m1$u_slope / fit_m1$slope
+
+ratio_e <- E_M1 / E_M2
+u_ratio_e <- ratio_e * sqrt((U_E_M1 / E_M1)^2 + (U_E_M2 / E_M2)^2)
+```
+
+```{r}
+#| label: out-crosscheck
+#| echo: false
+#| output: asis
+rows <- sprintf("| %.3f | %.4f | %.4f | %.1f |",
+                cc$force_N, cc$u_force_N, cc$d_mm, cc$delta_mm * 1e3)
+cat(sprintf('
+| Force [N] | $u(F)$ [N] | Distance $d$ [mm] | Tip displacement [µm] |
+|---|---|---|---|
+%s
+
+: The beam cross-check, read through the calibration curve {#tbl-m2-crosscheck}
+', paste(rows, collapse = "\n")))
+```
+
+```{r}
+#| label: fig-m2-crosscheck
+#| echo: false
+#| fig-width: 7.0
+#| fig-height: 3.4
+#| fig-cap: "Tip displacement against applied force, with the straight-line fit whose slope is the beam's compliance. The intercept is the zero of the Hall reading, not a physical offset."
+grid <- seq(0, max(cc$force_N) * 1.05, length.out = 100)
+ggplot() +
+  geom_line(data = data.frame(f = grid,
+                              um = (fit_m2$intercept + fit_m2$slope * grid) * 1e6),
+            aes(f, um), linewidth = 0.45) +
+  geom_point(data = cc, aes(force_N, delta_mm * 1e3), size = 2) +
+  labs(x = "Applied force [N]", y = "Tip displacement [µm]")
+```
+
+```{r}
+#| label: out-crosscheck-text
+#| echo: false
+#| output: asis
+cat(sprintf('
+| Route | Fitted slope | Young\'s modulus |
+|---|---|---|
+| M1, strain per force | %.4f µstrain/N | %.2f ± %.2f GPa |
+| M2, displacement per force | %.4f µm/N | %.2f ± %.2f GPa |
+| Ratio $E_\\mathrm{M1}/E_\\mathrm{M2}$ | — | %.4f ± %.4f |
+
+: Two independent routes to the same beam {#tbl-m2-stiffness}
+
+The **ratio** is the result. Both routes need the beam\'s geometry, which is a
+placeholder here, so neither modulus is a measurement of anything — but the
+same placeholder geometry enters both, so a ratio near 1 says the two
+mechanical models agree with each other, and a ratio away from 1 is evidence
+about the clamp rather than about the placeholders. This one is
+%.2f %% from unity, against a combined uncertainty of
+%.2f %%.
+', fit_m1$slope * 1e6, E_M1 / 1e9, U_E_M1 / 1e9,
+   fit_m2$slope * 1e6, E_M2 / 1e9, U_E_M2 / 1e9,
+   ratio_e, u_ratio_e, abs(ratio_e - 1) * 100, u_ratio_e * 100))
+```
+
+## Uncertainty budget
+
+The measurand is the measured tip displacement at the largest reference force,
+recovered by [inverting the calibration curve](handbook.qmd#eq-m2-recover)
+with the [sensitivity coefficients](handbook.qmd#eq-m2-sensitivity) given
+there.
+
+```{r}
+#| label: budget
+last <- cc[nrow(cc), ]
+r_op <- model_r(last$d_mm, fit$A, fit$d0, N_EXP)
+d_hat <- invert(r_op, fit$A, fit$d0, N_EXP)
+
+# Sensitivity coefficients of eq-m2-recover, in mm per unit of each input.
+u_arg <- fit$A / (r_op - 0.5)
+c_r <- -fit$d0 / N_EXP * fit$A * u_arg^(1 / N_EXP - 1) / (r_op - 0.5)^2
+c_A <- fit$d0 / N_EXP * u_arg^(1 / N_EXP - 1) / (r_op - 0.5)
+c_d0 <- d_hat / fit$d0
+
+n_op <- last$n
+sigma_r_op <- last$r_sd
+
+# Effective quantization, by S1's method applied to this record, referred to r.
+vcc_ref <- mean(vapply(supply$meta$channels,
+                       function(ch) if (ch$pin == PIN_VCC) ch$reference_value
+                                    else NA_real_, numeric(1)), na.rm = TRUE)
+enob_here <- enob(FSR, sigma_r_op * vcc_ref)
+q_eff_r <- FSR / 2^enob_here / (board$vref_mV / 1000)
+
+DELTA_T_K <- 5    # the bench temperature excursion the budget bounds
+
+components <- list(
+  list(quantity = "Repeatability of r", value = r_op, unit = "mm",
+       distribution = "type-a", std = sigma_r_op / sqrt(n_op), sensitivity = c_r),
+  list(quantity = "Effective quantization", value = 0, unit = "mm",
+       distribution = "rectangular", half_width = q_eff_r / 2, sensitivity = c_r),
+  list(quantity = "Calibration amplitude A", value = fit$A, unit = "mm",
+       distribution = "type-a", std = fit$u_A, sensitivity = c_A),
+  list(quantity = "Calibration distance d0", value = fit$d0, unit = "mm",
+       distribution = "type-a", std = fit$u_d0, sensitivity = c_d0),
+  list(quantity = "Micrometer reference", value = 0, unit = "mm",
+       distribution = "rectangular", half_width = max(cal_df$u_d_mm),
+       sensitivity = 1),
+  list(quantity = "Sensor temperature coefficient", value = 0, unit = "mm",
+       distribution = "rectangular",
+       half_width = TC_PER_K * DELTA_T_K * fit$A, sensitivity = c_A)
+)
+budget <- budget_table(components, k = 2)
+```
+
+```{r}
+#| label: out-budget
+#| echo: false
+#| output: asis
+cat(budget_to_markdown(
+  budget,
+  caption = sprintf("Uncertainty budget for the tip displacement at $F = %.3f$ N",
+                    last$force_N),
+  label = "tbl-m2-budget"))
+```
+
+```{r}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant <- budget$table[which.max(budget$table$index_pct), ]
+cat(sprintf('
+Measured tip displacement %.1f µm with an expanded
+uncertainty $U = %.1f$ µm at $k = 2$ — a relative uncertainty
+of %.1f %%.
+
+The dominant component is **%s** at
+%.0f %% of the combined variance. Note what is *not*
+in the table: the supply voltage, because the reading is ratiometric. An
+absolute reading would carry a row of its own, and @tbl-m2-supply says how
+large it would be.
+
+The effective-quantization row is deliberately conservative. It stands for the
+part of the converter\'s noise that does **not** average away with $n$, and it
+is written from the noise itself rather than from the nominal code width, in
+the same way as in
+[S1\'s budget](../S1-daq-static/handbook.qmd#sec-s1-budget). Whether that floor
+is real, and where averaging genuinely stops helping, is exactly the question
+[T3](../T3-long-term-stability/index.qmd) answers with an Allan deviation; a
+group that has done T3 should replace this bound with the measured one and say
+what changed.
+', last$delta_mm * 1e3, budget$U * 1e3,
+   budget$U / last$delta_mm * 100, dominant$quantity, dominant$index_pct))
+```
+
+## What to report
+
+1. @tbl-m2-cal and @fig-m2-cal: the fitted curve and its residuals, with a
+   statement about whether the fixed exponent is earning its keep.
+2. @fig-m2-window and @tbl-m2-window: your two criteria, written down as
+   numbers before you look at the data, and the window they imply.
+3. @tbl-m2-supply and @fig-m2-supply: what the second channel is worth, in
+   micrometres.
+4. @tbl-m2-crosscheck, @fig-m2-crosscheck and @tbl-m2-stiffness: the two
+   routes to the beam's stiffness and their ratio, with the ratio — not the
+   moduli — presented as the result.
+5. @tbl-m2-budget: the budget, the dominant component, and one sentence on
+   why the supply is absent from it.

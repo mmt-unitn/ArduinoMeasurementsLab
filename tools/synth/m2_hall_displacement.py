@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -116,7 +116,8 @@ def generate() -> None:
     def emit_two_channel(run: str, n: int, period_us: float, seed_offset: int,
                          d_mm, vcc_v, reference_value, reference_u,
                          calibration_reference, quantity, unit, sensor,
-                         extra: Dict[str, Any], notes: str) -> None:
+                         extra: Dict[str, Any], notes: str,
+                         meta_extra: Optional[Dict[str, Any]] = None) -> None:
         rng = np.random.default_rng(seed + seed_offset)
         timing = _timing(platform, host, period_us)
         t_us = timing.grid(n, rng)
@@ -155,6 +156,8 @@ def generate() -> None:
             channels=[ch_out, ch_vcc], rng=rng,
             references=[micrometer_ref, masses_ref], notes=notes,
         )
+        if meta_extra:
+            meta.update(meta_extra)
         print(f"M2 {run}:")
         emit(OUT / f"{run}.csv", data, meta)
 
@@ -233,6 +236,16 @@ def generate() -> None:
                 "baseline_distance_mm": cc["baseline_distance_mm"],
             },
             notes=f"beam tip, m = {m * 1000:.0f} g",
+            # The stiffness cross-check turns a fitted slope into a Young's
+            # modulus, which needs the beam's geometry. A student measures it
+            # at the bench, so it belongs in the sidecar rather than only in
+            # this generator's parameter file.
+            meta_extra={"beam": {
+                "length_m": beam["length_m"],
+                "width_m": beam["width_m"],
+                "thickness_m": beam["thickness_m"],
+                "gauge_position_m": beam["gauge_position_m"],
+            }},
         )
 
 

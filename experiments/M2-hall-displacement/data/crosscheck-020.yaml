@@ -72,3 +72,8 @@ generator:
   tool: tools/synth
   version: 0.1.0
   note: Parameters are placeholders; see tools/synth/params/
+beam:
+  length_m: 0.22
+  width_m: 0.025
+  thickness_m: 0.003
+  gauge_position_m: 0.01

@@ -1,0 +1,656 @@
+---
+title: "M2 — Analysis template (Python)"
+subtitle: "Hall-effect displacement measurement"
+description: "A nonlinear calibration, a working range, the ratiometric correction and a stiffness cross-check, in Python"
+engine: jupyter
+jupyter: python3
+toc: true
+toc-depth: 3
+code-fold: false
+---
+
+This template runs end to end on the reference data shipped with the
+experiment. To analyse your own measurements, replace the files in `data/`
+and change the paths in the first cell — nothing else.
+
+The R template [`analysis-r.qmd`](analysis-r.qmd) has the same sections, the
+same figure labels and the same output tables, and produces the same numbers
+from the same data.
+
+::: {.callout-note collapse="true"}
+## Why the fit is written out rather than called from a library
+
+The calibration curve is fitted by an explicit Gauss–Newton iteration, as
+[the handbook explains](handbook.qmd#sec-m2-fit). `scipy.optimize.curve_fit`
+and R's `nls` choose their own convergence criteria and do not reliably reach
+the same parameters on the same data, and an analysis whose numbers depend on
+which language ran it is not an analysis.
+:::
+
+## Setup
+
+```{python}
+#| label: setup
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd().parents[1] / "shared" / "python"))
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from labtools import (budget_table, enob, lsb_volts, pivot_channels, read_run,
+                      synthetic_banner, validate_meta)
+
+plt.rcParams.update({
+    "figure.figsize": (7.0, 4.0),
+    "axes.grid": True,
+    "grid.alpha": 0.3,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+})
+
+DATA = Path("data")
+CAL_RUNS = sorted(DATA.glob("cal-d*.csv"))
+SUPPLY_RUN = DATA / "supply-drift.csv"
+CROSSCHECK_RUNS = sorted(DATA.glob("crosscheck-*.csv"))
+M1_DATA = Path("../M1-strain-load/data")
+M1_QUARTER_RUNS = sorted(M1_DATA.glob("bridge-quarter-*.csv"))
+
+PIN_OUT = 15          # Hall output
+PIN_VCC = 16          # supply-voltage sense
+MAX_FIT_ITERATIONS = 100
+GRAVITY = 9.80665     # m/s^2, the conventional standard value
+```
+
+```{python}
+#| label: helpers
+def ratio(run):
+    """The ratiometric reading r = V_out / V_cc, sample by sample.
+
+    The sense channel is divided down by a known ratio, so the supply is
+    recovered before the division. This is the whole point of the second
+    channel: r does not depend on the supply, and V_out alone does.
+    """
+    wide = pivot_channels(run.data, "volts")
+    sense_gain = next(c["conditioning"]["gain"] for c in run.meta["channels"]
+                      if c["pin"] == PIN_VCC)
+    v_cc = wide[PIN_VCC] / sense_gain
+    return (wide[PIN_OUT] / v_cc).to_numpy(), v_cc.to_numpy(), wide[PIN_OUT].to_numpy()
+
+
+def model_r(d_mm, a, d0_mm, n):
+    """r(d) = 1/2 + A (1 + d/d0)^-n -- the ratiometric form, free of V_cc."""
+    return 0.5 + a / (1.0 + d_mm / d0_mm) ** n
+
+
+def gauss_newton(d_mm, r_obs, a0, d0_0, n):
+    """Fits (A, d0) of the decay law by explicit damped Gauss-Newton.
+
+    Written out, with the Jacobian in closed form, so that Python and R take
+    the same arithmetic path and stop on the same criterion.
+
+    The damping is not decoration: an undamped step from a plausible starting
+    guess overshoots into negative d0 on this data and the Jacobian goes
+    singular within a dozen iterations. The line search halves the step until
+    d0 stays positive and the sum of squares does not increase, which is
+    deterministic and therefore reproduces identically in both languages.
+    """
+    d_mm = np.asarray(d_mm, float)
+    r_obs = np.asarray(r_obs, float)
+    a, d0 = float(a0), float(d0_0)
+    for _ in range(MAX_FIT_ITERATIONS):
+        u = 1.0 + d_mm / d0
+        f = 0.5 + a * u ** (-n)
+        sse = float(((r_obs - f) ** 2).sum())
+        j = np.column_stack([u ** (-n), a * n * u ** (-n - 1.0) * d_mm / d0 ** 2])
+        step = np.linalg.solve(j.T @ j, j.T @ (r_obs - f))
+
+        lam = 1.0
+        while lam > 1e-6:
+            a_try = a + lam * float(step[0])
+            d0_try = d0 + lam * float(step[1])
+            if d0_try > 1e-6:
+                f_try = 0.5 + a_try * (1.0 + d_mm / d0_try) ** (-n)
+                if float(((r_obs - f_try) ** 2).sum()) <= sse:
+                    break
+            lam /= 2.0
+        a += lam * float(step[0])
+        d0 += lam * float(step[1])
+        if max(abs(lam * float(step[0])) / max(abs(a), 1e-12),
+               abs(lam * float(step[1])) / max(abs(d0), 1e-12)) < 1e-12:
+            break
+
+    u = 1.0 + d_mm / d0
+    resid = r_obs - (0.5 + a * u ** (-n))
+    dof = max(d_mm.size - 2, 1)
+    s_res = float(np.sqrt((resid ** 2).sum() / dof))
+    j = np.column_stack([u ** (-n), a * n * u ** (-n - 1.0) * d_mm / d0 ** 2])
+    cov = np.linalg.inv(j.T @ j) * s_res ** 2
+    return {"A": a, "d0": d0, "u_A": float(np.sqrt(cov[0, 0])),
+            "u_d0": float(np.sqrt(cov[1, 1])), "s_res": s_res,
+            "residual": resid}
+
+
+def invert(r, a, d0, n):
+    """d from r: the calibration curve read backwards."""
+    return d0 * ((a / (r - 0.5)) ** (1.0 / n) - 1.0)
+
+
+def d_r_d_d(d_mm, a, d0, n):
+    """dr/dd -- the sensitivity of the ratiometric reading, per mm."""
+    return -a * n / d0 * (1.0 + d_mm / d0) ** (-n - 1.0)
+
+
+def ols(x, y):
+    """Straight-line fit with the standard errors of both coefficients."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    n = x.size
+    sxx = ((x - x.mean()) ** 2).sum()
+    slope = ((x - x.mean()) * (y - y.mean())).sum() / sxx
+    intercept = y.mean() - slope * x.mean()
+    resid = y - (intercept + slope * x)
+    s = np.sqrt((resid ** 2).sum() / max(n - 2, 1))
+    return {"slope": float(slope), "intercept": float(intercept),
+            "u_slope": float(s / np.sqrt(sxx)),
+            "u_intercept": float(s * np.sqrt(1.0 / n + x.mean() ** 2 / sxx)),
+            "s_res": float(s)}
+```
+
+```{python}
+#| label: load
+cal = [read_run(p) for p in CAL_RUNS]
+supply = read_run(SUPPLY_RUN)
+cross = [read_run(p) for p in CROSSCHECK_RUNS]
+
+board = cal[0].meta["board"]
+FSR = board["vref_mV"] / 1000.0
+LSB = lsb_volts(cal[0].meta)
+N_EXP = cal[0].meta["channels"][0]["decay_exponent"]
+TC_PER_K = cal[0].meta["channels"][0]["sensor_temperature_coefficient_per_k"]
+BEAM = cross[0].meta["beam"]
+BASELINE_MM = cross[0].meta["channels"][0]["baseline_distance_mm"]
+```
+
+```{python}
+#| label: banner
+#| echo: false
+#| output: asis
+print(synthetic_banner(cal[0].meta))
+```
+
+## Data quality
+
+```{python}
+#| label: quality
+#| echo: false
+#| output: asis
+runs = cal + [supply] + cross
+bad = sum(1 for r in runs if validate_meta(r.meta))
+lossy = [r.meta["run"] for r in runs
+         if any(k != "records" and isinstance(v, int) and v > 0
+                for k, v in r.meta.get("stream_stats", {}).items())]
+print(f"""
+{len(runs)} runs read: {len(cal)} calibration points, one supply-drift record
+and {len(cross)} beam cross-check points.
+{'All sidecars are complete.' if bad == 0 else f'{bad} sidecar(s) have missing fields.'}
+{'No run reports a lost record.' if not lossy else 'Runs with losses: ' + ', '.join(lossy)}
+""")
+```
+
+## Calibration fit
+
+Each calibration run holds the magnet at a micrometer-set distance and records
+both channels. The fit is on the **ratio**, not on the output voltage, so the
+supply never enters.
+
+```{python}
+#| label: calibration
+points = []
+for run in cal:
+    ch = run.meta["channels"][0]
+    r, v_cc, v_out = ratio(run)
+    points.append({
+        "run": run.meta["run"],
+        "d_mm": ch["reference_value"],
+        "u_d_mm": ch["reference_u"],
+        "r_mean": r.mean(),
+        "r_sd": r.std(ddof=1),
+        "n": r.size,
+        "v_out_mean": v_out.mean(),
+        "v_cc_mean": v_cc.mean(),
+    })
+cal_df = pd.DataFrame(points).sort_values("d_mm").reset_index(drop=True)
+
+fit = gauss_newton(cal_df["d_mm"], cal_df["r_mean"],
+                   a0=cal_df["r_mean"].max() - 0.5,
+                   d0_0=cal_df["d_mm"].median(), n=N_EXP)
+cal_df["residual"] = fit["residual"]
+```
+
+```{python}
+#| label: out-cal
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.d_mm:.0f} | {r.u_d_mm:.3f} | {r.r_mean:.6f} | {r.r_sd * 1e6:.1f} | "
+    f"{r.n} | {r.residual * 1e6:+.1f} |"
+    for r in cal_df.itertuples())
+print(f"""
+| $d$ [mm] | $u(d)$ [mm] | $r = V_\\mathrm{{out}}/V_\\mathrm{{cc}}$ | $s(r)$ [ppm] | $n$ | Residual [ppm] |
+|---|---|---|---|---|---|
+{rows}
+
+: The calibration sweep and the residuals of the fitted decay law {{#tbl-m2-cal}}
+""")
+```
+
+```{python}
+#| label: out-cal-text
+#| echo: false
+#| output: asis
+print(f"""
+Fitted $A = {fit['A']:.5f}$ with $u(A) = {fit['u_A']:.5f}$, and
+$d_0 = {fit['d0']:.4f}$ mm with $u(d_0) = {fit['u_d0']:.4f}$ mm, at a fixed
+exponent $n = {N_EXP}$. The residual standard deviation is
+{fit['s_res'] * 1e6:.1f} ppm of the ratio, and the largest single residual is
+{np.abs(fit['residual']).max() * 1e6:.1f} ppm.
+
+Read the residual column of @tbl-m2-cal as a pattern, not as a number: scatter
+means the two-parameter law is doing its job, while a systematic run of one
+sign across the range would be evidence that the fixed exponent, or the
+functional form itself, is wrong — and no amount of averaging repairs a model
+of the wrong shape.
+""")
+```
+
+```{python}
+#| label: fig-m2-cal
+#| echo: false
+#| fig-cap: "The calibration curve. Top: the ratiometric reading against micrometer distance, with the fitted decay law. Bottom: residuals. The curve is steep and useful close in, and flattens into uselessness far out — which is what the next section quantifies."
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.2), sharex=True,
+                               gridspec_kw={"height_ratios": [2, 1]})
+grid = np.linspace(cal_df["d_mm"].min(), cal_df["d_mm"].max(), 300)
+ax1.plot(grid, model_r(grid, fit["A"], fit["d0"], N_EXP), lw=1.2, label="fit")
+ax1.plot(cal_df["d_mm"], cal_df["r_mean"], "o", ms=6, label="measured")
+ax1.set_ylabel("$r = V_{out}/V_{cc}$")
+ax1.legend(frameon=False)
+
+ax2.axhline(0.0, color="0.4", lw=0.8)
+ax2.plot(cal_df["d_mm"], cal_df["residual"] * 1e6, "o-", ms=5, lw=0.8)
+ax2.set_xlabel("Micrometer distance $d$ [mm]")
+ax2.set_ylabel("Residual [ppm]")
+fig.tight_layout()
+plt.show()
+```
+
+## Working range
+
+Two criteria, pulling in opposite directions: resolution wants to be close to
+the magnet, and linearity wants to be far from it.
+
+```{python}
+#| label: window
+# The ADC's own noise, referred to the ratio, from the quietest calibration
+# point's repeats.
+sigma_r_adc = float(cal_df["r_sd"].min())
+
+d_grid = np.linspace(cal_df["d_mm"].min(), cal_df["d_mm"].max(), 400)
+sens = np.abs(d_r_d_d(d_grid, fit["A"], fit["d0"], N_EXP))     # per mm
+resolution_um = sigma_r_adc / sens * 1e3                        # micrometres
+# Curvature, as the fractional change of sensitivity per millimetre.
+curvature = (N_EXP + 1.0) / (fit["d0"] + d_grid) * 100.0        # % per mm
+
+# The two criteria, written down before looking at the data. They pull in
+# opposite directions, so the window is their overlap and not either alone;
+# change them and the window moves, which is the point of stating them.
+RESOLUTION_LIMIT_UM = 40.0     # resolve 40 um or better
+CURVATURE_LIMIT_PCT = 30.0     # and no more than 30 % sensitivity change per mm
+ok = (resolution_um <= RESOLUTION_LIMIT_UM) & (curvature <= CURVATURE_LIMIT_PCT)
+window = (d_grid[ok].min(), d_grid[ok].max()) if ok.any() else (np.nan, np.nan)
+```
+
+```{python}
+#| label: fig-m2-window
+#| echo: false
+#| fig-cap: "Choosing a working range. Displacement resolution (left axis) improves close to the magnet; the curvature of the calibration curve (right axis) worsens there. The shaded band satisfies both stated criteria at once."
+fig, ax1 = plt.subplots(figsize=(7.0, 3.8))
+ax1.plot(d_grid, resolution_um, lw=1.3, color="#14556b", label="resolution")
+ax1.axhline(RESOLUTION_LIMIT_UM, color="#14556b", lw=0.8, ls="--")
+ax1.set_xlabel("Distance $d$ [mm]")
+ax1.set_ylabel("Resolution [µm]", color="#14556b")
+ax1.set_yscale("log")
+
+ax2 = ax1.twinx()
+ax2.plot(d_grid, curvature, lw=1.3, color="#b6771a", label="curvature")
+ax2.axhline(CURVATURE_LIMIT_PCT, color="#b6771a", lw=0.8, ls="--")
+ax2.set_ylabel("Sensitivity change [% per mm]", color="#b6771a")
+ax2.grid(False)
+
+if ok.any():
+    ax1.axvspan(window[0], window[1], color="0.85", zorder=0)
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-window
+#| echo: false
+#| output: asis
+d_work = BASELINE_MM
+sens_work = abs(d_r_d_d(d_work, fit["A"], fit["d0"], N_EXP))
+print(f"""
+| Quantity | Value |
+|---|---|
+| Noise on $r$, from repeats | {sigma_r_adc * 1e6:.1f} ppm |
+| Resolution criterion | ≤ {RESOLUTION_LIMIT_UM:.0f} µm |
+| Curvature criterion | ≤ {CURVATURE_LIMIT_PCT:.0f} % per mm |
+| Usable window | {window[0]:.1f} – {window[1]:.1f} mm |
+| Chosen working point | {d_work:.1f} mm |
+| Sensitivity there | {sens_work * 1e6:.1f} ppm per µm |
+| Resolution there | {sigma_r_adc / sens_work * 1e3:.2f} µm |
+
+: The working range, from two stated criteria {{#tbl-m2-window}}
+""")
+```
+
+## Ratiometric correction
+
+The supply is deliberately drifted while the magnet is held still. Nothing
+moves; only the rail does.
+
+```{python}
+#| label: supply
+ch_supply = supply.meta["channels"][1]
+r_sup, v_cc_sup, v_out_sup = ratio(supply)
+t_s = np.sort(supply.data["t_us"].unique()) / 1e6
+t_s = t_s - t_s[0]
+
+# Ratiometric: invert the calibration curve at the measured ratio.
+d_ratio = invert(r_sup, fit["A"], fit["d0"], N_EXP)
+# Absolute: assume the supply is at its nominal value and never checked.
+v_cc_nominal = float(ch_supply["reference_value"])
+d_absolute = invert(v_out_sup / v_cc_nominal, fit["A"], fit["d0"], N_EXP)
+
+drift_pct = (v_cc_sup[-1] / v_cc_sup[0] - 1.0) * 100.0
+
+# The *trend* over the record, not its span: the span of any noisy record is
+# about 8 sigma whatever the supply does, which would hide the effect this
+# section exists to show. A straight-line fit separates drift from noise.
+trend_abs = ols(t_s, d_absolute)
+trend_ratio = ols(t_s, d_ratio)
+duration_s = float(t_s[-1] - t_s[0])
+drift_abs_um = trend_abs["slope"] * duration_s * 1e3
+drift_ratio_um = trend_ratio["slope"] * duration_s * 1e3
+u_drift_abs_um = trend_abs["u_slope"] * duration_s * 1e3
+u_drift_ratio_um = trend_ratio["u_slope"] * duration_s * 1e3
+```
+
+```{python}
+#| label: fig-m2-supply
+#| echo: false
+#| fig-cap: "The magnet is stationary throughout. Top: the measured supply. Bottom: the displacement each reading implies — absolute, which tracks the rail, and ratiometric, which does not."
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 4.6), sharex=True,
+                               gridspec_kw={"height_ratios": [1, 2]})
+ax1.plot(t_s, v_cc_sup, lw=0.9)
+ax1.set_ylabel("$V_{cc}$ [V]")
+
+ax2.plot(t_s, (d_absolute - d_absolute[0]) * 1e3, lw=0.9,
+         label="absolute reading")
+ax2.plot(t_s, (d_ratio - d_ratio[0]) * 1e3, lw=0.9, label="ratiometric")
+ax2.axhline(0.0, color="0.4", lw=0.8)
+ax2.set_xlabel("Time [s]")
+ax2.set_ylabel("Apparent movement [µm]")
+ax2.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-supply
+#| echo: false
+#| output: asis
+print(f"""
+| Quantity | Absolute reading | Ratiometric reading |
+|---|---|---|
+| Supply drift over the record | {drift_pct:+.2f} % | {drift_pct:+.2f} % |
+| Fitted apparent movement | {drift_abs_um:+.1f} µm | {drift_ratio_um:+.3f} µm |
+| Its own standard uncertainty | {u_drift_abs_um:.2f} µm | {u_drift_ratio_um:.3f} µm |
+| Resolved? | {'yes' if abs(drift_abs_um) > 2 * u_drift_abs_um else 'no'} | {'yes' if abs(drift_ratio_um) > 2 * u_drift_ratio_um else 'no'} |
+
+: What the second channel buys {{#tbl-m2-supply}}
+""")
+```
+
+```{python}
+#| label: out-supply-text
+#| echo: false
+#| output: asis
+print(f"""
+A supply droop of {abs(drift_pct):.2f} % fakes {abs(drift_abs_um):.0f} µm of
+movement if the rail is assumed rather than measured — around
+{abs(drift_abs_um) / u_drift_abs_um:.0f} times the uncertainty of the trend
+itself, so it would not look like noise, it would look like a measurement.
+Dividing by the *measured* supply leaves {drift_ratio_um:+.3f} µm, against an
+uncertainty of {u_drift_ratio_um:.3f} µm on that number: the apparent movement
+is no longer distinguishable from zero. The error is gone, not reduced.
+
+This is why the supply does not appear as a row in the budget below. One extra
+analog channel removed an entire uncertainty component, which is a better
+trade than any amount of post-processing.
+""")
+```
+
+## Stiffness cross-check
+
+The same reference masses that M1 weighed with strain gauges, measured again
+as a tip displacement. Two independent routes to the beam's stiffness.
+
+```{python}
+#| label: crosscheck
+# --- M2's own route: tip displacement against force
+rows = []
+for run in cross:
+    ch = run.meta["channels"][0]
+    r, _, _ = ratio(run)
+    d_mm = invert(r.mean(), fit["A"], fit["d0"], N_EXP)
+    rows.append({"run": run.meta["run"], "force_N": ch["reference_value"],
+                 "u_force_N": ch["reference_u"], "d_mm": d_mm,
+                 "delta_mm": BASELINE_MM - d_mm, "r_sd": r.std(ddof=1),
+                 "n": r.size})
+cc = pd.DataFrame(rows).sort_values("force_N").reset_index(drop=True)
+fit_m2 = ols(cc["force_N"], cc["delta_mm"] / 1e3)      # m per N
+
+L = BEAM["length_m"]; B = BEAM["width_m"]; H = BEAM["thickness_m"]
+XG = BEAM["gauge_position_m"]
+I_BEAM = B * H ** 3 / 12.0
+E_M2 = L ** 3 / (3.0 * I_BEAM * fit_m2["slope"])
+U_E_M2 = E_M2 * fit_m2["u_slope"] / fit_m2["slope"]
+
+# --- M1's route: strain against force, through the quarter bridge
+m1_rows = []
+for path in M1_QUARTER_RUNS:
+    run = read_run(path)
+    ch = run.meta["channels"][0]
+    gain = ch["conditioning"]["gain"]
+    offset = ch["conditioning"]["offset"]
+    k_gauge = ch["gauge_factor"]
+    v_ex = run.meta["excitation_v"] if "excitation_v" in run.meta else None
+    m1_rows.append({"force_N": ch["reference_value"],
+                    "v_mean": run.data["volts"].mean(),
+                    "gain": gain, "offset": offset, "k": k_gauge})
+m1 = pd.DataFrame(m1_rows).sort_values("force_N").reset_index(drop=True)
+```
+
+```{python}
+#| label: crosscheck-m1
+# Strain from the quarter-bridge reading: V_adc = G (k eps Vex / 4) + offset.
+VEX = float(cal[0].meta.get("excitation_v", 3.3))
+EXCITATION = float(read_run(M1_QUARTER_RUNS[0]).meta["channels"][0]
+                   .get("excitation_v", VEX))
+m1["strain"] = (4.0 * (m1["v_mean"] - m1["offset"])
+                / (m1["gain"] * m1["k"] * EXCITATION))
+fit_m1 = ols(m1["force_N"], m1["strain"])
+E_M1 = 6.0 * (L - XG) / (B * H ** 2 * fit_m1["slope"])
+U_E_M1 = E_M1 * fit_m1["u_slope"] / fit_m1["slope"]
+
+ratio_e = E_M1 / E_M2
+u_ratio_e = ratio_e * np.hypot(U_E_M1 / E_M1, U_E_M2 / E_M2)
+```
+
+```{python}
+#| label: out-crosscheck
+#| echo: false
+#| output: asis
+rows = "\n".join(
+    f"| {r.force_N:.3f} | {r.u_force_N:.4f} | {r.d_mm:.4f} | {r.delta_mm * 1e3:.1f} |"
+    for r in cc.itertuples())
+print(f"""
+| Force [N] | $u(F)$ [N] | Distance $d$ [mm] | Tip displacement [µm] |
+|---|---|---|---|
+{rows}
+
+: The beam cross-check, read through the calibration curve {{#tbl-m2-crosscheck}}
+""")
+```
+
+```{python}
+#| label: fig-m2-crosscheck
+#| echo: false
+#| fig-cap: "Tip displacement against applied force, with the straight-line fit whose slope is the beam's compliance. The intercept is the zero of the Hall reading, not a physical offset."
+fig, ax = plt.subplots(figsize=(7.0, 3.4))
+grid = np.linspace(0, cc["force_N"].max() * 1.05, 100)
+ax.plot(grid, (fit_m2["intercept"] + fit_m2["slope"] * grid) * 1e6, lw=1.1,
+        label="fit")
+ax.plot(cc["force_N"], cc["delta_mm"] * 1e3, "o", ms=6, label="measured")
+ax.set_xlabel("Applied force [N]")
+ax.set_ylabel("Tip displacement [µm]")
+ax.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: out-crosscheck-text
+#| echo: false
+#| output: asis
+print(f"""
+| Route | Fitted slope | Young's modulus |
+|---|---|---|
+| M1, strain per force | {fit_m1['slope'] * 1e6:.4f} µstrain/N | {E_M1 / 1e9:.2f} ± {U_E_M1 / 1e9:.2f} GPa |
+| M2, displacement per force | {fit_m2['slope'] * 1e6:.4f} µm/N | {E_M2 / 1e9:.2f} ± {U_E_M2 / 1e9:.2f} GPa |
+| Ratio $E_\\mathrm{{M1}}/E_\\mathrm{{M2}}$ | — | {ratio_e:.4f} ± {u_ratio_e:.4f} |
+
+: Two independent routes to the same beam {{#tbl-m2-stiffness}}
+
+The **ratio** is the result. Both routes need the beam's geometry, which is a
+placeholder here, so neither modulus is a measurement of anything — but the
+same placeholder geometry enters both, so a ratio near 1 says the two
+mechanical models agree with each other, and a ratio away from 1 is evidence
+about the clamp rather than about the placeholders. This one is
+{abs(ratio_e - 1) * 100:.2f} % from unity, against a combined uncertainty of
+{u_ratio_e * 100:.2f} %.
+""")
+```
+
+## Uncertainty budget
+
+The measurand is the measured tip displacement at the largest reference force,
+recovered by [inverting the calibration curve](handbook.qmd#eq-m2-recover)
+with the [sensitivity coefficients](handbook.qmd#eq-m2-sensitivity) given
+there.
+
+```{python}
+#| label: budget
+last = cc.iloc[-1]
+r_op = float(model_r(last["d_mm"], fit["A"], fit["d0"], N_EXP))
+d_hat = invert(r_op, fit["A"], fit["d0"], N_EXP)
+
+# Sensitivity coefficients of eq-m2-recover, in mm per unit of each input.
+u_arg = fit["A"] / (r_op - 0.5)
+c_r = -fit["d0"] / N_EXP * fit["A"] * u_arg ** (1.0 / N_EXP - 1.0) / (r_op - 0.5) ** 2
+c_A = fit["d0"] / N_EXP * u_arg ** (1.0 / N_EXP - 1.0) / (r_op - 0.5)
+c_d0 = d_hat / fit["d0"]
+
+n_op = int(last["n"])
+sigma_r_op = float(last["r_sd"])
+
+# Effective quantization, by S1's method applied to this record, referred to r.
+enob_here = enob(FSR, sigma_r_op * float(np.mean(
+    [c["reference_value"] for c in supply.meta["channels"] if c["pin"] == PIN_VCC])))
+q_eff_r = FSR / 2 ** enob_here / float(cal[0].meta["board"]["vref_mV"] / 1000.0)
+
+DELTA_T_K = 5.0     # the bench temperature excursion the budget bounds
+
+components = [
+    dict(quantity="Repeatability of r", value=r_op, unit="mm",
+         distribution="type-a", std=sigma_r_op / np.sqrt(n_op), sensitivity=c_r),
+    dict(quantity="Effective quantization", value=0.0, unit="mm",
+         distribution="rectangular", half_width=q_eff_r / 2, sensitivity=c_r),
+    dict(quantity="Calibration amplitude A", value=fit["A"], unit="mm",
+         distribution="type-a", std=fit["u_A"], sensitivity=c_A),
+    dict(quantity="Calibration distance d0", value=fit["d0"], unit="mm",
+         distribution="type-a", std=fit["u_d0"], sensitivity=c_d0),
+    dict(quantity="Micrometer reference", value=0.0, unit="mm",
+         distribution="rectangular",
+         half_width=float(cal_df["u_d_mm"].max()), sensitivity=1.0),
+    dict(quantity="Sensor temperature coefficient", value=0.0, unit="mm",
+         distribution="rectangular",
+         half_width=TC_PER_K * DELTA_T_K * fit["A"], sensitivity=c_A),
+]
+budget = budget_table(components, k=2)
+```
+
+```{python}
+#| label: out-budget
+#| echo: false
+#| output: asis
+print(budget.to_markdown(
+    caption=f"Uncertainty budget for the tip displacement at "
+            f"$F = {last['force_N']:.3f}$ N",
+    label="tbl-m2-budget"))
+```
+
+```{python}
+#| label: out-budget-text
+#| echo: false
+#| output: asis
+dominant = budget.table.loc[budget.table["index_pct"].idxmax()]
+print(f"""
+Measured tip displacement {last['delta_mm'] * 1e3:.1f} µm with an expanded
+uncertainty $U = {budget.U * 1e3:.1f}$ µm at $k = 2$ — a relative uncertainty
+of {budget.U / last['delta_mm'] * 100:.1f} %.
+
+The dominant component is **{dominant['quantity']}** at
+{dominant['index_pct']:.0f} % of the combined variance. Note what is *not*
+in the table: the supply voltage, because the reading is ratiometric. An
+absolute reading would carry a row of its own, and @tbl-m2-supply says how
+large it would be.
+
+The effective-quantization row is deliberately conservative. It stands for the
+part of the converter's noise that does **not** average away with $n$, and it
+is written from the noise itself rather than from the nominal code width, in
+the same way as in
+[S1's budget](../S1-daq-static/handbook.qmd#sec-s1-budget). Whether that floor
+is real, and where averaging genuinely stops helping, is exactly the question
+[T3](../T3-long-term-stability/index.qmd) answers with an Allan deviation; a
+group that has done T3 should replace this bound with the measured one and say
+what changed.
+""")
+```
+
+## What to report
+
+1. @tbl-m2-cal and @fig-m2-cal: the fitted curve and its residuals, with a
+   statement about whether the fixed exponent is earning its keep.
+2. @fig-m2-window and @tbl-m2-window: your two criteria, written down as
+   numbers before you look at the data, and the window they imply.
+3. @tbl-m2-supply and @fig-m2-supply: what the second channel is worth, in
+   micrometres.
+4. @tbl-m2-crosscheck, @fig-m2-crosscheck and @tbl-m2-stiffness: the two
+   routes to the beam's stiffness and their ratio, with the ratio — not the
+   moduli — presented as the result.
+5. @tbl-m2-budget: the budget, the dominant component, and one sentence on
+   why the supply is absent from it.
