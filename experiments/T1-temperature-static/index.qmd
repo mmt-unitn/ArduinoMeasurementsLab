@@ -108,7 +108,8 @@ uses it says so.
 ## Instructor summary {.instructor-note}
 
 Four hours, tier 2, needs S1 as a prerequisite for the resolution comparison
-of @sec-t1-sensitivity — the two nonlinear calibration fits and the
+of the [sensitivity comparison](handbook.qmd#sec-t1-sensitivity) — the two
+nonlinear calibration fits and the
 self-heating measurement are where the session earns its extra hour over S1.
 Full notes, expected values, common failures and the rubric are in the
 [handbook](handbook.qmd#sec-t1-instructor).

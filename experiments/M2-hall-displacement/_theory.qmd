@@ -162,7 +162,7 @@ own reference uncertainty, the calibration fit's residual, [S1's effective
 quantization](../S1-daq-static/handbook.qmd#sec-s1-enob), and the supply
 correction's own residual uncertainty, and states the sensor's temperature
 coefficient as an influence quantity rather than measuring it directly —
-see @sec-m2-budget in the handbook.
+see [the budget](handbook.qmd#sec-m2-budget) in the handbook.
 
 ### Relation to S1 {#sec-m2-relation}
 

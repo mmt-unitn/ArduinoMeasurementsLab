@@ -76,7 +76,8 @@ exists in the input (a hardware guarantee, the anti-alias filter), or
 independently know the signal's bandwidth ahead of time. There is no analysis
 technique that substitutes for either.
 
-**"The filtered tone is still clearly visible in @fig-s3-filter-pair. Did the
+**"The filtered tone is still clearly visible in the
+[filtered/unfiltered figure](analysis-py.qmd#fig-s3-filter-pair). Did the
 filter fail?"** No — it attenuated the tone by design, by a computable
 amount, and the point of @sec-s3-filter-design is that attenuation is a
 number you choose against a required outcome, not a promise of zero. Ask what
