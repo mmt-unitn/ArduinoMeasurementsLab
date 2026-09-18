@@ -315,3 +315,37 @@ def test_budget_table_markdown_carries_the_totals():
     assert "$h_i$ [%]" in text
     assert "Combined standard uncertainty" in text
     assert "Expanded uncertainty" in text
+
+
+# --- timestamps past 32 bits ------------------------------------------------
+#
+# A device that has been up for more than 35.8 minutes reports t_us above
+# 2**31 - 1. R's integers are 32-bit signed, so as.integer() silently returns
+# NA there; both implementations must carry these values exactly. 3e9 us is
+# only 50 minutes of uptime, and the driver's clock runs to 49.7 days.
+
+LATE_T0 = 3_000_000_000
+
+
+def test_read_run_keeps_timestamps_past_32_bits():
+    run = read_run(FIXTURES / "run-late.csv")
+    assert run.data["t_us"].iloc[0] == LATE_T0
+    assert run.data["t_us"].max() == LATE_T0 + 5000
+    assert run.data["t_us"].notna().all()
+
+
+def test_timing_summary_on_late_timestamps():
+    run = read_run(FIXTURES / "run-late.csv")
+    s = timing_summary(run.data).stats
+    assert s["n"] == 6
+    assert s["mean_interval_us"] == pytest.approx(1000.0, rel=REL)
+    assert s["t0_us"] == pytest.approx(float(LATE_T0), rel=1e-15)
+    assert s["residual_rms_us"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_pivot_channels_on_late_timestamps():
+    run = read_run(FIXTURES / "run-late.csv")
+    wide = pivot_channels(run.data, "raw")
+    assert list(wide.columns) == [15, 16]
+    assert len(wide) == 6
+    assert wide.index[0] == LATE_T0

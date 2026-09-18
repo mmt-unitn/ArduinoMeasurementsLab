@@ -348,3 +348,36 @@ test_that("budget_table on the reference components matches the Python constants
     expect_equal(indices[i], B_INDEX[i], tolerance = REL)
   }
 })
+
+# --- timestamps past 32 bits ------------------------------------------------
+#
+# A device that has been up for more than 35.8 minutes reports t_us above
+# 2^31 - 1. R's integers are 32-bit signed, so as.integer() silently returns
+# NA there; both implementations must carry these values exactly. 3e9 us is
+# only 50 minutes of uptime, and the driver's clock runs to 49.7 days.
+
+LATE_T0 <- 3e9
+
+test_that("read_run keeps timestamps past 32 bits", {
+  run <- read_run(file.path(FIXTURES, "run-late.csv"))
+  expect_equal(run$data$t_us[1], LATE_T0)
+  expect_equal(max(run$data$t_us), LATE_T0 + 5000)
+  expect_false(any(is.na(run$data$t_us)))
+})
+
+test_that("timing_summary works on late timestamps", {
+  run <- read_run(file.path(FIXTURES, "run-late.csv"))
+  s <- timing_summary(run$data)$stats
+  expect_equal(s$n, 6)
+  expect_equal(s$mean_interval_us, 1000, tolerance = 1e-9)
+  expect_equal(s$t0_us, LATE_T0, tolerance = 1e-15)
+  expect_equal(s$residual_rms_us, 0, tolerance = 1e-6)
+})
+
+test_that("pivot_channels works on late timestamps", {
+  run <- read_run(file.path(FIXTURES, "run-late.csv"))
+  wide <- pivot_channels(run$data, "raw")
+  expect_equal(colnames(wide), c("15", "16"))
+  expect_equal(nrow(wide), 6)
+  expect_equal(rownames(wide)[1], "3000000000")
+})

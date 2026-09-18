@@ -121,7 +121,12 @@ read_run <- function(path) {
     stop(sprintf("%s: needs a 'raw' or a 'volts' column", csv_path))
   }
 
-  data$t_us <- as.integer(data$t_us)
+  # t_us is a DOUBLE, not an integer: R's integers are 32-bit signed, so
+  # as.integer() silently returns NA above 2147483647 us -- only 35.8 minutes
+  # of device uptime, while the driver rebuilds a 64-bit microsecond clock
+  # good for 49.7 days. A double represents every integer up to 2^53 exactly,
+  # which is 285 years of microseconds, and needs no extra package.
+  data$t_us <- as.numeric(data$t_us)
   data$pin <- as.integer(data$pin)
   if ("raw" %in% names(data)) {
     data$raw <- as.integer(data$raw)
@@ -290,12 +295,20 @@ pivot_channels <- function(data, value = "volts") {
   if (!(value %in% names(data))) {
     stop(sprintf("no '%s' column; have %s", value, paste(names(data), collapse = ", ")))
   }
-  wide <- tapply(data[[value]], list(data$t_us, data$pin), FUN = mean)
-  # tapply's dimnames are the sorted-as-character unique t_us/pin; put them
-  # back in numeric order so rows and columns read the way the data does.
-  row_order <- order(as.numeric(rownames(wide)))
-  col_order <- order(as.numeric(colnames(wide)))
-  wide <- wide[row_order, col_order, drop = FALSE]
+  # Group by the *index* of each distinct timestamp rather than by the
+  # timestamp itself: tapply coerces its grouping to character, and
+  # as.character() on a large t_us gives "3e+09", which collapses distinct
+  # timestamps into one row. The row names are written back afterwards with
+  # scientific notation disabled, for the same reason.
+  t_levels <- sort(unique(data$t_us))
+  pin_levels <- sort(unique(data$pin))
+  wide <- tapply(data[[value]],
+                 list(match(data$t_us, t_levels), match(data$pin, pin_levels)),
+                 FUN = mean)
+  wide <- wide[order(as.numeric(rownames(wide))),
+               order(as.numeric(colnames(wide))), drop = FALSE]
+  rownames(wide) <- format(t_levels, scientific = FALSE, trim = TRUE)
+  colnames(wide) <- as.character(pin_levels)
   # A data.frame rather than tapply's matrix, so a channel can be taken by
   # name -- wide[["15"]] -- the way the Python implementation allows wide[15].
   as.data.frame(wide, check.names = FALSE)

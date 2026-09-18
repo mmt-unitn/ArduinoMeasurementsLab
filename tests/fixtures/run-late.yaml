@@ -1,0 +1,17 @@
+experiment: TEST
+run: run-late
+date: 2026-09-18
+synthetic: true
+board:
+  model: portenta-h7
+  adc_bits: 16
+  vref_mV: 3300
+acquisition:
+  pins: [15, 16]
+channels:
+  - pin: 15
+    quantity: voltage
+    unit: V
+  - pin: 16
+    quantity: voltage
+    unit: V
