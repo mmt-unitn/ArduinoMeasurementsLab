@@ -1,0 +1,63 @@
+# Platform parameters shared by every synthetic generator.
+#
+# TODO (Paolo): every number in this file is a plausible placeholder, not a
+# measurement. Replace each one with a value measured on the reference bench,
+# and delete this notice when none is left.
+
+board:
+  model: portenta-h7
+  serial: "SYNTHETIC-0001"
+  usbio_version: "0.4.0"
+  adc_bits: 16          # what GET_INFO reports on a Portenta H7
+  vref_mV: 3300
+
+# The board's analog input chain. `adc_bits` above is the code scale the
+# driver converts with; these are the departures from an ideal converter that
+# S1 measures.
+adc:
+  offset_v: 0.0018              # TODO (Paolo): measured offset at 0 V input
+  gain_error: -0.0035           # TODO (Paolo): measured gain error, fractional
+  noise_sigma_v: 0.00055        # TODO (Paolo): input-referred RMS noise
+  inl_amplitude_v: 0.00025      # TODO (Paolo): one-cycle INL term, peak
+
+# The sketch's loop() rate bounds everything: the firmware emits at most one
+# record per UsbIo.poll(). The README of ArduinoDriver reports about 32 kHz
+# free running with one channel and 23.5 kHz with two, on a Portenta H7
+# running the plain UsbIoDevice sketch.
+loop:
+  period_1ch_us: 31.0           # TODO (Paolo): measured on the bench sketch
+  period_2ch_us: 42.5           # TODO (Paolo): measured on the bench sketch
+
+# The host operating system as an influence quantity. It does not change the
+# board's loop rate; it changes how often the bulk endpoint is drained late,
+# which is what produces schedule restarts and device overruns.
+hosts:
+  linux:
+    os: linux
+    os_version: "6.6"
+    machine: "raspberry-pi-5"       # TODO (Paolo): the bench host actually used
+    hub: true
+    jitter_sd_us: 1.5               # TODO (Paolo): measured
+    restart_probability: 0.0002     # TODO (Paolo): measured
+    restart_extra_us: 900.0         # TODO (Paolo): measured
+    device_overruns_per_1000: 0.0   # TODO (Paolo): measured
+  macos:
+    os: macos
+    os_version: "27.0"
+    machine: "macbook-pro"          # TODO (Paolo): the host actually used
+    hub: true
+    jitter_sd_us: 2.0               # TODO (Paolo): measured
+    restart_probability: 0.006      # TODO (Paolo): measured
+    restart_extra_us: 1800.0        # TODO (Paolo): measured
+    device_overruns_per_1000: 2.0   # TODO (Paolo): measured (~0.2 % of records)
+
+# Reference instruments quoted in the generated sidecars.
+references:
+  dmm:
+    instrument: DMM
+    model: "TODO (Paolo)"
+    calibration: "TODO (Paolo)"
+  voltage_reference:
+    instrument: "voltage reference IC"
+    model: "TODO (Paolo)"
+    calibration: "TODO (Paolo)"

@@ -1,0 +1,40 @@
+# S1 - static characterization of the DAQ.
+#
+# TODO (Paolo): placeholders throughout; replace with measured values.
+
+seed: 20260918
+
+# The calibration points a tier-1 bench can produce: a shorted input, the
+# voltage reference IC through a two-resistor divider, and the reference
+# itself. Three points are enough for offset and gain, and no more than a
+# tier-1 bench can offer.
+calibration:
+  records_per_point: 200
+  period_us: 1000
+  pin: 15
+  # value_v is what the DMM reads at the pin; u_v is its standard uncertainty.
+  points:
+    - name: "0v"
+      value_v: 0.0000
+      u_v: 0.00008            # TODO (Paolo): from the DMM specification
+      label: "input shorted to GND"
+    - name: "1v25"
+      value_v: 1.2500
+      u_v: 0.00013            # TODO (Paolo): from the DMM specification
+      label: "reference through a 1:2 divider"
+    - name: "2v50"
+      value_v: 2.5000
+      u_v: 0.00019            # TODO (Paolo): from the DMM specification
+      label: "voltage reference IC"
+
+# The long run used for the noise floor, the histogram, the effective bits and
+# the timestamp analysis. Two channels: the reference, and a shorted input that
+# shows the noise floor with no source contribution.
+noise:
+  seconds: 5.0
+  period_us: 1000
+  pins:
+    reference: 15
+    shorted: 16
+  reference_value_v: 2.5000
+  reference_u_v: 0.00019      # TODO (Paolo): from the DMM specification

@@ -1,0 +1,70 @@
+experiment: S1
+run: noise-linux
+date: 2026-09-18
+operator: tools/synth (generated)
+synthetic: true
+board:
+  model: portenta-h7
+  serial: SYNTHETIC-0001
+  usbio_version: 0.4.0
+  adc_bits: 16
+  vref_mV: 3300
+host:
+  os: linux
+  os_version: '6.6'
+  machine: raspberry-pi-5
+  libusb_version: 1.0.27
+  hub: true
+driver_version: 0.4.0
+binding: python
+binding_version: 0.4.0
+acquisition:
+  pins:
+  - 15
+  - 16
+  requested_period_us: 1000
+  achieved_rate_hz: 999.6
+  duration_s: 5.001001
+stream_stats:
+  records: 5000
+  device_overruns: 0
+  seq_gaps: 0
+  host_drops: 0
+  resyncs: 0
+  stale_records: 0
+channels:
+- pin: 15
+  quantity: voltage
+  unit: V
+  sensor: voltage reference IC
+  conditioning:
+    gain: 1.0
+    offset: 0.0
+    filter: none
+  calibration_reference: DMM at the pin
+  reference_value: 2.5
+  reference_u: 0.00019
+- pin: 16
+  quantity: voltage
+  unit: V
+  sensor: input shorted to GND
+  conditioning:
+    gain: 1.0
+    offset: 0.0
+    filter: none
+  reference_value: 0.0
+  reference_u: 0.0
+environment:
+  ambient_temperature_C: 23.0
+  notes: same board and request, host = linux
+references:
+- instrument: DMM
+  model: TODO (Paolo)
+  calibration: TODO (Paolo)
+- instrument: voltage reference IC
+  model: TODO (Paolo)
+  calibration: TODO (Paolo)
+generator:
+  tool: tools/synth
+  version: 0.1.0
+  note: Parameters are placeholders; see tools/synth/params/
