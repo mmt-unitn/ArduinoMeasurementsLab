@@ -40,7 +40,7 @@ and the hosting location are still open decisions (see the repository
             ArduinoDriver platform},
   year   = {2026},
   note   = {University of Trento},
-  url    = {https://github.com/pbosetti/ArduinoMeasurementsLab}
+  url    = {https://github.com/mmt-unitn/ArduinoMeasurementsLab}
 }
 ```
 
@@ -49,7 +49,7 @@ and the hosting location are still open decisions (see the repository
 Corrections, new experiments and measured reference data are welcome.
 
 1. Every experiment lives in one folder under `experiments/` and follows the
-   structure of [`experiments/_template/`](https://github.com/pbosetti/ArduinoMeasurementsLab/tree/main/experiments/_template);
+   structure of [`experiments/_template/`](https://github.com/mmt-unitn/ArduinoMeasurementsLab/tree/main/experiments/_template);
    `tools/new-experiment.sh` copies it and fills in the identifiers.
 2. Theory is written once in `_theory.qmd` and included by both the slides and
    the handbook; the same holds for `_procedure.qmd` and `_instructor.qmd`.

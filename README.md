@@ -95,7 +95,7 @@ first, then in `_quarto.yml`.
 
 | Decision | Current default | Note |
 |---|---|---|
-| Repository | `pbosetti/ArduinoMeasurementsLab` | The original plan named it `ArduinoDriver-labs`; the working directory settled it |
+| Repository | `mmt-unitn/ArduinoMeasurementsLab` | The original plan named it `ArduinoDriver-labs`; the working directory settled it |
 | Hosting | GitHub Pages via GitHub Actions | Student site only |
 | Language | English only | Nothing in the layout prevents adding Italian later as a Quarto profile or a language subdirectory |
 | License | Text and figures CC BY-SA 4.0; code Apache-2.0 | Same code licence as ArduinoDriver |

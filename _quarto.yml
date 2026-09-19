@@ -9,8 +9,8 @@ project:
 website:
   title: "AMLab"
   description: "Measurement science laboratory activities on the ArduinoDriver platform"
-  site-url: https://pbosetti.github.io/ArduinoMeasurementsLab/
-  repo-url: https://github.com/pbosetti/ArduinoMeasurementsLab
+  site-url: https://mmt-unitn.github.io/ArduinoMeasurementsLab/
+  repo-url: https://github.com/mmt-unitn/ArduinoMeasurementsLab
   repo-actions: [issue]
   page-navigation: true
   favicon: assets/favicon.svg
@@ -90,7 +90,7 @@ website:
     center: "Paolo Bosetti — University of Trento"
     right:
       - icon: github
-        href: https://github.com/pbosetti/ArduinoMeasurementsLab
+        href: https://github.com/mmt-unitn/ArduinoMeasurementsLab
 
 bibliography: shared/bibliography.bib
 
