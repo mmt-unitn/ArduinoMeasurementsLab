@@ -11,9 +11,15 @@ The box is insulated for the same reason S1 shorted an input to ground: to
 remove the source and look at what the measurement chain contributes on its
 own. Insulation does not remove the room's diurnal cycle, it *attenuates* it,
 which is why the diurnal cycle is still the largest feature in the record —
-see @sec-t3-drift — and is not a failure of the rig.
+see [@sec-t3-drift]{.content-hidden when-format="revealjs"}[@sec-t3-drift-rj]{.content-visible when-format="revealjs"} — and is not a failure of the rig.
 
+::: {.content-hidden when-format="revealjs"}
 ### Separating drift from the diurnal cycle {#sec-t3-drift}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Separating drift from the diurnal cycle (1) {#sec-t3-drift-rj}
+:::
 
 The record is fit, by ordinary least squares, to a model with four
 parameters: a mean level, a linear drift, and a sinusoid at exactly the
@@ -40,13 +46,23 @@ three-parameter calibration fit is. Nothing here is iterative, unlike S2's
 sine fit, because the frequency is known rather than estimated.
 :::
 
-What is left over, $\varepsilon(t)$, is what @sec-t3-allan characterizes. Fit
+::: {.content-visible when-format="revealjs"}
+### Separating drift from the diurnal cycle (2)
+:::
+
+What is left over, $\varepsilon(t)$, is what [@sec-t3-allan]{.content-hidden when-format="revealjs"}[@sec-t3-allan-rj]{.content-visible when-format="revealjs"} characterizes. Fit
 and subtract the model *before* computing an Allan deviation on it: a
 diurnal cycle left in the record would show up as extra curvature at long
 averaging times and could be mistaken for the instrument's own random walk,
-which is a different mechanism with a different consequence (@sec-t3-slope).
+which is a different mechanism with a different consequence ([@sec-t3-slope]{.content-hidden when-format="revealjs"}[@sec-t3-slope-rj]{.content-visible when-format="revealjs"}).
 
+::: {.content-hidden when-format="revealjs"}
 ### The overlapping Allan deviation {#sec-t3-allan}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### The overlapping Allan deviation (1) {#sec-t3-allan-rj}
+:::
 
 The question this experiment exists to answer is: *if I average this signal
 for longer, does my answer get better, and for how long does that keep being
@@ -56,6 +72,10 @@ time that spread accumulates. The Allan deviation [@allan1966] does: it is a
 function of the averaging time $\tau$, built from the second difference of
 the record at that averaging time, and its shape identifies the noise
 process responsible at each $\tau$.
+
+::: {.content-visible when-format="revealjs"}
+### The overlapping Allan deviation (2)
+:::
 
 Take the residual $\varepsilon(t)$ as a stream of samples at spacing
 $\tau_0$ and form its **overlapping Allan variance** at averaging time
@@ -68,7 +88,13 @@ $$ {#eq-t3-allan}
 
 with $\bar{x}_i$ the **integrated** (phase-like) samples,
 $\bar{x}_i = \tau_0\sum_{k=1}^{i}\varepsilon_k$ — the running sum of the
-residual record, not the residual itself. This is the standard, numerically
+residual record, not the residual itself.
+
+::: {.content-visible when-format="revealjs"}
+### The overlapping Allan deviation (3)
+:::
+
+This is the standard, numerically
 stable way to evaluate @eq-t3-allan from a record of *rate-like* samples
 (here, a temperature reading is the analogue of a fractional frequency
 $y$): integrate once to get a phase-like $\bar x$, then take the doubled,
@@ -88,7 +114,13 @@ computing $\sigma_y(\tau)$ at every possible $\tau$, most of which would be
 redundant this close together.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### Reading the slope {#sec-t3-slope}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Reading the slope (1) {#sec-t3-slope-rj .smaller}
+:::
 
 On a log-log plot of $\sigma_y(\tau)$ against $\tau$, the slope identifies
 the noise process, because each one has its own, different power-law
@@ -102,12 +134,22 @@ dependence on averaging time:
 
 : Allan-deviation slopes and their causes {#tbl-t3-slopes}
 
+::: {.content-visible when-format="revealjs"}
+### Reading the slope (2)
+:::
+
 A record with both a white and a random-walk component — which is the
 plausible minimum for a real instrument, and what @sec-t3-why's synthetic
 data is built from — produces a curve that falls, flattens, and rises again:
 falling while averaging beats down the white noise, rising once the random
 walk starts to dominate. The **minimum of that curve is the optimum
-averaging time** $\tau_\mathrm{opt}$. Past it, more averaging makes the
+averaging time** $\tau_\mathrm{opt}$.
+
+::: {.content-visible when-format="revealjs"}
+### Reading the slope (3)
+:::
+
+Past it, more averaging makes the
 answer *worse* — this is the single most counter-intuitive, and most useful,
 result in the experiment, because it contradicts the assumption every
 earlier experiment on this site has quietly relied on: that longer is
@@ -125,7 +167,13 @@ up to $\tau_\mathrm{opt}$, and it shows where, in absolute averaging time,
 that approximation stops being merely dominated by other terms (S1's
 situation) and starts being **wrong on its own terms** (T3's).
 
+::: {.content-hidden when-format="revealjs"}
 ### Why the Type A term is not $s/\sqrt{n}$ {#sec-t3-typea}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Why the Type A term is not $s/\sqrt{n}$ (1)
+:::
 
 The ordinary formula $s/\sqrt{n}$ for the standard uncertainty of a mean
 assumes the $n$ samples averaged are independent. A record with a
@@ -136,6 +184,10 @@ mean can still move, sometimes by a large factor, because it is answering a
 question ("how spread out are individual samples?") that was never the
 question the budget needs answered ("how well is the mean of this particular
 average known?").
+
+::: {.content-visible when-format="revealjs"}
+### Why the Type A term is not $s/\sqrt{n}$ (2)
+:::
 
 The Allan deviation answers the right question directly: $\sigma_y(\tau)$ *is*
 the standard uncertainty of an average taken over a window of length $\tau$,

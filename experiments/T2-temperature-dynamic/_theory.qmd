@@ -45,7 +45,13 @@ than in stirred water, because $h$ changes by that factor while $\rho c V$
 does not. A datasheet quoting "response time" without naming the medium is
 quoting nothing.
 
+::: {.content-hidden when-format="revealjs"}
 ### Fitting $\tau$ {#sec-t2-fit}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Fitting $\tau$ (1)
+:::
 
 Two routes, and the choice matters.
 
@@ -60,6 +66,10 @@ It is quick, and it is what a hurried analysis reaches for.
 
 **Nonlinear.** Fit $T_\infty$, $T_0$ and $\tau$ of @eq-t2-step directly by
 least squares on the residuals in temperature.
+
+::: {.content-visible when-format="revealjs"}
+### Fitting $\tau$ (2)
+:::
 
 ::: {.callout-warning}
 ## The linearised fit is not the same fit
