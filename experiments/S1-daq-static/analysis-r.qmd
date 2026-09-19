@@ -33,13 +33,10 @@ HTML page and in the PDF handbook.
 #| label: setup
 #| message: false
 library(ggplot2)
+library(purrr)
 library(patchwork)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 # The five runs of the procedure. Point these at your own files.
 CAL_RUNS <- c("data/cal-0v.csv", "data/cal-1v25.csv", "data/cal-2v50.csv")
@@ -51,7 +48,7 @@ PIN_SHORTED <- 16         # the pin shorted to GND
 
 ```{r}
 #| label: load
-runs <- lapply(NOISE_RUNS, read_run)
+runs <- map(NOISE_RUNS, read_run)
 primary <- runs[[PRIMARY]]
 board <- primary$meta$board
 
@@ -82,7 +79,7 @@ for (name in names(runs)) {
   problems <- validate_meta(meta)
   stats <- meta$stream_stats
   counters <- stats[setdiff(names(stats), "records")]
-  lossy <- counters[vapply(counters, function(v) is.numeric(v) && v > 0, logical(1))]
+  lossy <- counters[map_lgl(counters, ~ is.numeric(.x) && .x > 0)]
   cat("\n**", name, "** — ", stats$records, " records; ",
       if (length(problems) == 0) "metadata complete"
       else paste0("metadata problems: ", paste(problems, collapse = "; ")),
@@ -120,7 +117,7 @@ the reference value, gives the offset and the gain error of the
 
 ```{r}
 #| label: calibration
-points <- lapply(CAL_RUNS, function(path) {
+points <- map(CAL_RUNS, function(path) {
   run <- read_run(path)
   pin <- run$meta$acquisition$pins[[1]]
   channel <- Filter(function(c) c$pin == pin, run$meta$channels)[[1]]
@@ -134,7 +131,7 @@ points <- lapply(CAL_RUNS, function(path) {
     n = length(volts)
   )
 })
-cal <- do.call(rbind, points)
+cal <- list_rbind(points)
 cal <- cal[order(cal$reference_V), ]
 rownames(cal) <- NULL
 
@@ -161,7 +158,7 @@ rows <- sprintf("| %s | %.4f | %.5f | %.6f | %.6f | %d | %+.1f |",
                 cal$run, cal$reference_V, cal$u_reference_V,
                 cal$mean_indicated_V, cal$sd_V, cal$n, cal$residual_V * 1e6)
 cat(sprintf('
-| Run | Reference [V] | $u$(ref) [V] | Mean indication [V] | $s$ [V] | $n$ | Residual [µV] |
+| Run | Reference (V) | $u$(ref) (V) | Mean indication (V) | $s$ (V) | $n$ | Residual (µV) |
 |---|---|---|---|---|---|---|
 %s
 
@@ -193,14 +190,14 @@ budget as residual nonlinearity, because three points cannot correct it.
 p_fit <- ggplot(cal, aes(reference_V, mean_indicated_V)) +
   geom_abline(intercept = a, slope = b, linewidth = 0.5) +
   geom_point(size = 2.4) +
-  labs(x = NULL, y = "Indicated voltage [V]",
+  labs(x = NULL, y = "Indicated voltage (V)",
        subtitle = sprintf("V_ind = %.2f mV + %.5f V", a * 1e3, b))
 
 p_res <- ggplot(cal, aes(reference_V, residual_V * 1e6)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.4) +
   geom_point(size = 2.4) +
-  labs(x = "Reference voltage [V]", y = "Residual [µV]")
+  labs(x = "Reference voltage (V)", y = "Residual (µV)")
 
 p_fit / p_res + plot_layout(heights = c(2, 1))
 ```
@@ -237,7 +234,7 @@ rows <- sprintf("| %s | %d | %.6f | %.6f | %.1f | %.0f | %.2f |",
                 noise$channel, noise$pin, noise$mean_V, noise$sd_V,
                 noise$sd_LSB, noise$peak_to_peak_LSB, noise$u_mean_V * 1e6)
 cat(sprintf('
-| Channel | Pin | Mean [V] | $\\sigma$ [V] | $\\sigma$ [LSB] | Peak-to-peak [LSB] | $\\sigma/\\sqrt{n}$ [µV] |
+| Channel | Pin | Mean (V) | $\\sigma$ (V) | $\\sigma$ (LSB) | Peak-to-peak (LSB) | $\\sigma/\\sqrt{n}$ (µV) |
 |---|---|---|---|---|---|---|
 %s
 
@@ -251,7 +248,7 @@ cat(sprintf('
 #| fig-width: 7.4
 #| fig-height: 3.4
 #| fig-cap: "Distribution of the readings on each channel, in ADC codes relative to the channel mean, with a Gaussian of the same standard deviation. A converter limited by quantization alone would put every reading in one or two bins."
-hist_data <- do.call(rbind, lapply(
+hist_data <- map(
   list(c("reference", PIN_REFERENCE), c("shorted", PIN_SHORTED)),
   function(spec) {
     pin <- as.integer(spec[2])
@@ -260,20 +257,20 @@ hist_data <- do.call(rbind, lapply(
     data.frame(panel = sprintf("%s (pin %d), sigma = %.1f LSB",
                                spec[1], pin, sd(centred)),
                centred = centred)
-  }))
+  }) |> list_rbind()
 
-gaussians <- do.call(rbind, lapply(split(hist_data, hist_data$panel), function(d) {
+gaussians <- map(split(hist_data, hist_data$panel), function(d) {
   grid <- seq(min(d$centred), max(d$centred), length.out = 200)
   data.frame(panel = d$panel[1], centred = grid,
              density = dnorm(grid, 0, sd(d$centred)))
-}))
+}) |> list_rbind()
 
 ggplot(hist_data, aes(centred)) +
   geom_histogram(aes(y = after_stat(density)), binwidth = 1, alpha = 0.75,
                  fill = "#2a7fa8") +
   geom_line(data = gaussians, aes(y = density), linewidth = 0.5, colour = "grey20") +
   facet_wrap(~panel, scales = "free_x") +
-  labs(x = "Code − mean code [LSB]", y = "Density")
+  labs(x = "Code − mean code (LSB)", y = "Density")
 ```
 
 ## Effective number of bits
@@ -331,7 +328,7 @@ whether the sampling was regular, and if not, how it failed.
 
 ```{r}
 #| label: timing
-timing <- lapply(runs, function(run) timing_summary(run$data))
+timing <- map(runs, function(run) timing_summary(run$data))
 primary_timing <- timing[[PRIMARY]]
 ts <- primary_timing$stats
 ```
@@ -348,7 +345,7 @@ p_int <- ggplot(data.frame(i = seq_along(primary_timing$intervals_us),
   geom_line(linewidth = 0.2) +
   geom_hline(yintercept = ts$median_interval_us, linetype = "dashed",
              linewidth = 0.3, colour = "grey30") +
-  labs(x = "Record index", y = "Interval [µs]",
+  labs(x = "Record index", y = "Interval (µs)",
        subtitle = sprintf("median %.0f µs", ts$median_interval_us))
 
 p_res <- ggplot(data.frame(i = seq_along(primary_timing$residuals_us),
@@ -356,7 +353,7 @@ p_res <- ggplot(data.frame(i = seq_along(primary_timing$residuals_us),
                 aes(i, r)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.25) +
-  labs(x = "Record index", y = "Grid-fit residual [µs]")
+  labs(x = "Record index", y = "Grid-fit residual (µs)")
 
 p_int | p_res
 ```
@@ -394,16 +391,16 @@ different hosts. Nothing about the measurand changed.
 #| label: out-hosts
 #| echo: false
 #| output: asis
-rows <- vapply(names(runs), function(name) {
+rows <- map_chr(names(runs), function(name) {
   s <- timing[[name]]$stats
   meta <- runs[[name]]$meta
   sprintf("| %s | `%s` | %.2f | %.2f | %.1f | %.1f | %d | %s |",
           meta$host$os, meta$host$machine, s$achieved_rate_hz, s$period_us,
           s$sd_interval_us, s$residual_rms_us, s$n_long_intervals,
           as.character(meta$stream_stats$device_overruns))
-}, character(1))
+})
 cat(sprintf('
-| Host | Machine | Achieved [Hz] | $\\hat{T}$ [µs] | $s$(interval) [µs] | Residual RMS [µs] | Long intervals | Device overruns |
+| Host | Machine | Achieved (Hz) | $\\hat{T}$ (µs) | $s$(interval) (µs) | Residual RMS (µs) | Long intervals | Device overruns |
 |---|---|---|---|---|---|---|---|
 %s
 
@@ -417,17 +414,16 @@ cat(sprintf('
 #| fig-width: 7.0
 #| fig-height: 3.2
 #| fig-cap: "Grid-fit residuals for both hosts on the same axes. The board is identical in the two runs; what differs is how often the host was late to drain the endpoint."
-host_residuals <- do.call(rbind, lapply(names(runs), function(name) {
+host_residuals <- map(names(runs), function(name) {
   data.frame(host = runs[[name]]$meta$host$os,
              i = seq_along(timing[[name]]$residuals_us),
              r = timing[[name]]$residuals_us)
-}))
+}) |> list_rbind()
 
 ggplot(host_residuals, aes(i, r, colour = host)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.25) +
-  labs(x = "Record index", y = "Grid-fit residual [µs]", colour = NULL) +
-  theme(legend.position = "top")
+  labs(x = "Record index", y = "Grid-fit residual (µs)", colour = NULL)
 ```
 
 ## Uncertainty budget

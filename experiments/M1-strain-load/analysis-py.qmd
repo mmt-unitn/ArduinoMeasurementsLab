@@ -265,7 +265,7 @@ rows = "\n".join(
     f"{r.n} | {r.residual_V * 1e3:+.3f} |"
     for r in loading.itertuples())
 print(f"""
-| Run | Force [N] | Mean [V] | $s$ [mV] | $n$ | Residual [mV] |
+| Run | Force (N) | Mean (V) | $s$ (mV) | $n$ | Residual (mV) |
 |---|---|---|---|---|---|
 {rows}
 
@@ -295,12 +295,12 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.0), sharex=True,
 grid = np.linspace(0, loading["F_N"].max(), 100)
 ax1.plot(grid, fit["a"] + fit["b"] * grid, "-", lw=1.2, label="fit")
 ax1.plot(loading["F_N"], loading["mean_V"], "o", ms=7, label="loading")
-ax1.set_ylabel("Indicated voltage [V]")
+ax1.set_ylabel("Indicated voltage (V)")
 ax1.legend(loc="upper left", frameon=False)
 ax2.axhline(0.0, lw=0.8, color="0.4")
 ax2.plot(loading["F_N"], loading["residual_V"] * 1e3, "o-", ms=7, lw=1.0)
-ax2.set_xlabel("Force [N]")
-ax2.set_ylabel("Residual [mV]")
+ax2.set_xlabel("Force (N)")
+ax2.set_ylabel("Residual (mV)")
 fig.tight_layout()
 plt.show()
 ```
@@ -321,7 +321,7 @@ rows = "\n".join(
     f"| {r.F_N:.4f} | {r.loading_V:.5f} | {r.unloading_V:.5f} | {r.diff_mV:+.3f} |"
     for r in hyst.itertuples())
 print(f"""
-| Force [N] | Loading [V] | Unloading [V] | Difference [mV] |
+| Force (N) | Loading (V) | Unloading (V) | Difference (mV) |
 |---|---|---|---|
 {rows}
 
@@ -347,8 +347,8 @@ path dependence predicts.
 fig, ax = plt.subplots(figsize=(6.5, 4.0))
 ax.plot(hyst["F_N"], hyst["loading_V"], "o-", label="loading")
 ax.plot(hyst["F_N"], hyst["unloading_V"], "s-", label="unloading")
-ax.set_xlabel("Force [N]")
-ax.set_ylabel("Indicated voltage [V]")
+ax.set_xlabel("Force (N)")
+ax.set_ylabel("Indicated voltage (V)")
 ax.legend(frameon=False)
 fig.tight_layout()
 plt.show()
@@ -390,8 +390,8 @@ fig, ax = plt.subplots(figsize=(6.5, 3.6))
 ax.plot(t_s, v, lw=0.6, alpha=0.6, label="data")
 ax.plot(t_s, v0 * (1.0 + creep["c_inf"] * (1.0 - np.exp(-t_s / creep["tau_s"]))),
        lw=1.4, label="fit")
-ax.set_xlabel("Time [s]")
-ax.set_ylabel("Indicated voltage [V]")
+ax.set_xlabel("Time (s)")
+ax.set_ylabel("Indicated voltage (V)")
 ax.legend(frameon=False)
 fig.tight_layout()
 plt.show()
@@ -462,7 +462,7 @@ u_d_eps_d_f = 4.0 * u_slope_quarter / (GAIN_BEAM * GAUGE_FACTOR * VEX)
 #| echo: false
 #| output: asis
 print(f"""
-| Configuration | $dV/dF$ [mV/N] | Ratio to quarter | Nominal ratio |
+| Configuration | $dV/dF$ (mV/N) | Ratio to quarter | Nominal ratio |
 |---|---|---|---|
 | Quarter | {slope_quarter * 1e3:.3f} | 1.00 | 1 |
 | Half | {slope_half * 1e3:.3f} | {ratio_half:.3f} | 2 |
@@ -499,8 +499,8 @@ stiffness cross-check.
 fig, ax = plt.subplots(figsize=(6.5, 4.0))
 for label, df in [("quarter", quarter), ("half", half), ("full", full)]:
     ax.plot(df["F_N"], df["mean_V"], "o-", label=label)
-ax.set_xlabel("Force [N]")
-ax.set_ylabel("Indicated voltage [V]")
+ax.set_xlabel("Force (N)")
+ax.set_ylabel("Indicated voltage (V)")
 ax.legend(frameon=False)
 fig.tight_layout()
 plt.show()

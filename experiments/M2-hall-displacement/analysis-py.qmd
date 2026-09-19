@@ -239,7 +239,7 @@ rows = "\n".join(
     f"{r.n} | {r.residual * 1e6:+.1f} |"
     for r in cal_df.itertuples())
 print(f"""
-| $d$ [mm] | $u(d)$ [mm] | $r = V_\\mathrm{{out}}/V_\\mathrm{{cc}}$ | $s(r)$ [ppm] | $n$ | Residual [ppm] |
+| $d$ (mm) | $u(d)$ (mm) | $r = V_\\mathrm{{out}}/V_\\mathrm{{cc}}$ | $s(r)$ (ppm) | $n$ | Residual (ppm) |
 |---|---|---|---|---|---|
 {rows}
 
@@ -280,8 +280,8 @@ ax1.legend(frameon=False)
 
 ax2.axhline(0.0, color="0.4", lw=0.8)
 ax2.plot(cal_df["d_mm"], cal_df["residual"] * 1e6, "o-", ms=5, lw=0.8)
-ax2.set_xlabel("Micrometer distance $d$ [mm]")
-ax2.set_ylabel("Residual [ppm]")
+ax2.set_xlabel("Micrometer distance $d$ (mm)")
+ax2.set_ylabel("Residual (ppm)")
 fig.tight_layout()
 plt.show()
 ```
@@ -319,14 +319,14 @@ window = (d_grid[ok].min(), d_grid[ok].max()) if ok.any() else (np.nan, np.nan)
 fig, ax1 = plt.subplots(figsize=(7.0, 3.8))
 ax1.plot(d_grid, resolution_um, lw=1.3, color="#14556b", label="resolution")
 ax1.axhline(RESOLUTION_LIMIT_UM, color="#14556b", lw=0.8, ls="--")
-ax1.set_xlabel("Distance $d$ [mm]")
-ax1.set_ylabel("Resolution [µm]", color="#14556b")
+ax1.set_xlabel("Distance $d$ (mm)")
+ax1.set_ylabel("Resolution (µm)", color="#14556b")
 ax1.set_yscale("log")
 
 ax2 = ax1.twinx()
 ax2.plot(d_grid, curvature, lw=1.3, color="#b6771a", label="curvature")
 ax2.axhline(CURVATURE_LIMIT_PCT, color="#b6771a", lw=0.8, ls="--")
-ax2.set_ylabel("Sensitivity change [% per mm]", color="#b6771a")
+ax2.set_ylabel("Sensitivity change (% per mm)", color="#b6771a")
 ax2.grid(False)
 
 if ok.any():
@@ -395,14 +395,14 @@ u_drift_ratio_um = trend_ratio["u_slope"] * duration_s * 1e3
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 4.6), sharex=True,
                                gridspec_kw={"height_ratios": [1, 2]})
 ax1.plot(t_s, v_cc_sup, lw=0.9)
-ax1.set_ylabel("$V_{cc}$ [V]")
+ax1.set_ylabel("$V_{cc}$ (V)")
 
 ax2.plot(t_s, (d_absolute - d_absolute[0]) * 1e3, lw=0.9,
          label="absolute reading")
 ax2.plot(t_s, (d_ratio - d_ratio[0]) * 1e3, lw=0.9, label="ratiometric")
 ax2.axhline(0.0, color="0.4", lw=0.8)
-ax2.set_xlabel("Time [s]")
-ax2.set_ylabel("Apparent movement [µm]")
+ax2.set_xlabel("Time (s)")
+ax2.set_ylabel("Apparent movement (µm)")
 ax2.legend(frameon=False)
 fig.tight_layout()
 plt.show()
@@ -508,7 +508,7 @@ rows = "\n".join(
     f"| {r.force_N:.3f} | {r.u_force_N:.4f} | {r.d_mm:.4f} | {r.delta_mm * 1e3:.1f} |"
     for r in cc.itertuples())
 print(f"""
-| Force [N] | $u(F)$ [N] | Distance $d$ [mm] | Tip displacement [µm] |
+| Force (N) | $u(F)$ (N) | Distance $d$ (mm) | Tip displacement (µm) |
 |---|---|---|---|
 {rows}
 
@@ -525,8 +525,8 @@ grid = np.linspace(0, cc["force_N"].max() * 1.05, 100)
 ax.plot(grid, (fit_m2["intercept"] + fit_m2["slope"] * grid) * 1e6, lw=1.1,
         label="fit")
 ax.plot(cc["force_N"], cc["delta_mm"] * 1e3, "o", ms=6, label="measured")
-ax.set_xlabel("Applied force [N]")
-ax.set_ylabel("Tip displacement [µm]")
+ax.set_xlabel("Applied force (N)")
+ax.set_ylabel("Tip displacement (µm)")
 ax.legend(frameon=False)
 fig.tight_layout()
 plt.show()

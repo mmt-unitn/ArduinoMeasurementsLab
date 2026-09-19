@@ -34,13 +34,10 @@ merely close.
 #| label: setup
 #| message: false
 library(ggplot2)
+library(purrr)
 library(patchwork)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 LOG_RUN <- "data/log-24h.csv"
 DIURNAL_PERIOD_S <- 86400.0
@@ -109,7 +106,7 @@ cat(synthetic_banner(run$meta))
 problems <- validate_meta(run$meta)
 stats <- run$meta$stream_stats
 counters <- stats[setdiff(names(stats), "records")]
-lossy <- counters[vapply(counters, function(v) is.numeric(v) && v > 0, logical(1))]
+lossy <- counters[map_lgl(counters, ~ is.numeric(.x) && .x > 0)]
 duration_h <- (t_s[n] - t_s[1]) / 3600.0
 cat(sprintf('
 **%s** — %d records over
@@ -158,12 +155,12 @@ p_fit <- ggplot() +
             colour = "grey60", linewidth = 0.3) +
   geom_line(data = data.frame(t = t_h, v = as.vector(D %*% coef)), aes(t, v),
             linewidth = 0.5) +
-  labs(x = NULL, y = "Temperature [°C]")
+  labs(x = NULL, y = "Temperature (°C)")
 
 p_res <- ggplot(data.frame(t = t_h, r = resid * 1e3), aes(t, r)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.2) +
-  labs(x = "Time [h]", y = "Residual [mK]")
+  labs(x = "Time [h]", y = "Residual (mK)")
 
 p_fit / p_res
 ```
@@ -246,8 +243,8 @@ ggplot() +
   annotate("point", x = tau_opt, y = sigma_opt, shape = 0, size = 4, stroke = 1.1) +
   scale_x_log10() +
   scale_y_log10() +
-  labs(x = expression("Averaging time " * tau * " [s]"),
-       y = expression(sigma[y](tau) * " [K]"))
+  labs(x = expression("Averaging time " * tau * " (s)"),
+       y = expression(sigma[y](tau) * " (K)"))
 ```
 
 ```{r}
@@ -256,7 +253,7 @@ ggplot() +
 #| output: asis
 rows <- sprintf("| %.1f | %.4f |", tau, adev * 1e3)
 cat(sprintf('
-| $\\tau$ [s] | $\\sigma_y(\\tau)$ [mK] |
+| $\\tau$ (s) | $\\sigma_y(\\tau)$ (mK) |
 |---|---|
 %s
 

@@ -36,13 +36,10 @@ construction computes the same number in both languages.
 #| label: setup
 #| message: false
 library(ggplot2)
+library(purrr)
 library(patchwork)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 CAL_RUNS <- c(ice = "data/cal-ice.csv", t20 = "data/cal-t20.csv",
              t35 = "data/cal-t35.csv", t50 = "data/cal-t50.csv",
@@ -100,7 +97,7 @@ channel_for_pin <- function(run, pin) {
 
 ```{r}
 #| label: load
-cal <- lapply(CAL_RUNS, read_run)
+cal <- map(CAL_RUNS, read_run)
 selfheat <- read_run(SELFHEAT_RUN)
 primary <- cal[[OPERATING_POINT]]
 board <- primary$meta$board
@@ -127,7 +124,7 @@ for (name in names(all_runs)) {
   problems <- validate_meta(meta)
   stats <- meta$stream_stats
   counters <- stats[setdiff(names(stats), "records")]
-  lossy <- counters[vapply(counters, function(v) is.numeric(v) && v > 0, logical(1))]
+  lossy <- counters[map_lgl(counters, ~ is.numeric(.x) && .x > 0)]
   cat("\n**", name, "** — ", stats$records, " records; ",
       if (length(problems) == 0) "metadata complete"
       else paste0("metadata problems: ", paste(problems, collapse = "; ")),
@@ -158,13 +155,13 @@ fitted offset and gain first.
 s1_paths <- c("../S1-daq-static/data/cal-0v.csv",
              "../S1-daq-static/data/cal-1v25.csv",
              "../S1-daq-static/data/cal-2v50.csv")
-s1_points <- do.call(rbind, lapply(s1_paths, function(path) {
+s1_points <- map(s1_paths, function(path) {
   run <- read_run(path)
   pin <- run$meta$acquisition$pins[[1]]
   ch <- channel_for_pin(run, pin)
   volts <- run$data$volts[run$data$pin == pin]
   data.frame(x = ch$reference_value, y = mean(volts))
-}))
+}) |> list_rbind()
 sxx_s1 <- sum((s1_points$x - mean(s1_points$x))^2)
 B_S1 <- sum((s1_points$x - mean(s1_points$x)) * (s1_points$y - mean(s1_points$y))) / sxx_s1
 A_S1 <- mean(s1_points$y) - B_S1 * mean(s1_points$x)
@@ -181,14 +178,14 @@ sidecar, then fit to [the Steinhart–Hart equation](handbook.qmd#eq-t1-sh-linea
 
 ```{r}
 #| label: ntc-calibration
-ntc <- do.call(rbind, lapply(cal, function(run) {
+ntc <- map(cal, function(run) {
   ch <- channel_for_pin(run, PIN_NTC)
   v <- s1_correct(mean(run$data$volts[run$data$pin == PIN_NTC]))
   r <- r_ntc_from_v(v, ch$divider_r_fixed_ohm, ch$excitation_v)
   data.frame(run = run$meta$run, bath_C = ch$reference_value,
              u_bath_C = ch$reference_u, R_ohm = r, mean_V = v,
              n = sum(run$data$pin == PIN_NTC))
-}))
+}) |> list_rbind()
 ntc <- ntc[order(ntc$bath_C), ]
 rownames(ntc) <- NULL
 
@@ -210,7 +207,7 @@ rows <- sprintf("| %s | %.2f | %.3f | %.2f | %.3f | %+.1f |",
                 ntc$run, ntc$bath_C, ntc$u_bath_C, ntc$R_ohm, ntc$T_fit_C,
                 ntc$residual_K * 1e3)
 cat(sprintf('
-| Run | Bath [degC] | $u$(bath) [K] | $R$ [ohm] | Fitted $T$ [degC] | Residual [mK] |
+| Run | Bath (degC) | $u$(bath) (K) | $R$ (ohm) | Fitted $T$ (degC) | Residual (mK) |
 |---|---|---|---|---|---|
 %s
 
@@ -243,13 +240,13 @@ fit_curve <- data.frame(R_ohm = r_grid, T_C = t_ntc_from_r(r_grid, coef_sh))
 p_fit <- ggplot() +
   geom_line(data = fit_curve, aes(R_ohm, T_C), linewidth = 0.5) +
   geom_point(data = ntc, aes(R_ohm, bath_C), size = 2.4) +
-  labs(x = "Resistance [ohm]", y = "Temperature [degC]")
+  labs(x = "Resistance (ohm)", y = "Temperature (degC)")
 
 p_res <- ggplot(ntc, aes(bath_C, residual_K * 1e3)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.4) +
   geom_point(size = 2.4) +
-  labs(x = "Bath temperature [degC]", y = "Residual [mK]")
+  labs(x = "Bath temperature (degC)", y = "Residual (mK)")
 
 p_fit / p_res + plot_layout(heights = c(2, 1))
 ```
@@ -261,7 +258,7 @@ Same idea, pin 16, but the fit recovers $R_0$ and $A$ with
 
 ```{r}
 #| label: pt-calibration
-pt <- do.call(rbind, lapply(cal, function(run) {
+pt <- map(cal, function(run) {
   ch <- channel_for_pin(run, PIN_PT)
   v <- s1_correct(mean(run$data$volts[run$data$pin == PIN_PT]))
   r <- r_pt_from_v(v, ch$bridge_r_ohm, ch$excitation_v,
@@ -269,7 +266,7 @@ pt <- do.call(rbind, lapply(cal, function(run) {
   data.frame(run = run$meta$run, bath_C = ch$reference_value,
              u_bath_C = ch$reference_u, R_ohm = r, mean_V = v,
              n = sum(run$data$pin == PIN_PT))
-}))
+}) |> list_rbind()
 pt <- pt[order(pt$bath_C), ]
 rownames(pt) <- NULL
 
@@ -294,7 +291,7 @@ rows <- sprintf("| %s | %.2f | %.3f | %.3f | %.3f | %+.1f |",
                 pt$run, pt$bath_C, pt$u_bath_C, pt$R_ohm, pt$T_fit_C,
                 pt$residual_K * 1e3)
 cat(sprintf('
-| Run | Bath [degC] | $u$(bath) [K] | $R$ [ohm] | Fitted $T$ [degC] | Residual [mK] |
+| Run | Bath (degC) | $u$(bath) (K) | $R$ (ohm) | Fitted $T$ (degC) | Residual (mK) |
 |---|---|---|---|---|---|
 %s
 
@@ -326,13 +323,13 @@ fit_curve_pt <- data.frame(bath_C = t_grid, R_ohm = r_pt_from_t(t_grid, R0_FIT, 
 p_fit_pt <- ggplot() +
   geom_line(data = fit_curve_pt, aes(bath_C, R_ohm), linewidth = 0.5) +
   geom_point(data = pt, aes(bath_C, R_ohm), size = 2.4) +
-  labs(x = "Bath temperature [degC]", y = "Resistance [ohm]")
+  labs(x = "Bath temperature (degC)", y = "Resistance (ohm)")
 
 p_res_pt <- ggplot(pt, aes(bath_C, residual_K * 1e3)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.4) +
   geom_point(size = 2.4) +
-  labs(x = "Bath temperature [degC]", y = "Residual [mK]")
+  labs(x = "Bath temperature (degC)", y = "Residual (mK)")
 
 p_fit_pt / p_res_pt + plot_layout(heights = c(2, 1))
 ```
@@ -387,7 +384,7 @@ resolution_pt_mK <- sigma_floor / dV_dT_pt * 1e3
 #| echo: false
 #| output: asis
 cat(sprintf('
-| Sensor | $\\mathrm{d}V/\\mathrm{d}T$ at %.0f degC [mV/K] | S1 noise floor $\\sigma$ [mV] | Resolution $\\delta T_\\mathrm{res}$ [mK] |
+| Sensor | $\\mathrm{d}V/\\mathrm{d}T$ at %.0f degC (mV/K) | S1 noise floor $\\sigma$ (mV) | Resolution $\\delta T_\\mathrm{res}$ (mK) |
 |---|---|---|---|
 | NTC (divider) | %.3f | %.4f | %.1f |
 | Pt1000 (bridge) | %.3f | %.4f | %.1f |
@@ -433,9 +430,8 @@ sens <- rbind(
 ggplot(sens, aes(t_mid, dvdt, colour = sensor, shape = sensor)) +
   geom_line(linewidth = 0.4) +
   geom_point(size = 2.2) +
-  labs(x = "Bath temperature [degC]", y = "Empirical dV/dT [mV/K]",
-       colour = NULL, shape = NULL) +
-  theme(legend.position = "top")
+  labs(x = "Bath temperature (degC)", y = "Empirical dV/dT (mV/K)",
+       colour = NULL, shape = NULL)
 ```
 
 ## Self-heating
@@ -484,7 +480,7 @@ delta_pt_mw_k <- (p_pt_high - p_pt_low) * 1e3 / dT_pt
 #| echo: false
 #| output: asis
 cat(sprintf('
-| Sensor | $V$ low / high [V] | $P$ low / high [mW] | $\\Delta T_\\mathrm{sh}$ [K] | $\\delta$ [mW/K] |
+| Sensor | $V$ low / high (V) | $P$ low / high (mW) | $\\Delta T_\\mathrm{sh}$ (K) | $\\delta$ (mW/K) |
 |---|---|---|---|---|
 | NTC | %.2f / %.2f | %.4f / %.4f | %.4f | %.2f |
 | Pt1000 | %.2f / %.2f | %.4f / %.4f | %.4f | %.2f |

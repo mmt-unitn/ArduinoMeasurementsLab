@@ -36,13 +36,10 @@ parameters on the same data.
 #| label: setup
 #| message: false
 library(ggplot2)
+library(purrr)
 library(patchwork)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 STEP_RUNS <- c("step-still-air", "step-forced-air", "step-still-water",
                "step-stirred-water")
@@ -173,7 +170,7 @@ ols <- function(x, y) {
 
 ```{r}
 #| label: t1-calibration
-t1_runs <- lapply(sort(Sys.glob(file.path(T1_DATA, "cal-*.csv"))), read_run)
+t1_runs <- map(sort(Sys.glob(file.path(T1_DATA, "cal-*.csv"))), read_run)
 
 ntc_r <- c(); pt_r <- c(); t_ref <- c()
 for (run in t1_runs) {
@@ -205,7 +202,7 @@ pt_resid_k <- t_pt_from_r(pt_r, R0, A_CVD) - t_ref
 
 ```{r}
 #| label: load
-steps <- lapply(STEP_RUNS, function(n) read_run(file.path("data", paste0(n, ".csv"))))
+steps <- map(STEP_RUNS, ~ read_run(file.path("data", paste0(.x, ".csv"))))
 names(steps) <- STEP_RUNS
 sheathed <- read_run(file.path("data", paste0(SHEATHED_RUN, ".csv")))
 ramp <- read_run(file.path("data", paste0(RAMP_RUN, ".csv")))
@@ -248,12 +245,12 @@ cat(sprintf('
 #| echo: false
 #| output: asis
 all_runs <- c(steps, list(sheathed), list(ramp))
-bad <- sum(vapply(all_runs, function(r) length(validate_meta(r$meta)) > 0, logical(1)))
+bad <- sum(map_lgl(all_runs, ~ length(validate_meta(.x$meta)) > 0))
 lossy <- character(0)
 for (r in all_runs) {
   st <- r$meta$stream_stats
   counters <- st[setdiff(names(st), "records")]
-  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+  if (any(map_lgl(counters, ~ is.numeric(.x) && .x > 0))) {
     lossy <- c(lossy, r$meta$run)
   }
 }
@@ -319,7 +316,7 @@ for (name in STEP_RUNS) {
     s_res_mK = fit$s_res * 1e3,
     span_over_tau = (a$t_rel[length(a$t_rel)] - a$t_rel[1]) / fit$tau)
 }
-steps_df <- do.call(rbind, rows)
+steps_df <- list_rbind(rows)
 steps_df <- steps_df[order(-steps_df$tau_s), ]
 rownames(steps_df) <- NULL
 ```
@@ -333,7 +330,7 @@ rows <- sprintf("| %s | %d | %.2f | %.2f | %.3f | %.1f | %.1f | %.1f |",
                 steps_df$tau_s, steps_df$u_tau_s * 1e3,
                 steps_df$span_over_tau, steps_df$s_res_mK)
 cat(sprintf('
-| Medium | $n$ | $T_0$ [°C] | $T_\\infty$ [°C] | $\\tau$ [s] | $u(\\tau)$ [ms] | Record / $\\tau$ | Residual [mK] |
+| Medium | $n$ | $T_0$ (°C) | $T_\\infty$ (°C) | $\\tau$ (s) | $u(\\tau)$ (ms) | Record / $\\tau$ | Residual (mK) |
 |---|---|---|---|---|---|---|---|
 %s
 
@@ -347,18 +344,17 @@ cat(sprintf('
 #| fig-width: 7.8
 #| fig-height: 3.6
 #| fig-cap: "The four plunges, each on its own time axis scaled by its own fitted time constant. On this scaling a first-order response is the same curve in every medium — which is the claim the experiment is testing."
-raw <- do.call(rbind, lapply(STEP_RUNS, function(n) {
+raw <- map(STEP_RUNS, function(n) {
   f <- fits[[n]]
   data.frame(medium = f$ch$medium, t = f$t_rel, temp = f$temp,
              norm = (f$temp - f$fit$T_inf) / (f$fit$T_0 - f$fit$T_inf),
              t_over_tau = f$t_rel / f$fit$tau)
-}))
+}) |> list_rbind()
 
 p1 <- ggplot(raw[raw$t > 0, ], aes(t, temp, colour = medium)) +
   geom_line(linewidth = 0.3) +
   scale_x_log10() +
-  labs(x = "Time since plunge [s]", y = "Temperature [°C]", colour = NULL) +
-  theme(legend.position = "bottom", legend.text = element_text(size = 7))
+  labs(x = "Time since plunge (s)", y = "Temperature (°C)", colour = NULL)
 
 grid <- data.frame(x = seq(0, 5, length.out = 200))
 grid$y <- exp(-grid$x)
@@ -379,7 +375,7 @@ rows <- sprintf("| %s | %.3f | %.3f | %+.2f |",
                 steps_df$medium, steps_df$tau_s, steps_df$tau_lin_s,
                 steps_df$lin_diff_pct)
 cat(sprintf('
-| Medium | $\\tau$ nonlinear [s] | $\\tau$ linearised [s] | Difference |
+| Medium | $\\tau$ nonlinear (s) | $\\tau$ linearised (s) | Difference |
 |---|---|---|---|
 %s
 
@@ -419,7 +415,7 @@ conv$h_absolute <- RHO_C_V_OVER_A / conv$tau_s
 rows <- sprintf("| %s | %.3f | %.3f | %.0f |",
                 conv$medium, conv$tau_s, conv$h_ratio, conv$h_absolute)
 cat(sprintf('
-| Medium | $\\tau$ [s] | $h/h_\\mathrm{%s}$ | $h$ [W m⁻² K⁻¹] |
+| Medium | $\\tau$ (s) | $h/h_\\mathrm{%s}$ | $h$ (W m⁻² K⁻¹) |
 |---|---|---|---|
 %s
 
@@ -486,14 +482,13 @@ traces <- rbind(
   data.frame(t = t_ramp, y = temp_ramp, what = "sensor"))
 p_t <- ggplot(traces, aes(t, y, colour = what, linetype = what)) +
   geom_line(linewidth = 0.4) +
-  labs(x = NULL, y = "Temperature [°C]", colour = NULL, linetype = NULL) +
-  theme(legend.position = "top")
+  labs(x = NULL, y = "Temperature (°C)", colour = NULL, linetype = NULL)
 
 p_e <- ggplot(data.frame(t = t_ramp, e = error), aes(t, e)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.3) +
   geom_hline(yintercept = predicted, linewidth = 0.4, linetype = "dashed") +
-  labs(x = "Time [s]", y = "Sensor − bath [K]",
+  labs(x = "Time (s)", y = "Sensor − bath (K)",
        subtitle = sprintf("dashed: -tau*rate = %.3f K", predicted))
 
 p_t / p_e + plot_layout(heights = c(2, 1))
@@ -565,8 +560,7 @@ p_fit <- ggplot() +
             aes(t, y, colour = w), linewidth = 0.45) +
   geom_line(data = data.frame(t = t_sh[early], y = model2[early], w = "second order"),
             aes(t, y, colour = w), linewidth = 0.45) +
-  labs(x = NULL, y = "Temperature [°C]", colour = NULL) +
-  theme(legend.position = "top")
+  labs(x = NULL, y = "Temperature (°C)", colour = NULL)
 
 res <- rbind(
   data.frame(t = t_sh[early], r = fit1$residual[early] * 1e3, w = "first order"),
@@ -574,7 +568,7 @@ res <- rbind(
 p_res <- ggplot(res, aes(t, r, colour = w)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.3, show.legend = FALSE) +
-  labs(x = "Time since plunge [s]", y = "Residual [mK]")
+  labs(x = "Time since plunge (s)", y = "Residual (mK)")
 
 p_fit / p_res + plot_layout(heights = c(2, 1))
 ```

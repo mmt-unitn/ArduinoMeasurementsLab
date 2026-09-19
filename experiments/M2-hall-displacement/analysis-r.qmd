@@ -32,13 +32,10 @@ which language ran it is not an analysis.
 #| label: setup
 #| message: false
 library(ggplot2)
+library(purrr)
 library(patchwork)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 CAL_RUNS <- sort(Sys.glob("data/cal-d*.csv"))
 SUPPLY_RUN <- "data/supply-drift.csv"
@@ -138,9 +135,9 @@ ols <- function(x, y) {
 
 ```{r}
 #| label: load
-cal <- lapply(CAL_RUNS, read_run)
+cal <- map(CAL_RUNS, read_run)
 supply <- read_run(SUPPLY_RUN)
-cross <- lapply(CROSSCHECK_RUNS, read_run)
+cross <- map(CROSSCHECK_RUNS, read_run)
 
 board <- cal[[1]]$meta$board
 FSR <- board$vref_mV / 1000
@@ -165,12 +162,12 @@ cat(synthetic_banner(cal[[1]]$meta))
 #| echo: false
 #| output: asis
 runs <- c(cal, list(supply), cross)
-bad <- sum(vapply(runs, function(r) length(validate_meta(r$meta)) > 0, logical(1)))
+bad <- sum(map_lgl(runs, ~ length(validate_meta(.x$meta)) > 0))
 lossy <- character(0)
 for (r in runs) {
   st <- r$meta$stream_stats
   counters <- st[setdiff(names(st), "records")]
-  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+  if (any(map_lgl(counters, ~ is.numeric(.x) && .x > 0))) {
     lossy <- c(lossy, r$meta$run)
   }
 }
@@ -194,7 +191,7 @@ supply never enters.
 
 ```{r}
 #| label: calibration
-cal_df <- do.call(rbind, lapply(cal, function(run) {
+cal_df <- map(cal, function(run) {
   ch <- run$meta$channels[[1]]
   rr <- ratio_of(run)
   data.frame(run = run$meta$run,
@@ -205,7 +202,7 @@ cal_df <- do.call(rbind, lapply(cal, function(run) {
              n = length(rr$r),
              v_out_mean = mean(rr$v_out),
              v_cc_mean = mean(rr$v_cc))
-}))
+}) |> list_rbind()
 cal_df <- cal_df[order(cal_df$d_mm), ]
 rownames(cal_df) <- NULL
 
@@ -223,7 +220,7 @@ rows <- sprintf("| %.0f | %.3f | %.6f | %.1f | %d | %+.1f |",
                 cal_df$d_mm, cal_df$u_d_mm, cal_df$r_mean, cal_df$r_sd * 1e6,
                 cal_df$n, cal_df$residual * 1e6)
 cat(sprintf('
-| $d$ [mm] | $u(d)$ [mm] | $r = V_\\mathrm{out}/V_\\mathrm{cc}$ | $s(r)$ [ppm] | $n$ | Residual [ppm] |
+| $d$ (mm) | $u(d)$ (mm) | $r = V_\\mathrm{out}/V_\\mathrm{cc}$ | $s(r)$ (ppm) | $n$ | Residual (ppm) |
 |---|---|---|---|---|---|
 %s
 
@@ -268,7 +265,7 @@ p_res <- ggplot(cal_df, aes(d_mm, residual * 1e6)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.3) +
   geom_point(size = 2) +
-  labs(x = "Micrometer distance d [mm]", y = "Residual [ppm]")
+  labs(x = "Micrometer distance d (mm)", y = "Residual (ppm)")
 
 p_cal / p_res + plot_layout(heights = c(2, 1))
 ```
@@ -311,19 +308,18 @@ scale_factor <- max(log10(resolution_um)) / max(curvature)
 plot_df <- data.frame(
   d = rep(d_grid, 2),
   value = c(log10(resolution_um), curvature * scale_factor),
-  what = rep(c("resolution [µm]", "curvature [% per mm]"), each = length(d_grid)))
+  what = rep(c("resolution (µm)", "curvature (% per mm)"), each = length(d_grid)))
 
 p <- ggplot(plot_df, aes(d, value, colour = what)) +
   geom_line(linewidth = 0.5) +
-  scale_y_continuous(name = "log10 resolution [µm]",
+  scale_y_continuous(name = "log10 resolution (µm)",
                      sec.axis = sec_axis(~ . / scale_factor,
-                                         name = "Sensitivity change [% per mm]")) +
+                                         name = "Sensitivity change (% per mm)")) +
   geom_hline(yintercept = log10(RESOLUTION_LIMIT_UM), linewidth = 0.3,
              linetype = "dashed", colour = "grey40") +
   geom_hline(yintercept = CURVATURE_LIMIT_PCT * scale_factor, linewidth = 0.3,
              linetype = "dotted", colour = "grey40") +
-  labs(x = "Distance d [mm]", colour = NULL) +
-  theme(legend.position = "top")
+  labs(x = "Distance d (mm)", colour = NULL)
 if (any(ok)) {
   p <- p + annotate("rect", xmin = window[1], xmax = window[2],
                     ymin = -Inf, ymax = Inf, fill = "grey85", alpha = 0.5)
@@ -394,7 +390,7 @@ u_drift_ratio_um <- trend_ratio$u_slope * duration_s * 1e3
 #| fig-cap: "The magnet is stationary throughout. Top: the measured supply. Bottom: the displacement each reading implies — absolute, which tracks the rail, and ratiometric, which does not."
 p_vcc <- ggplot(data.frame(t = t_s, v = sup$v_cc), aes(t, v)) +
   geom_line(linewidth = 0.3) +
-  labs(x = NULL, y = "Vcc [V]")
+  labs(x = NULL, y = "Vcc (V)")
 
 move <- rbind(
   data.frame(t = t_s, um = (d_absolute - d_absolute[1]) * 1e3,
@@ -404,8 +400,7 @@ move <- rbind(
 p_move <- ggplot(move, aes(t, um, colour = what)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.3) +
-  labs(x = "Time [s]", y = "Apparent movement [µm]", colour = NULL) +
-  theme(legend.position = "top")
+  labs(x = "Time (s)", y = "Apparent movement (µm)", colour = NULL)
 
 p_vcc / p_move + plot_layout(heights = c(1, 2))
 ```
@@ -456,14 +451,14 @@ as a tip displacement. Two independent routes to the beam's stiffness.
 
 ```{r}
 #| label: crosscheck
-cc <- do.call(rbind, lapply(cross, function(run) {
+cc <- map(cross, function(run) {
   ch <- run$meta$channels[[1]]
   rr <- ratio_of(run)
   d_mm <- invert(mean(rr$r), fit$A, fit$d0, N_EXP)
   data.frame(run = run$meta$run, force_N = ch$reference_value,
              u_force_N = ch$reference_u, d_mm = d_mm,
              delta_mm = BASELINE_MM - d_mm, r_sd = sd(rr$r), n = length(rr$r))
-}))
+}) |> list_rbind()
 cc <- cc[order(cc$force_N), ]
 rownames(cc) <- NULL
 fit_m2 <- ols(cc$force_N, cc$delta_mm / 1e3)     # m per N
@@ -474,7 +469,7 @@ I_BEAM <- B * H^3 / 12
 E_M2 <- L^3 / (3 * I_BEAM * fit_m2$slope)
 U_E_M2 <- E_M2 * fit_m2$u_slope / fit_m2$slope
 
-m1 <- do.call(rbind, lapply(M1_QUARTER_RUNS, function(path) {
+m1 <- map(M1_QUARTER_RUNS, function(path) {
   run <- read_run(path)
   ch <- run$meta$channels[[1]]
   data.frame(force_N = ch$reference_value,
@@ -482,7 +477,7 @@ m1 <- do.call(rbind, lapply(M1_QUARTER_RUNS, function(path) {
              gain = ch$conditioning$gain,
              offset = ch$conditioning$offset,
              k = ch$gauge_factor)
-}))
+}) |> list_rbind()
 m1 <- m1[order(m1$force_N), ]
 rownames(m1) <- NULL
 ```
@@ -513,7 +508,7 @@ u_ratio_e <- ratio_e * sqrt((U_E_M1 / E_M1)^2 + (U_E_M2 / E_M2)^2)
 rows <- sprintf("| %.3f | %.4f | %.4f | %.1f |",
                 cc$force_N, cc$u_force_N, cc$d_mm, cc$delta_mm * 1e3)
 cat(sprintf('
-| Force [N] | $u(F)$ [N] | Distance $d$ [mm] | Tip displacement [µm] |
+| Force (N) | $u(F)$ (N) | Distance $d$ (mm) | Tip displacement (µm) |
 |---|---|---|---|
 %s
 
@@ -533,7 +528,7 @@ ggplot() +
                               um = (fit_m2$intercept + fit_m2$slope * grid) * 1e6),
             aes(f, um), linewidth = 0.45) +
   geom_point(data = cc, aes(force_N, delta_mm * 1e3), size = 2) +
-  labs(x = "Applied force [N]", y = "Tip displacement [µm]")
+  labs(x = "Applied force (N)", y = "Tip displacement (µm)")
 ```
 
 ```{r}
@@ -584,9 +579,9 @@ n_op <- last$n
 sigma_r_op <- last$r_sd
 
 # Effective quantization, by S1's method applied to this record, referred to r.
-vcc_ref <- mean(vapply(supply$meta$channels,
-                       function(ch) if (ch$pin == PIN_VCC) ch$reference_value
-                                    else NA_real_, numeric(1)), na.rm = TRUE)
+vcc_ref <- mean(map_dbl(supply$meta$channels,
+                        ~ if (.x$pin == PIN_VCC) .x$reference_value else NA_real_),
+                na.rm = TRUE)
 enob_here <- enob(FSR, sigma_r_op * vcc_ref)
 q_eff_r <- FSR / 2^enob_here / (board$vref_mV / 1000)
 

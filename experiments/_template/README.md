@@ -145,3 +145,19 @@ Three things that go wrong:
   handbook is unaffected.
 - **Re-render the handbook too** and confirm it still reports zero warnings
   and that no `(1)` or `(2)` reached it.
+
+## R and figure style
+
+Three conventions apply to every R chunk and every figure, in both languages:
+
+- **purrr, not the `*apply` family.** `map()`, `map_dbl()`, `map_chr()`,
+  `map2()` and `map(...) |> list_rbind()` in place of `lapply()`, `vapply()`,
+  `sapply()`, `Map()` and `do.call(rbind, lapply(...))`. `shared/R/labtools.R`
+  follows this too, so it depends on `purrr` as well as `yaml`.
+- **ggplot2's default theme.** No `theme_set()`, no `theme_minimal()`, no
+  cosmetic `theme()` overrides.
+- **Square brackets are reserved for the dimensions of physical quantities** —
+  `[M]`, `[L]`, `[T]`. Measurement units take plain parentheses: `Signal (mV)`,
+  `Time (s)`, `Residual (µV)`. This applies to axis labels, table headers and
+  prose. When a unit appears in both the Python and the R template, change
+  both together — their rendered tables are compared for equality.

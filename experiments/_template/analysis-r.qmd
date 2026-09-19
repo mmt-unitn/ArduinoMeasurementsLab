@@ -19,19 +19,16 @@ same numbers from the same data.
 #| message: false
 library(ggplot2)
 library(patchwork)
+library(purrr)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 RUNS <- c(reference = "data/reference.csv")
 ```
 
 ```{r}
 #| label: load
-runs <- lapply(RUNS, read_run)
+runs <- map(RUNS, read_run)
 primary <- runs[["reference"]]
 ```
 

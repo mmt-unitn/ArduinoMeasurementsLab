@@ -222,7 +222,7 @@ rows = "\n".join(
     f"{r.min_V:.4f} | {r.max_V:.4f} | {r.headroom_lo_V:.3f} | {r.headroom_hi_V:.3f} |"
     for r in cond.itertuples())
 print(f"""
-| Run | Mean [V] | Mean − $V_\\mathrm{{off}}$ [mV] | Min [V] | Max [V] | Low headroom [V] | High headroom [V] |
+| Run | Mean (V) | Mean − $V_\\mathrm{{off}}$ (mV) | Min (V) | Max (V) | Low headroom (V) | High headroom (V) |
 |---|---|---|---|---|---|---|
 {rows}
 
@@ -283,7 +283,7 @@ rows = "\n".join(
     f"{r.error_Hz:+.3f} | {r.amplitude_V:.4f} |"
     for r in alias.itertuples())
 print(f"""
-| $f$ [Hz] | $k$ | Predicted $f_a$ [Hz] | Observed [Hz] | Error [Hz] | Amplitude [V] |
+| $f$ (Hz) | $k$ | Predicted $f_a$ (Hz) | Observed (Hz) | Error (Hz) | Amplitude (V) |
 |---|---|---|---|---|---|
 {rows}
 
@@ -303,14 +303,14 @@ ax1.plot(grid, [alias_frequency(f, fs0) for f in grid], lw=1.0,
 ax1.plot(alias["f_gen_Hz"], alias["f_obs_Hz"], "o", ms=6, label="observed")
 ax1.axhline(fs0 / 2, color="0.4", lw=0.8, ls="--")
 ax1.text(grid[-1], fs0 / 2, " Nyquist", va="center", fontsize=8, color="0.3")
-ax1.set_xlabel("Generator frequency $f$ [Hz]")
-ax1.set_ylabel("Apparent frequency $f_a$ [Hz]")
+ax1.set_xlabel("Generator frequency $f$ (Hz)")
+ax1.set_ylabel("Apparent frequency $f_a$ (Hz)")
 ax1.legend(frameon=False, loc="upper right")
 
 ax2.axhline(0.0, color="0.4", lw=0.8)
 ax2.plot(alias["f_gen_Hz"], alias["error_Hz"] * 1e3, "o-", ms=5, lw=0.8)
-ax2.set_xlabel("Generator frequency $f$ [Hz]")
-ax2.set_ylabel("Observed − predicted [mHz]")
+ax2.set_xlabel("Generator frequency $f$ (Hz)")
+ax2.set_ylabel("Observed − predicted (mHz)")
 fig.tight_layout()
 plt.show()
 ```
@@ -371,7 +371,7 @@ rows = "\n".join(
     f"{r.resid_V * 1e3:.3f} | {r.n} |"
     for r in pair.itertuples())
 print(f"""
-| Case | Observed $f_a$ [Hz] | Amplitude [V] | Mean level [V] | Residual $\\sigma$ [mV] | $n$ |
+| Case | Observed $f_a$ (Hz) | Amplitude (V) | Mean level (V) | Residual $\\sigma$ (mV) | $n$ |
 |---|---|---|---|---|---|
 {rows}
 
@@ -409,8 +409,8 @@ for label, run in [("unfiltered", off), ("filtered", on)]:
     ax.plot(t_ms[keep], run.data["volts"].to_numpy()[keep], lw=1.0,
             marker="o", ms=2.5, label=label)
 ax.axhline(OFFSET, color="0.5", lw=0.8, ls="--")
-ax.set_xlabel("Time [ms]")
-ax.set_ylabel("ADC input [V]")
+ax.set_xlabel("Time (ms)")
+ax.set_ylabel("ADC input (V)")
 ax.legend(frameon=False)
 fig.tight_layout()
 plt.show()
@@ -451,7 +451,7 @@ rows = "\n".join(
     f"| {r.order} | {r.fc_Hz:.1f} | {r.fc_over_fmax:.2f} | {r.droop_dB:+.2f} | {r.droop_pct:.1f} |"
     for r in design.itertuples())
 print(f"""
-| Order $n$ | Required $f_c$ [Hz] | $f_c/f_\\mathrm{{max}}$ | Droop at $f_\\mathrm{{max}}$ [dB] | Droop [%] |
+| Order $n$ | Required $f_c$ (Hz) | $f_c/f_\\mathrm{{max}}$ | Droop at $f_\\mathrm{{max}}$ (dB) | Droop (%) |
 |---|---|---|---|---|
 {rows}
 
@@ -475,8 +475,8 @@ ax.text(F_MAX, 5, " $f_{max}$", fontsize=8, color="0.3")
 ax.text(F_FOLD, 5, " $f_{fold}$", fontsize=8, color="0.3")
 ax.set_xscale("log")
 ax.set_ylim(-70, 12)
-ax.set_xlabel("Frequency [Hz]")
-ax.set_ylabel("$|H(f)|$ [dB]")
+ax.set_xlabel("Frequency (Hz)")
+ax.set_ylabel("$|H(f)|$ (dB)")
 ax.legend(frameon=False, fontsize=8, loc="lower left")
 fig.tight_layout()
 plt.show()
@@ -564,7 +564,7 @@ rows = "\n".join(
     f"{r.amp_folded_mV:.2f} | {r.resid_mV:.3f} |"
     for r in digital.itertuples())
 print(f"""
-| Case | $f_s$ [Hz] | $n$ | Amplitude at {F_SIGNAL:.0f} Hz [mV] | Amplitude at {F_FOLDED:.0f} Hz [mV] | Residual $\\sigma$ [mV] |
+| Case | $f_s$ (Hz) | $n$ | Amplitude at {F_SIGNAL:.0f} Hz (mV) | Amplitude at {F_FOLDED:.0f} Hz (mV) | Residual $\\sigma$ (mV) |
 |---|---|---|---|---|---|
 {rows}
 
@@ -587,8 +587,8 @@ for ax, (label, t_c, v_c, fs_c) in zip(axes, cases):
     ax.axvline(F_SIGNAL, color="0.4", lw=0.8, ls=":")
     ax.axvline(F_FOLDED, color="0.7", lw=0.8, ls="--")
     ax.set_title(label, fontsize=8)
-    ax.set_xlabel("Frequency [Hz]")
-axes[0].set_ylabel("Amplitude [V]")
+    ax.set_xlabel("Frequency (Hz)")
+axes[0].set_ylabel("Amplitude (V)")
 fig.tight_layout()
 plt.show()
 ```

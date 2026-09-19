@@ -169,7 +169,7 @@ rows = "\n".join(
     f"{r.mean_indicated_V:.6f} | {r.sd_V:.6f} | {r.n} | {r.residual_V * 1e6:+.1f} |"
     for r in cal.itertuples())
 print(f"""
-| Run | Reference [V] | $u$(ref) [V] | Mean indication [V] | $s$ [V] | $n$ | Residual [µV] |
+| Run | Reference (V) | $u$(ref) (V) | Mean indication (V) | $s$ (V) | $n$ | Residual (µV) |
 |---|---|---|---|---|---|---|
 {rows}
 
@@ -201,13 +201,13 @@ grid = np.linspace(x.min(), x.max(), 100)
 ax1.plot(grid, a + b * grid, "-", lw=1.2,
          label=f"$V_{{ind}} = {a * 1e3:.2f}$ mV $+\\ {b:.5f}\\,V$")
 ax1.plot(x, y, "o", ms=7, label="measured")
-ax1.set_ylabel("Indicated voltage [V]")
+ax1.set_ylabel("Indicated voltage (V)")
 ax1.legend(loc="upper left", frameon=False)
 
 ax2.axhline(0.0, lw=0.8, color="0.4")
 ax2.plot(x, cal["residual_V"] * 1e6, "o-", ms=7, lw=1.0)
-ax2.set_xlabel("Reference voltage [V]")
-ax2.set_ylabel("Residual [µV]")
+ax2.set_xlabel("Reference voltage (V)")
+ax2.set_ylabel("Residual (µV)")
 fig.tight_layout()
 plt.show()
 ```
@@ -245,7 +245,7 @@ rows = "\n".join(
     f"{r.peak_to_peak_LSB:.0f} | {r.u_mean_V * 1e6:.2f} |"
     for r in noise.itertuples())
 print(f"""
-| Channel | Pin | Mean [V] | $\\sigma$ [V] | $\\sigma$ [LSB] | Peak-to-peak [LSB] | $\\sigma/\\sqrt{{n}}$ [µV] |
+| Channel | Pin | Mean (V) | $\\sigma$ (V) | $\\sigma$ (LSB) | Peak-to-peak (LSB) | $\\sigma/\\sqrt{{n}}$ (µV) |
 |---|---|---|---|---|---|---|
 {rows}
 
@@ -269,7 +269,7 @@ for ax, (label, pin) in zip(axes, [("reference", PIN_REFERENCE),
     ax.plot(grid, np.exp(-0.5 * (grid / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi)),
             lw=1.2, color="0.2")
     ax.set_title(f"{label} (pin {pin}), $\\sigma$ = {sigma:.1f} LSB")
-    ax.set_xlabel("Code − mean code [LSB]")
+    ax.set_xlabel("Code − mean code (LSB)")
 axes[0].set_ylabel("Density")
 fig.tight_layout()
 plt.show()
@@ -343,13 +343,13 @@ ax1.plot(primary_timing.intervals_us, lw=0.6)
 ax1.axhline(ts["median_interval_us"], color="0.3", lw=1.0, ls="--",
             label=f"median {ts['median_interval_us']:.0f} µs")
 ax1.set_xlabel("Record index")
-ax1.set_ylabel("Interval [µs]")
+ax1.set_ylabel("Interval (µs)")
 ax1.legend(frameon=False, loc="upper right")
 
 ax2.plot(primary_timing.residuals_us, lw=0.7)
 ax2.axhline(0.0, color="0.3", lw=0.8)
 ax2.set_xlabel("Record index")
-ax2.set_ylabel("Grid-fit residual [µs]")
+ax2.set_ylabel("Grid-fit residual (µs)")
 fig.tight_layout()
 plt.show()
 ```
@@ -395,7 +395,7 @@ for name, run in runs.items():
         f"{run.meta.get('stream_stats', {}).get('device_overruns', '?')} |")
 table = "\n".join(rows)
 print(f"""
-| Host | Machine | Achieved [Hz] | $\\hat{{T}}$ [µs] | $s$(interval) [µs] | Residual RMS [µs] | Long intervals | Device overruns |
+| Host | Machine | Achieved (Hz) | $\\hat{{T}}$ (µs) | $s$(interval) (µs) | Residual RMS (µs) | Long intervals | Device overruns |
 |---|---|---|---|---|---|---|---|
 {table}
 
@@ -412,7 +412,7 @@ for name in runs:
     ax.plot(timing[name].residuals_us, lw=0.7, label=runs[name].meta["host"]["os"])
 ax.axhline(0.0, color="0.3", lw=0.8)
 ax.set_xlabel("Record index")
-ax.set_ylabel("Grid-fit residual [µs]")
+ax.set_ylabel("Grid-fit residual (µs)")
 ax.legend(frameon=False)
 fig.tight_layout()
 plt.show()

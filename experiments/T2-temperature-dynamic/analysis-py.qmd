@@ -351,7 +351,7 @@ rows = "\n".join(
     f"{r.u_tau_s * 1e3:.1f} | {r.span_over_tau:.1f} | {r.s_res_mK:.1f} |"
     for r in steps_df.itertuples())
 print(f"""
-| Medium | $n$ | $T_0$ [°C] | $T_\\infty$ [°C] | $\\tau$ [s] | $u(\\tau)$ [ms] | Record / $\\tau$ | Residual [mK] |
+| Medium | $n$ | $T_0$ (°C) | $T_\\infty$ (°C) | $\\tau$ (s) | $u(\\tau)$ (ms) | Record / $\\tau$ | Residual (mK) |
 |---|---|---|---|---|---|---|---|
 {rows}
 
@@ -371,8 +371,8 @@ for name in STEP_RUNS:
     ax1.plot(f["t_rel"], f["temp"], lw=0.9, label=f["ch"]["medium"])
     ax2.plot(f["t_rel"] / fit["tau"], norm, lw=0.9)
 ax1.set_xscale("log")
-ax1.set_xlabel("Time since plunge [s]")
-ax1.set_ylabel("Temperature [°C]")
+ax1.set_xlabel("Time since plunge (s)")
+ax1.set_ylabel("Temperature (°C)")
 ax1.legend(frameon=False, fontsize=8)
 
 grid = np.linspace(0, 5, 200)
@@ -393,7 +393,7 @@ rows = "\n".join(
     f"| {r.medium} | {r.tau_s:.3f} | {r.tau_lin_s:.3f} | {r.lin_diff_pct:+.2f} |"
     for r in steps_df.itertuples())
 print(f"""
-| Medium | $\\tau$ nonlinear [s] | $\\tau$ linearised [s] | Difference |
+| Medium | $\\tau$ nonlinear (s) | $\\tau$ linearised (s) | Difference |
 |---|---|---|---|
 {rows}
 
@@ -434,7 +434,7 @@ rows = "\n".join(
     f"| {r.medium} | {r.tau_s:.3f} | {r.h_ratio:.3f} | {r.h_absolute:.0f} |"
     for r in conv.itertuples())
 print(f"""
-| Medium | $\\tau$ [s] | $h/h_\\mathrm{{{fastest['medium']}}}$ | $h$ [W m⁻² K⁻¹] |
+| Medium | $\\tau$ (s) | $h/h_\\mathrm{{{fastest['medium']}}}$ | $h$ (W m⁻² K⁻¹) |
 |---|---|---|---|
 {rows}
 
@@ -499,15 +499,15 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 4.6), sharex=True,
                                gridspec_kw={"height_ratios": [2, 1]})
 ax1.plot(t_ramp, true_temp, lw=1.0, ls="--", label="bath")
 ax1.plot(t_ramp, temp_ramp, lw=1.0, label="sensor")
-ax1.set_ylabel("Temperature [°C]")
+ax1.set_ylabel("Temperature (°C)")
 ax1.legend(frameon=False)
 
 ax2.axhline(0.0, color="0.4", lw=0.8)
 ax2.plot(t_ramp, error, lw=0.9)
 ax2.axhline(predicted, color="0.2", lw=1.0, ls="--",
             label=f"$-\\tau\\dot{{T}}$ = {predicted:.3f} K")
-ax2.set_xlabel("Time [s]")
-ax2.set_ylabel("Sensor − bath [K]")
+ax2.set_xlabel("Time (s)")
+ax2.set_ylabel("Sensor − bath (K)")
 ax2.legend(frameon=False, fontsize=8)
 fig.tight_layout()
 plt.show()
@@ -571,14 +571,14 @@ g = ((fit2["tau1"] * np.exp(-t_sh / fit2["tau1"])
 model2 = fit2["T_inf"] + (fit2["T_0"] - fit2["T_inf"]) * g
 ax1.plot(t_sh[early], model1[early], lw=1.1, label="first order")
 ax1.plot(t_sh[early], model2[early], lw=1.1, label="second order")
-ax1.set_ylabel("Temperature [°C]")
+ax1.set_ylabel("Temperature (°C)")
 ax1.legend(frameon=False, fontsize=8)
 
 ax2.axhline(0.0, color="0.4", lw=0.8)
 ax2.plot(t_sh[early], fit1["residual"][early] * 1e3, lw=0.9, label="first order")
 ax2.plot(t_sh[early], fit2["residual"][early] * 1e3, lw=0.9, label="second order")
-ax2.set_xlabel("Time since plunge [s]")
-ax2.set_ylabel("Residual [mK]")
+ax2.set_xlabel("Time since plunge (s)")
+ax2.set_ylabel("Residual (mK)")
 ax2.legend(frameon=False, fontsize=8)
 fig.tight_layout()
 plt.show()

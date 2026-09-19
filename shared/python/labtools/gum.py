@@ -43,7 +43,7 @@ class Budget(NamedTuple):
         """
         header = ["Quantity", "Value", "Unit", "Distribution",
                   "$u(x_i)$", "$c_i$", "$\\lvert c_i\\rvert u(x_i)$",
-                  "$h_i$ [%]"]
+                  "$h_i$ (%)"]
         lines = []
         if caption:
             lines.append(f": {caption}" + (f" {{#{label}}}" if label else ""))

@@ -109,6 +109,7 @@ in the AMLab CSV convention (`t_us,pin,volts`).
 
 ```r
 library(arduinodriver)
+library(purrr)
 
 pin <- 15L  # A0 on a Portenta H7; check `arduino-io caps` on your board
 
@@ -133,7 +134,7 @@ cat(sprintf(
 stream$stop()
 stream$close()
 
-data <- do.call(rbind, rows)[, c("t_us", "pin", "volts")]
+data <- list_rbind(rows)[, c("t_us", "pin", "volts")]
 write.csv(data, "acquisition.csv", row.names = FALSE, quote = FALSE)
 
 dev$close()

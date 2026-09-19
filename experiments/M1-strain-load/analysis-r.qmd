@@ -36,13 +36,10 @@ two languages.
 #| label: setup
 #| message: false
 library(ggplot2)
+library(purrr)
 library(patchwork)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 LOAD_MASSES_G <- c(0, 100, 200, 300, 400)
 LOADING_RUNS <- sprintf("data/load-loading-%03d.csv", LOAD_MASSES_G)
@@ -112,7 +109,7 @@ creep_fit <- function(t_s, v, v0, n_iter = 200) {
 
 ```{r}
 #| label: load
-quarter_runs <- lapply(BRIDGE_QUARTER_RUNS, read_run)
+quarter_runs <- map(BRIDGE_QUARTER_RUNS, read_run)
 primary <- quarter_runs[[length(quarter_runs)]]
 board <- primary$meta$board
 ch0 <- primary$meta$channels[[1]]
@@ -145,13 +142,13 @@ cat(synthetic_banner(primary$meta))
 all_paths <- c(LOADING_RUNS, UNLOADING_RUNS, CREEP_RUN, ZERO_RETURN_RUN,
                BRIDGE_QUARTER_RUNS, BRIDGE_HALF_RUNS, BRIDGE_FULL_RUNS,
                unlist(TEMP_RUNS))
-all_runs <- lapply(all_paths, read_run)
+all_runs <- map(all_paths, read_run)
 names(all_runs) <- all_paths
-n_bad <- sum(vapply(all_runs, function(r) length(validate_meta(r$meta)) > 0, logical(1)))
+n_bad <- sum(map_lgl(all_runs, ~ length(validate_meta(.x$meta)) > 0))
 lossy <- Filter(function(name) {
   stats <- all_runs[[name]]$meta$stream_stats
   counters <- stats[setdiff(names(stats), "records")]
-  any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))
+  any(map_lgl(counters, ~ is.numeric(.x) && .x > 0))
 }, names(all_runs))
 cat(sprintf('
 %d runs read.
@@ -224,7 +221,7 @@ sweep, and the same sweep read backwards.
 ```{r}
 #| label: linearity
 load_frame <- function(paths, direction) {
-  rows <- lapply(paths, function(p) {
+  map(paths, function(p) {
     run <- read_run(p)
     ch <- run$meta$channels[[1]]
     data.frame(run = run$meta$run, direction = direction,
@@ -233,8 +230,7 @@ load_frame <- function(paths, direction) {
                n = nrow(run$data), capacity_N = ch$load_cell_capacity_n,
                sensitivity_mv_per_v = ch$load_cell_sensitivity_mv_per_v,
                excitation_v = ch$bridge_excitation_v, gain = ch$conditioning$gain)
-  })
-  do.call(rbind, rows)
+  }) |> list_rbind()
 }
 
 loading <- load_frame(LOADING_RUNS, "loading")
@@ -256,7 +252,7 @@ rows <- sprintf("| %s | %.4f | %.5f | %.3f | %d | %+.3f |",
                 loading$run, loading$F_N, loading$mean_V, loading$sd_V * 1e3,
                 loading$n, loading$residual_V * 1e3)
 cat(sprintf('
-| Run | Force [N] | Mean [V] | $s$ [mV] | $n$ | Residual [mV] |
+| Run | Force (N) | Mean (V) | $s$ (mV) | $n$ | Residual (mV) |
 |---|---|---|---|---|---|
 %s
 
@@ -287,13 +283,13 @@ capacity, from the sidecar). Non-linearity, from [the linearity definition in th
 p_fit <- ggplot(loading, aes(F_N, mean_V)) +
   geom_abline(intercept = fit$a, slope = fit$b, linewidth = 0.5) +
   geom_point(size = 2.4) +
-  labs(x = NULL, y = "Indicated voltage [V]")
+  labs(x = NULL, y = "Indicated voltage (V)")
 
 p_res <- ggplot(loading, aes(F_N, residual_V * 1e3)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.4) +
   geom_point(size = 2.4) +
-  labs(x = "Force [N]", y = "Residual [mV]")
+  labs(x = "Force (N)", y = "Residual (mV)")
 
 p_fit / p_res + plot_layout(heights = c(2, 1))
 ```
@@ -314,7 +310,7 @@ hysteresis_pct <- max(abs(hyst$diff_mV)) / 1e3 / V_FS * 100
 rows <- sprintf("| %.4f | %.5f | %.5f | %+.3f |",
                 hyst$F_N, hyst$loading_V, hyst$unloading_V, hyst$diff_mV)
 cat(sprintf('
-| Force [N] | Loading [V] | Unloading [V] | Difference [mV] |
+| Force (N) | Loading (V) | Unloading (V) | Difference (mV) |
 |---|---|---|---|
 %s
 
@@ -345,7 +341,7 @@ trace <- rbind(
 ggplot(trace, aes(F_N, V, colour = case)) +
   geom_line(linewidth = 0.4) +
   geom_point(size = 2.2) +
-  labs(x = "Force [N]", y = "Indicated voltage [V]", colour = NULL)
+  labs(x = "Force (N)", y = "Indicated voltage (V)", colour = NULL)
 ```
 
 ## Load cell: creep and zero drift
@@ -389,7 +385,7 @@ ggplot() +
   geom_line(data = data.frame(t_s = t_s, v = v), aes(t_s, v),
             linewidth = 0.25, alpha = 0.6) +
   geom_line(data = fit_curve, aes(t_s, v), linewidth = 0.6, colour = "#c0392b") +
-  labs(x = "Time [s]", y = "Indicated voltage [V]")
+  labs(x = "Time (s)", y = "Indicated voltage (V)")
 ```
 
 ```{r}
@@ -424,13 +420,12 @@ bridge. The quarter-bridge points also give the load-to-strain calibration
 ```{r}
 #| label: bridges
 bridge_points <- function(paths) {
-  rows <- lapply(paths, function(p) {
+  df <- map(paths, function(p) {
     run <- read_run(p)
     ch <- run$meta$channels[[1]]
     data.frame(F_N = ch$reference_value, mean_V = mean(run$data$volts),
                sd_V = sd(run$data$volts), n = nrow(run$data))
-  })
-  df <- do.call(rbind, rows)
+  }) |> list_rbind()
   df[order(df$F_N), ]
 }
 
@@ -459,7 +454,7 @@ u_d_eps_d_f <- 4 * u_slope_quarter / (GAIN_BEAM * GAUGE_FACTOR * VEX)
 #| echo: false
 #| output: asis
 cat(sprintf('
-| Configuration | $dV/dF$ [mV/N] | Ratio to quarter | Nominal ratio |
+| Configuration | $dV/dF$ (mV/N) | Ratio to quarter | Nominal ratio |
 |---|---|---|---|
 | Quarter | %.3f | 1.00 | 1 |
 | Half | %.3f | %.3f | 2 |
@@ -502,7 +497,7 @@ bridges_long <- rbind(
 ggplot(bridges_long, aes(F_N, V, colour = config)) +
   geom_line(linewidth = 0.4) +
   geom_point(size = 2.2) +
-  labs(x = "Force [N]", y = "Indicated voltage [V]", colour = NULL)
+  labs(x = "Force (N)", y = "Indicated voltage (V)", colour = NULL)
 ```
 
 ## Temperature compensation
@@ -512,7 +507,7 @@ two bench temperatures.
 
 ```{r}
 #| label: temperature
-temp <- lapply(TEMP_RUNS, read_run)
+temp <- map(TEMP_RUNS, read_run)
 delta_t <- temp$quarter_hot$meta$channels[[1]]$applied_delta_t_c
 
 apparent_alpha <- function(cold_key, hot_key, n_arm) {

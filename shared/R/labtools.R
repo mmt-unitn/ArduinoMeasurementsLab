@@ -7,9 +7,12 @@
 # names, same numerical definitions. A number computed in Python and the same
 # number computed here must agree; the test suites in both languages check
 # it. Sourced as a plain script -- `source(".../labtools.R")` -- not loaded
-# as a package, so it depends on nothing beyond base R and `yaml`.
+# as a package, so it depends on nothing beyond base R, `yaml` and `purrr`.
 
-suppressPackageStartupMessages(library(yaml))
+suppressPackageStartupMessages({
+  library(yaml)
+  library(purrr)
+})
 
 # Sidecar keys in the order they are written back, so a file round-tripped
 # through write_run() stays readable by a human who knows the specification.
@@ -246,7 +249,7 @@ validate_meta <- function(meta) {
 
   pins <- .get_path(meta, "acquisition.pins")
   if (!is.null(pins) && is.list(channels)) {
-    described <- unlist(lapply(channels, function(c) {
+    described <- unlist(map(channels, function(c) {
       if (is.list(c)) c$pin else NULL
     }))
     for (pin in pins) {
@@ -495,20 +498,20 @@ budget_table <- function(components, k = 2.0, unit = NULL) {
     )
   }
 
-  u_c <- sqrt(sum(sapply(rows, function(r) r$cu^2)))
+  u_c <- sqrt(sum(map_dbl(rows, ~ .x$cu^2)))
   for (i in seq_along(rows)) {
     rows[[i]]$index_pct <- if (u_c > 0) 100.0 * (rows[[i]]$cu^2) / (u_c^2) else 0.0
   }
 
   table <- data.frame(
-    quantity = vapply(rows, function(r) r$quantity, character(1)),
-    value = vapply(rows, function(r) r$value, numeric(1)),
-    unit = vapply(rows, function(r) r$unit, character(1)),
-    distribution = vapply(rows, function(r) r$distribution, character(1)),
-    u = vapply(rows, function(r) r$u, numeric(1)),
-    c = vapply(rows, function(r) r$c, numeric(1)),
-    cu = vapply(rows, function(r) r$cu, numeric(1)),
-    index_pct = vapply(rows, function(r) r$index_pct, numeric(1)),
+    quantity = map_chr(rows, ~ .x$quantity),
+    value = map_dbl(rows, ~ .x$value),
+    unit = map_chr(rows, ~ .x$unit),
+    distribution = map_chr(rows, ~ .x$distribution),
+    u = map_dbl(rows, ~ .x$u),
+    c = map_dbl(rows, ~ .x$c),
+    cu = map_dbl(rows, ~ .x$cu),
+    index_pct = map_dbl(rows, ~ .x$index_pct),
     stringsAsFactors = FALSE
   )
 
@@ -544,7 +547,7 @@ budget_table <- function(components, k = 2.0, unit = NULL) {
 #' @return A markdown string.
 budget_to_markdown <- function(budget, digits = 4, caption = NULL, label = NULL) {
   header <- c("Quantity", "Value", "Unit", "Distribution",
-              "$u(x_i)$", "$c_i$", "$\\lvert c_i\\rvert u(x_i)$", "$h_i$ [%]")
+              "$u(x_i)$", "$c_i$", "$\\lvert c_i\\rvert u(x_i)$", "$h_i$ (%)")
   lines <- character(0)
   if (!is.null(caption)) {
     cap_line <- paste0(": ", caption, if (!is.null(label)) paste0(" {#", label, "}") else "")

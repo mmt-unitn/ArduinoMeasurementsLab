@@ -312,7 +312,7 @@ def test_budget_table_rejects_a_type_a_component_without_std():
 
 def test_budget_table_markdown_carries_the_totals():
     text = budget_table(_components()).to_markdown()
-    assert "$h_i$ [%]" in text
+    assert "$h_i$ (%)" in text
     assert "Combined standard uncertainty" in text
     assert "Expanded uncertainty" in text
 

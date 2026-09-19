@@ -34,13 +34,10 @@ estimator and the sine fit are written out for the same reason.
 #| label: setup
 #| message: false
 library(ggplot2)
+library(purrr)
 library(patchwork)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 SWEEP_RUNS <- sort(Sys.glob("data/alias-f*.csv"))
 FILTER_OFF <- "data/filter-off.csv"
@@ -120,13 +117,13 @@ filter_magnitude <- function(f, fc, order) 1 / sqrt(1 + (f / fc)^(2 * order))
 
 ```{r}
 #| label: load
-sweep <- lapply(SWEEP_RUNS, read_run)
+sweep <- map(SWEEP_RUNS, read_run)
 off <- read_run(FILTER_OFF)
 on <- read_run(FILTER_ON)
 over <- read_run(OVERSAMPLED)
 
 all_runs <- c(sweep, list(off, on, over))
-names(all_runs) <- vapply(all_runs, function(r) r$meta$run, character(1))
+names(all_runs) <- map_chr(all_runs, ~ .x$meta$run)
 board <- on$meta$board
 FSR <- board$vref_mV / 1000
 LSB <- lsb_volts(on$meta)
@@ -145,16 +142,16 @@ cat(synthetic_banner(on$meta))
 #| label: quality
 #| echo: false
 #| output: asis
-problems <- lapply(all_runs, function(r) validate_meta(r$meta))
+problems <- map(all_runs, function(r) validate_meta(r$meta))
 lossy <- character(0)
 for (name in names(all_runs)) {
   stats <- all_runs[[name]]$meta$stream_stats
   counters <- stats[setdiff(names(stats), "records")]
-  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+  if (any(map_lgl(counters, ~ is.numeric(.x) && .x > 0))) {
     lossy <- c(lossy, name)
   }
 }
-n_bad <- sum(vapply(problems, length, integer(1)) > 0)
+n_bad <- sum(map_int(problems, length) > 0)
 cat(sprintf('
 %d runs read: %d in the aliasing sweep, the
 filtered/unfiltered pair, and the oversampled run.
@@ -183,12 +180,12 @@ OFFSET <- ch_on$conditioning$offset
 U_GAIN_REL <- ch_on$conditioning_u_gain_rel
 U_OFFSET_V <- ch_on$conditioning_u_offset_v
 
-cond <- do.call(rbind, lapply(list(off, on, over), function(run) {
+cond <- map(list(off, on, over), function(run) {
   data.frame(run = run$meta$run,
              mean_V = mean(run$data$volts),
              min_V = min(run$data$volts),
              max_V = max(run$data$volts))
-}))
+}) |> list_rbind()
 cond$offset_error_mV <- (cond$mean_V - OFFSET) * 1e3
 cond$headroom_lo_V <- cond$min_V
 cond$headroom_hi_V <- FSR - cond$max_V
@@ -202,7 +199,7 @@ rows <- sprintf("| %s | %.4f | %+.1f | %.4f | %.4f | %.3f | %.3f |",
                 cond$run, cond$mean_V, cond$offset_error_mV, cond$min_V,
                 cond$max_V, cond$headroom_lo_V, cond$headroom_hi_V)
 cat(sprintf('
-| Run | Mean [V] | Mean − $V_\\mathrm{off}$ [mV] | Min [V] | Max [V] | Low headroom [V] | High headroom [V] |
+| Run | Mean (V) | Mean − $V_\\mathrm{off}$ (mV) | Min (V) | Max (V) | Low headroom (V) | High headroom (V) |
 |---|---|---|---|---|---|---|
 %s
 
@@ -237,7 +234,7 @@ in the sidecar.
 
 ```{r}
 #| label: aliasing
-alias <- do.call(rbind, lapply(sweep, function(run) {
+alias <- map(sweep, function(run) {
   ch <- run$meta$channels[[1]]
   fs <- sampling_rate(run)
   volts <- run$data$volts
@@ -249,7 +246,7 @@ alias <- do.call(rbind, lapply(sweep, function(run) {
   data.frame(run = run$meta$run, f_gen_Hz = f_gen, fs_Hz = fs,
              k = round(f_gen / fs), f_pred_Hz = f_pred, f_obs_Hz = f_obs,
              error_Hz = f_obs - f_pred, amplitude_V = fit$amplitude)
-}))
+}) |> list_rbind()
 ```
 
 ```{r}
@@ -260,7 +257,7 @@ rows <- sprintf("| %.0f | %d | %.2f | %.2f | %+.3f | %.4f |",
                 alias$f_gen_Hz, alias$k, alias$f_pred_Hz, alias$f_obs_Hz,
                 alias$error_Hz, alias$amplitude_V)
 cat(sprintf('
-| $f$ [Hz] | $k$ | Predicted $f_a$ [Hz] | Observed [Hz] | Error [Hz] | Amplitude [V] |
+| $f$ (Hz) | $k$ | Predicted $f_a$ (Hz) | Observed (Hz) | Error (Hz) | Amplitude (V) |
 |---|---|---|---|---|---|
 %s
 
@@ -285,13 +282,13 @@ p_fold <- ggplot() +
              colour = "grey40") +
   annotate("text", x = max(grid), y = fs0 / 2, label = " Nyquist",
            hjust = 1, vjust = -0.6, size = 2.8, colour = "grey30") +
-  labs(x = "Generator frequency $f$ [Hz]", y = "Apparent frequency [Hz]")
+  labs(x = "Generator frequency $f$ (Hz)", y = "Apparent frequency (Hz)")
 
 p_err <- ggplot(alias, aes(f_gen_Hz, error_Hz * 1e3)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.3) +
   geom_point(size = 1.6) +
-  labs(x = "Generator frequency [Hz]", y = "Observed − predicted [mHz]")
+  labs(x = "Generator frequency (Hz)", y = "Observed − predicted (mHz)")
 
 p_fold | p_err
 ```
@@ -327,7 +324,7 @@ ORDER <- ch_on$filter_order
 U_FC_REL <- ch_on$filter_u_fc_rel
 F_GEN <- ch_on$generator_frequency_hz
 
-pair <- do.call(rbind, Map(function(label, run) {
+pair <- map2(c("unfiltered", "filtered"), list(off, on), function(label, run) {
   fs <- sampling_rate(run)
   volts <- run$data$volts
   t_s <- run$data$t_us / 1e6
@@ -336,7 +333,7 @@ pair <- do.call(rbind, Map(function(label, run) {
   data.frame(case = label, fs_Hz = fs, f_obs_Hz = f_obs,
              amplitude_V = fit$amplitude, level_V = fit$level,
              resid_V = fit$resid_sd, n = length(volts))
-}, c("unfiltered", "filtered"), list(off, on)))
+}) |> list_rbind()
 
 ratio_obs <- pair$amplitude_V[pair$case == "filtered"] /
   pair$amplitude_V[pair$case == "unfiltered"]
@@ -351,7 +348,7 @@ rows <- sprintf("| %s | %.2f | %.5f | %.4f | %.3f | %d |",
                 pair$case, pair$f_obs_Hz, pair$amplitude_V, pair$level_V,
                 pair$resid_V * 1e3, pair$n)
 cat(sprintf('
-| Case | Observed $f_a$ [Hz] | Amplitude [V] | Mean level [V] | Residual $\\sigma$ [mV] | $n$ |
+| Case | Observed $f_a$ (Hz) | Amplitude (V) | Mean level (V) | Residual $\\sigma$ (mV) | $n$ |
 |---|---|---|---|---|---|
 %s
 
@@ -386,19 +383,18 @@ sampler, and the next section is how that decision is made.
 #| fig-width: 7.0
 #| fig-height: 3.2
 #| fig-cap: "First 60 ms of the unfiltered and filtered recordings. The apparent frequency is identical — the filter cannot move an alias — and only the amplitude differs."
-trace <- do.call(rbind, Map(function(label, run) {
+trace <- map2(c("unfiltered", "filtered"), list(off, on), function(label, run) {
   t_ms <- (run$data$t_us - run$data$t_us[1]) / 1e3
   keep <- t_ms <= 60
   data.frame(case = label, t_ms = t_ms[keep], volts = run$data$volts[keep])
-}, c("unfiltered", "filtered"), list(off, on)))
+}) |> list_rbind()
 
 ggplot(trace, aes(t_ms, volts, colour = case)) +
   geom_hline(yintercept = OFFSET, linewidth = 0.3, linetype = "dashed",
              colour = "grey50") +
   geom_line(linewidth = 0.3) +
   geom_point(size = 0.6) +
-  labs(x = "Time [ms]", y = "ADC input [V]", colour = NULL) +
-  theme(legend.position = "top")
+  labs(x = "Time (ms)", y = "ADC input (V)", colour = NULL)
 ```
 
 ## Filter design
@@ -415,12 +411,12 @@ F_MAX <- 100           # the highest frequency of interest
 A_REQ_DB <- 40         # required attenuation at the folding frequency
 F_FOLD <- FS_DESIGN - F_MAX
 
-design <- do.call(rbind, lapply(1:4, function(order) {
+design <- map(1:4, function(order) {
   fc <- F_FOLD / (10^(A_REQ_DB / 10) - 1)^(1 / (2 * order))
   droop <- filter_magnitude(F_MAX, fc, order)
   data.frame(order = order, fc_Hz = fc, fc_over_fmax = fc / F_MAX,
              droop_dB = 20 * log10(droop), droop_pct = 100 * (1 - droop))
-}))
+}) |> list_rbind()
 ```
 
 ```{r}
@@ -431,7 +427,7 @@ rows <- sprintf("| %d | %.1f | %.2f | %+.2f | %.1f |",
                 design$order, design$fc_Hz, design$fc_over_fmax,
                 design$droop_dB, design$droop_pct)
 cat(sprintf('
-| Order $n$ | Required $f_c$ [Hz] | $f_c/f_\\mathrm{max}$ | Droop at $f_\\mathrm{max}$ [dB] | Droop [%%] |
+| Order $n$ | Required $f_c$ (Hz) | $f_c/f_\\mathrm{max}$ | Droop at $f_\\mathrm{max}$ (dB) | Droop (%%) |
 |---|---|---|---|---|
 %s
 
@@ -446,13 +442,13 @@ cat(sprintf('
 #| fig-height: 3.6
 #| fig-cap: "Magnitude response of each design of @tbl-s3-design. Every curve passes through the required attenuation at the folding frequency; they differ in how much of the passband they spend to get there."
 f_grid <- 10^seq(0, log10(FS_DESIGN * 2), length.out = 400)
-curves <- do.call(rbind, lapply(seq_len(nrow(design)), function(i) {
+curves <- map(seq_len(nrow(design)), function(i) {
   data.frame(design_label = sprintf("n = %d, fc = %.0f Hz", design$order[i],
                                     design$fc_Hz[i]),
              f = f_grid,
              mag_dB = 20 * log10(filter_magnitude(f_grid, design$fc_Hz[i],
                                                   design$order[i])))
-}))
+}) |> list_rbind()
 
 ggplot(curves, aes(f, mag_dB, colour = design_label)) +
   geom_vline(xintercept = F_MAX, linewidth = 0.3, linetype = "dotted",
@@ -464,8 +460,7 @@ ggplot(curves, aes(f, mag_dB, colour = design_label)) +
   geom_line(linewidth = 0.4) +
   scale_x_log10() +
   coord_cartesian(ylim = c(-70, 12)) +
-  labs(x = "Frequency [Hz]", y = "|H(f)| [dB]", colour = NULL) +
-  theme(legend.position = "bottom", legend.text = element_text(size = 7))
+  labs(x = "Frequency (Hz)", y = "|H(f)| (dB)", colour = NULL)
 ```
 
 ```{r}
@@ -536,14 +531,14 @@ cases <- list(
        v = fir_apply(v_off, h_off), fs = fs_off)
 )
 
-digital <- do.call(rbind, lapply(cases, function(cs) {
+digital <- map(cases, function(cs) {
   a_sig <- sine_fit(cs$t, cs$v, F_SIGNAL)
   a_fold <- sine_fit(cs$t, cs$v, F_FOLDED)
   data.frame(case = cs$label, fs_Hz = cs$fs, n = length(cs$v),
              amp_signal_mV = a_sig$amplitude * 1e3,
              amp_folded_mV = a_fold$amplitude * 1e3,
              resid_mV = a_fold$resid_sd * 1e3)
-}))
+}) |> list_rbind()
 ```
 
 ```{r}
@@ -554,7 +549,7 @@ rows <- sprintf("| %s | %.0f | %d | %.2f | %.2f | %.3f |",
                 digital$case, digital$fs_Hz, digital$n,
                 digital$amp_signal_mV, digital$amp_folded_mV, digital$resid_mV)
 cat(sprintf('
-| Case | $f_s$ [Hz] | $n$ | Amplitude at %.0f Hz [mV] | Amplitude at %.0f Hz [mV] | Residual $\\sigma$ [mV] |
+| Case | $f_s$ (Hz) | $n$ | Amplitude at %.0f Hz (mV) | Amplitude at %.0f Hz (mV) | Residual $\\sigma$ (mV) |
 |---|---|---|---|---|---|
 %s
 
@@ -568,15 +563,15 @@ cat(sprintf('
 #| fig-width: 7.8
 #| fig-height: 3.0
 #| fig-cap: "Spectra of the three cases of @tbl-s3-digital. Filtering before decimation removes the interferer; decimating first folds it into the band, where it is indistinguishable from signal; filtering a record that is already aliased leaves it untouched."
-spectra <- do.call(rbind, lapply(cases, function(cs) {
+spectra <- map(cases, function(cs) {
   x <- cs$v - mean(cs$v)
   n <- length(x)
   w <- 0.5 - 0.5 * cos(2 * pi * (0:(n - 1)) / (n - 1))
   mag <- Mod(fft(x * w)[1:(n %/% 2 + 1)]) * 2 / sum(w)
-  data.frame(case = factor(cs$label, levels = vapply(cases, `[[`, character(1), "label")),
+  data.frame(case = factor(cs$label, levels = map_chr(cases, "label")),
              freq = seq(0, cs$fs / 2, length.out = n %/% 2 + 1),
              mag = pmax(mag, 1e-7))
-}))
+}) |> list_rbind()
 
 ggplot(spectra, aes(freq, mag)) +
   geom_vline(xintercept = F_SIGNAL, linewidth = 0.3, linetype = "dotted",
@@ -586,8 +581,7 @@ ggplot(spectra, aes(freq, mag)) +
   geom_line(linewidth = 0.25) +
   scale_y_log10() +
   facet_wrap(~case, scales = "free_x") +
-  labs(x = "Frequency [Hz]", y = "Amplitude [V]") +
-  theme(strip.text = element_text(size = 7))
+  labs(x = "Frequency (Hz)", y = "Amplitude (V)")
 ```
 
 ```{r}

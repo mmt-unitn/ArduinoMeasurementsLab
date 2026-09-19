@@ -22,13 +22,10 @@ same numbers from the same data.
 #| label: setup
 #| message: false
 library(ggplot2)
+library(purrr)
 library(patchwork)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 SWEEP_RUNS <- sort(Sys.glob("data/sweep-*.csv"))
 DETAIL_RUN <- "data/sweep-0500hz.csv"   # the point examined in detail
@@ -104,7 +101,7 @@ uniform_time <- function(run) {
 
 ```{r}
 #| label: load
-runs <- lapply(SWEEP_RUNS, read_run)
+runs <- map(SWEEP_RUNS, read_run)
 detail <- read_run(DETAIL_RUN)
 board <- runs[[1]]$meta$board
 FSR <- board$vref_mV / 1000
@@ -124,16 +121,16 @@ cat(synthetic_banner(runs[[1]]$meta))
 #| label: quality
 #| echo: false
 #| output: asis
-issues <- lapply(runs, function(r) validate_meta(r$meta))
+issues <- map(runs, function(r) validate_meta(r$meta))
 lossy <- character(0)
 for (r in runs) {
   stats <- r$meta$stream_stats
   counters <- stats[setdiff(names(stats), "records")]
-  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+  if (any(map_lgl(counters, ~ is.numeric(.x) && .x > 0))) {
     lossy <- c(lossy, r$meta$run)
   }
 }
-n_bad <- sum(vapply(issues, length, integer(1)) > 0)
+n_bad <- sum(map_int(issues, length) > 0)
 cat(sprintf('
 %d sweep points read, %d samples each.
 %s
@@ -178,13 +175,13 @@ p_fit <- ggplot() +
             aes(t, v), linewidth = 0.4) +
   geom_point(data = data.frame(t = t_rel_ms[show], v = y_detail[show]),
              aes(t, v), size = 0.8) +
-  labs(x = NULL, y = "ADC input [V]")
+  labs(x = NULL, y = "ADC input (V)")
 
 p_res <- ggplot(data.frame(t = t_rel_ms, r = fit_detail$residual * 1e3),
                 aes(t, r)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
   geom_line(linewidth = 0.2) +
-  labs(x = "Time [ms]", y = "Residual [mV]")
+  labs(x = "Time (ms)", y = "Residual (mV)")
 
 p_fit / p_res
 ```
@@ -219,7 +216,7 @@ assumed about *when* they were taken.
 
 ```{r}
 #| label: sweep
-sweep <- do.call(rbind, lapply(runs, function(run) {
+sweep <- map(runs, function(run) {
   gf <- generator(run$meta, "frequency")
   ga <- generator(run$meta, "amplitude")
   y <- run$data$volts
@@ -242,7 +239,7 @@ sweep <- do.call(rbind, lapply(runs, function(run) {
     ppm = (fit_dev$f / gf$value - 1) * 1e6,
     n = length(y),
     duration_s = t_dev[length(t_dev)] - t_dev[1])
-}))
+}) |> list_rbind()
 sweep <- sweep[order(sweep$f_gen_Hz), ]
 rownames(sweep) <- NULL
 sweep$penalty_bits <- sweep$enob_dev - sweep$enob_nom
@@ -257,7 +254,7 @@ rows <- sprintf("| %.2f | %.4f | %.4f | %.2f | %.4f | %.2f | %.2f |",
                 sweep$enob_dev, sweep$sigma_nom_V * 1e3, sweep$enob_nom,
                 sweep$penalty_bits)
 cat(sprintf('
-| $f_\\mathrm{gen}$ [Hz] | Amplitude [V] | $\\sigma_r$ on `t_us` [mV] | ENOB | $\\sigma_r$ on the grid [mV] | ENOB | Penalty [bit] |
+| $f_\\mathrm{gen}$ (Hz) | Amplitude (V) | $\\sigma_r$ on `t_us` (mV) | ENOB | $\\sigma_r$ on the grid (mV) | ENOB | Penalty (bit) |
 |---|---|---|---|---|---|---|
 %s
 
@@ -336,7 +333,7 @@ f_grid <- 10^seq(log10(min(sweep$f_gen_Hz) * 0.7),
 model_sigma <- sqrt(sigma_n^2 + (2 * pi * f_grid * amp_mean * sigma_j / sqrt(2))^2)
 # enob() is scalar in both languages, so it is mapped over the grid here
 # exactly as the Python template maps it in a comprehension.
-enob_v <- function(sigmas) vapply(sigmas, function(s) enob(FSR, s), numeric(1))
+enob_v <- function(sigmas) map_dbl(sigmas, ~ enob(FSR, .x))
 
 curves <- rbind(
   data.frame(f = f_grid, bits = enob_v(model_sigma),
@@ -358,10 +355,8 @@ ggplot() +
   geom_point(data = points, aes(f, bits, shape = what), size = 2) +
   scale_x_log10() +
   coord_cartesian(ylim = c(0, enob_noise + 2)) +
-  labs(x = "Generator frequency [Hz]", y = "Effective number of bits",
-       linetype = NULL, shape = NULL) +
-  theme(legend.position = "bottom", legend.box = "vertical",
-        legend.text = element_text(size = 7))
+  labs(x = "Generator frequency (Hz)", y = "Effective number of bits",
+       linetype = NULL, shape = NULL)
 ```
 
 ```{r}
@@ -424,7 +419,7 @@ rows <- sprintf("| %.2f | %.4f | %+.2f | %.3f | %.2f |",
                 sweep$f_gen_Hz, sweep$f_hat_Hz, sweep$ppm,
                 sweep$u_ppm_fit, sweep$u_ppm_gen)
 cat(sprintf('
-| $f_\\mathrm{gen}$ [Hz] | $\\hat{f}$ [Hz] | $\\delta$ [ppm] | $u(\\hat{f})$ [ppm] | $u(f_\\mathrm{gen})$ [ppm] |
+| $f_\\mathrm{gen}$ (Hz) | $\\hat{f}$ (Hz) | $\\delta$ (ppm) | $u(\\hat{f})$ (ppm) | $u(f_\\mathrm{gen})$ (ppm) |
 |---|---|---|---|---|
 %s
 
@@ -449,7 +444,7 @@ ggplot(sweep, aes(f_gen_Hz, ppm)) +
                 width = 0.04, linewidth = 0.3) +
   geom_point(size = 1.8) +
   scale_x_log10() +
-  labs(x = "Generator frequency [Hz]", y = "Clock error [ppm]",
+  labs(x = "Generator frequency (Hz)", y = "Clock error (ppm)",
        subtitle = sprintf("mean %+.2f ppm; grey band = generator specification",
                           ppm_mean))
 ```

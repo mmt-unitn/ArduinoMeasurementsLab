@@ -160,13 +160,13 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.0), sharex=True)
 t_h = t_s / 3600.0
 ax1.plot(t_h, temp_c, lw=0.5, color="0.6", label="record")
 ax1.plot(t_h, D @ coef, lw=1.2, label="fit")
-ax1.set_ylabel("Temperature [°C]")
+ax1.set_ylabel("Temperature (°C)")
 ax1.legend(frameon=False, loc="upper right")
 
 ax2.axhline(0.0, lw=0.8, color="0.4")
 ax2.plot(t_h, resid * 1e3, lw=0.4)
 ax2.set_xlabel("Time [h]")
-ax2.set_ylabel("Residual [mK]")
+ax2.set_ylabel("Residual (mK)")
 fig.tight_layout()
 plt.show()
 ```
@@ -235,8 +235,8 @@ ax.loglog(tau, adev[-1] * np.sqrt(tau / tau[-1]), "--", lw=0.8, color="0.7",
          label=r"$\tau^{+1/2}$ (random walk)")
 ax.axvline(tau_opt, color="0.3", lw=0.8, ls=":")
 ax.plot(tau_opt, sigma_opt, "s", ms=8, mfc="none", mec="0.2", mew=1.4)
-ax.set_xlabel(r"Averaging time $\tau$ [s]")
-ax.set_ylabel(r"$\sigma_y(\tau)$ [K]")
+ax.set_xlabel(r"Averaging time $\tau$ (s)")
+ax.set_ylabel(r"$\sigma_y(\tau)$ (K)")
 ax.legend(frameon=False, fontsize=8)
 fig.tight_layout()
 plt.show()
@@ -248,7 +248,7 @@ plt.show()
 #| output: asis
 rows = "\n".join(f"| {t_:.1f} | {a_ * 1e3:.4f} |" for t_, a_ in zip(tau, adev))
 print(f"""
-| $\\tau$ [s] | $\\sigma_y(\\tau)$ [mK] |
+| $\\tau$ (s) | $\\sigma_y(\\tau)$ (mK) |
 |---|---|
 {rows}
 

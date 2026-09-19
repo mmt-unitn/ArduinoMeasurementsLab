@@ -33,13 +33,10 @@ written from their definitions here, as
 #| label: setup
 #| message: false
 library(ggplot2)
+library(purrr)
 library(patchwork)
 
 source("../../shared/R/labtools.R")
-
-theme_set(theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major = element_line(linewidth = 0.25)))
 
 RUN_UNLOADED <- "tap-noaccel"    # accelerometer REMOVED from the beam
 RUN_LOADED <- "tap-accel"        # accelerometer fitted
@@ -215,12 +212,12 @@ cat(synthetic_banner(unloaded$meta))
 #| echo: false
 #| output: asis
 runs <- list(unloaded, loaded)
-bad <- sum(vapply(runs, function(r) length(validate_meta(r$meta)) > 0, logical(1)))
+bad <- sum(map_lgl(runs, ~ length(validate_meta(.x$meta)) > 0))
 lossy <- character(0)
 for (r in runs) {
   st <- r$meta$stream_stats
   counters <- st[setdiff(names(st), "records")]
-  if (any(vapply(counters, function(v) is.numeric(v) && v > 0, logical(1)))) {
+  if (any(map_lgl(counters, ~ is.numeric(.x) && .x > 0))) {
     lossy <- c(lossy, r$meta$run)
   }
 }
@@ -248,7 +245,7 @@ ggplot(data.frame(t = t_un, v = strain_un - mean(strain_un)), aes(t, v)) +
   geom_line(linewidth = 0.2) +
   geom_vline(xintercept = ID_WINDOW_S, linewidth = 0.35, linetype = "dashed",
              colour = "grey40") +
-  labs(x = "Time [s]", y = "Strain channel [V, mean removed]",
+  labs(x = "Time (s)", y = "Strain channel (V, mean removed)",
        subtitle = sprintf("modes identified within %.0f s", ID_WINDOW_S))
 ```
 
@@ -260,7 +257,7 @@ id_window <- t_un <= ID_WINDOW_S
 sp_un <- spectrum_of(strain_un[id_window], fs_un)
 freqs_un <- sp_un$freqs; mag_un <- sp_un$mag
 peaks_un <- find_modes(freqs_un, mag_un)
-f_modes <- vapply(peaks_un, function(k) refine_peak(freqs_un, mag_un, k), numeric(1))
+f_modes <- map_dbl(peaks_un, ~ refine_peak(freqs_un, mag_un, .x))
 
 bin_hz <- freqs_un[2] - freqs_un[1]
 ratios_measured <- f_modes[-1] / f_modes[1]
@@ -275,7 +272,7 @@ rows <- sprintf("| %d | %.6f | %.3f | %.3f |",
                 seq_along(f_modes), LAMBDA[seq_along(f_modes)], f_modes,
                 mag_un[peaks_un] * 1e3)
 cat(sprintf('
-| Mode | $\\lambda_n$ | $f_n$ [Hz] | Peak amplitude [mV] |
+| Mode | $\\lambda_n$ | $f_n$ (Hz) | Peak amplitude (mV) |
 |---|---|---|---|
 %s
 
@@ -313,7 +310,7 @@ ggplot(data.frame(f = freqs_un[keep], m = pmax(mag_un[keep], 1e-9)), aes(f, m)) 
              linetype = "dashed", colour = "#b6771a") +
   geom_line(linewidth = 0.25) +
   scale_y_log10() +
-  labs(x = "Frequency [Hz]", y = "Amplitude [V]")
+  labs(x = "Frequency (Hz)", y = "Amplitude (V)")
 ```
 
 ```{r}
@@ -344,7 +341,7 @@ ratios are a better test of the theory than either frequency alone.
 ```{r}
 #| label: damping
 # --- half-power bandwidth, from the spectrum
-bw <- vapply(peaks_un, function(k) half_power(freqs_un, mag_un, k), numeric(1))
+bw <- map_dbl(peaks_un, ~ half_power(freqs_un, mag_un, .x))
 zeta_hp <- bw / (2 * f_modes)
 
 # --- logarithmic decrement, from a band-passed first mode
@@ -374,7 +371,7 @@ u_zeta_ld <- fit_dec$u_slope / (2 * pi)
 p_bp <- ggplot(data.frame(t = t_bp, x = x_bp), aes(t, x)) +
   geom_line(linewidth = 0.2) +
   geom_point(data = data.frame(t = t_bp[pk], x = x_bp[pk]), aes(t, x), size = 0.6) +
-  labs(x = "Time [s]", y = "Band-passed mode 1 [V]")
+  labs(x = "Time (s)", y = "Band-passed mode 1 (V)")
 
 dec_df <- data.frame(i = seq_along(pk) - 1, y = log(x_bp[pk]))
 p_dec <- ggplot(dec_df, aes(i, y)) +
@@ -390,15 +387,15 @@ p_bp | p_dec
 #| label: out-damping
 #| echo: false
 #| output: asis
-rows <- vapply(seq_along(f_modes), function(i) {
+rows <- map_chr(seq_along(f_modes), function(i) {
   if (is.finite(bw[i])) {
     sprintf("| %d | %.2f | %.3f | %.2f |", i, f_modes[i], bw[i], zeta_hp[i] * 1e3)
   } else {
     sprintf("| %d | %.2f | not resolvable | — |", i, f_modes[i])
   }
-}, character(1))
+})
 cat(sprintf('
-| Mode | $f_n$ [Hz] | Half-power width [Hz] | $\\zeta$ [10⁻³] |
+| Mode | $f_n$ (Hz) | Half-power width (Hz) | $\\zeta$ (10⁻³) |
 |---|---|---|---|
 %s
 
@@ -412,7 +409,7 @@ cat(sprintf('
 #| output: asis
 ratio_est <- zeta_hp[1] / zeta_ld
 cat(sprintf('
-| Estimator | $\\zeta_1$ [10⁻³] | From |
+| Estimator | $\\zeta_1$ (10⁻³) | From |
 |---|---|---|
 | Logarithmic decrement | %.2f ± %.2f | %d peaks of the band-passed mode |
 | Half-power bandwidth | %.2f | A %.3f Hz bin over the %.0f s identification window |
@@ -443,12 +440,12 @@ id_window_ld <- t_ld <= ID_WINDOW_S
 sp_ld <- spectrum_of(strain_ld[id_window_ld], fs_ld)
 freqs_ld <- sp_ld$freqs; mag_ld <- sp_ld$mag
 peaks_ld <- find_modes(freqs_ld, mag_ld)
-f_modes_ld <- vapply(peaks_ld, function(k) refine_peak(freqs_ld, mag_ld, k), numeric(1))
+f_modes_ld <- map_dbl(peaks_ld, ~ refine_peak(freqs_ld, mag_ld, .x))
 
 sp_ac <- spectrum_of(accel_ld[id_window_ld], fs_ld)
 freqs_ac <- sp_ac$freqs; mag_ac <- sp_ac$mag
 peaks_ac <- find_modes(freqs_ac, mag_ac)
-f_modes_ac <- vapply(peaks_ac, function(k) refine_peak(freqs_ac, mag_ac, k), numeric(1))
+f_modes_ac <- map_dbl(peaks_ac, ~ refine_peak(freqs_ac, mag_ac, .x))
 
 loading_ratio <- f_modes_ld[1] / f_modes[1]
 bin_ld <- freqs_ld[2] - freqs_ld[1]
@@ -461,7 +458,7 @@ u_loading <- loading_ratio * sqrt((bin_ld / 2 / f_modes_ld[1])^2 +
 #| echo: false
 #| output: asis
 cat(sprintf('
-| Configuration | Channel | $f_1$ [Hz] |
+| Configuration | Channel | $f_1$ (Hz) |
 |---|---|---|
 | Accelerometer removed | strain | %.3f |
 | Accelerometer fitted | strain | %.3f |

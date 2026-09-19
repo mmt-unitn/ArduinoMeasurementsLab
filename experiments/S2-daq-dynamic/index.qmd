@@ -64,7 +64,7 @@ Both ship with reference data and produce the same numbers.
 | Timing penalty, in bits | The same fit on the nominal grid and on `t_us` | The argument for using timestamps, everywhere on this site |
 | Aperture jitter $\sigma_j$ | Fit of the jitter limit to the high-frequency end | The ceiling no front-end improvement can lift |
 | Noise/jitter crossover | Where the jitter limit meets S1's noise floor | [S3](../S3-aliasing-filtering/index.qmd)'s filter budget; M3's modal resolution |
-| Clock accuracy [ppm] | $\hat{f}/f_\mathrm{gen} - 1$ | Every frequency this platform reports |
+| Clock accuracy (ppm) | $\hat{f}/f_\mathrm{gen} - 1$ | Every frequency this platform reports |
 
 : What S2 produces {#tbl-s2-index-outputs}
 

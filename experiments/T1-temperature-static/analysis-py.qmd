@@ -227,7 +227,7 @@ rows = "\n".join(
     f"{r.T_fit_C:.3f} | {r.residual_K * 1e3:+.1f} |"
     for r in ntc.itertuples())
 print(f"""
-| Run | Bath [degC] | $u$(bath) [K] | $R$ [ohm] | Fitted $T$ [degC] | Residual [mK] |
+| Run | Bath (degC) | $u$(bath) (K) | $R$ (ohm) | Fitted $T$ (degC) | Residual (mK) |
 |---|---|---|---|---|---|
 {rows}
 
@@ -257,14 +257,14 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.2),
 r_grid = np.linspace(ntc["R_ohm"].min() * 0.95, ntc["R_ohm"].max() * 1.05, 200)
 ax1.plot(r_grid, t_ntc_from_r(r_grid, coef_sh), "-", lw=1.2, label="fit")
 ax1.plot(ntc["R_ohm"], ntc["bath_C"], "o", ms=7, label="bath points")
-ax1.set_xlabel("Resistance [ohm]")
-ax1.set_ylabel("Temperature [degC]")
+ax1.set_xlabel("Resistance (ohm)")
+ax1.set_ylabel("Temperature (degC)")
 ax1.legend(loc="upper right", frameon=False)
 
 ax2.axhline(0.0, lw=0.8, color="0.4")
 ax2.plot(ntc["bath_C"], ntc["residual_K"] * 1e3, "o-", ms=7, lw=1.0)
-ax2.set_xlabel("Bath temperature [degC]")
-ax2.set_ylabel("Residual [mK]")
+ax2.set_xlabel("Bath temperature (degC)")
+ax2.set_ylabel("Residual (mK)")
 fig.tight_layout()
 plt.show()
 ```
@@ -311,7 +311,7 @@ rows = "\n".join(
     f"{r.T_fit_C:.3f} | {r.residual_K * 1e3:+.1f} |"
     for r in pt.itertuples())
 print(f"""
-| Run | Bath [degC] | $u$(bath) [K] | $R$ [ohm] | Fitted $T$ [degC] | Residual [mK] |
+| Run | Bath (degC) | $u$(bath) (K) | $R$ (ohm) | Fitted $T$ (degC) | Residual (mK) |
 |---|---|---|---|---|---|
 {rows}
 
@@ -340,14 +340,14 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 5.2),
 t_grid = np.linspace(pt["bath_C"].min(), pt["bath_C"].max(), 200)
 ax1.plot(t_grid, r_pt_from_t(t_grid, R0_FIT, A_FIT), "-", lw=1.2, label="fit")
 ax1.plot(pt["bath_C"], pt["R_ohm"], "o", ms=7, label="bath points")
-ax1.set_xlabel("Bath temperature [degC]")
-ax1.set_ylabel("Resistance [ohm]")
+ax1.set_xlabel("Bath temperature (degC)")
+ax1.set_ylabel("Resistance (ohm)")
 ax1.legend(loc="upper left", frameon=False)
 
 ax2.axhline(0.0, lw=0.8, color="0.4")
 ax2.plot(pt["bath_C"], pt["residual_K"] * 1e3, "o-", ms=7, lw=1.0)
-ax2.set_xlabel("Bath temperature [degC]")
-ax2.set_ylabel("Residual [mK]")
+ax2.set_xlabel("Bath temperature (degC)")
+ax2.set_ylabel("Residual (mK)")
 fig.tight_layout()
 plt.show()
 ```
@@ -404,7 +404,7 @@ resolution_pt_mK = sigma_floor / dV_dT_pt * 1e3
 #| echo: false
 #| output: asis
 print(f"""
-| Sensor | $\\mathrm{{d}}V/\\mathrm{{d}}T$ at {T_OP:.0f} degC [mV/K] | S1 noise floor $\\sigma$ [mV] | Resolution $\\delta T_\\mathrm{{res}}$ [mK] |
+| Sensor | $\\mathrm{{d}}V/\\mathrm{{d}}T$ at {T_OP:.0f} degC (mV/K) | S1 noise floor $\\sigma$ (mV) | Resolution $\\delta T_\\mathrm{{res}}$ (mK) |
 |---|---|---|---|
 | NTC (divider) | {dV_dT_ntc * 1e3:.3f} | {sigma_floor * 1e3:.4f} | {resolution_ntc_mK:.1f} |
 | Pt1000 (bridge) | {dV_dT_pt * 1e3:.3f} | {sigma_floor * 1e3:.4f} | {resolution_pt_mK:.1f} |
@@ -442,8 +442,8 @@ dvdt_pt = np.diff(pt["mean_V"].to_numpy()) / np.diff(pt["bath_C"].to_numpy())
 fig, ax = plt.subplots(figsize=(7.0, 3.6))
 ax.plot(t_mid_ntc, dvdt_ntc * 1e3, "o-", label="NTC (divider)")
 ax.plot(t_mid_pt, dvdt_pt * 1e3, "s-", label="Pt1000 (bridge)")
-ax.set_xlabel("Bath temperature [degC]")
-ax.set_ylabel("Empirical dV/dT [mV/K]")
+ax.set_xlabel("Bath temperature (degC)")
+ax.set_ylabel("Empirical dV/dT (mV/K)")
 ax.legend(frameon=False)
 fig.tight_layout()
 plt.show()
@@ -496,7 +496,7 @@ delta_pt_mw_k = (p_pt_high - p_pt_low) * 1e3 / dT_pt
 #| echo: false
 #| output: asis
 print(f"""
-| Sensor | $V$ low / high [V] | $P$ low / high [mW] | $\\Delta T_\\mathrm{{sh}}$ [K] | $\\delta$ [mW/K] |
+| Sensor | $V$ low / high (V) | $P$ low / high (mW) | $\\Delta T_\\mathrm{{sh}}$ (K) | $\\delta$ (mW/K) |
 |---|---|---|---|---|
 | NTC | {ch_ntc_low['excitation_v']:.2f} / {ch_ntc_high['excitation_v']:.2f} | {p_ntc_low * 1e3:.4f} / {p_ntc_high * 1e3:.4f} | {dT_ntc:.4f} | {delta_ntc_mw_k:.2f} |
 | Pt1000 | {ch_pt_low['excitation_v']:.2f} / {ch_pt_high['excitation_v']:.2f} | {p_pt_low * 1e3:.4f} / {p_pt_high * 1e3:.4f} | {dT_pt:.4f} | {delta_pt_mw_k:.2f} |

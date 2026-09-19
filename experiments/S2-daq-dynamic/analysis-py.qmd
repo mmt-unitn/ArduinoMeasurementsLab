@@ -196,13 +196,13 @@ model = coef[0] * np.cos(w) + coef[1] * np.sin(w) + coef[2]
 
 ax1.plot((dense - t_detail[0]) * 1e3, model, lw=1.0, label="fit")
 ax1.plot(t_rel_ms[show], y_detail[show], "o", ms=3, label="samples")
-ax1.set_ylabel("ADC input [V]")
+ax1.set_ylabel("ADC input (V)")
 ax1.legend(frameon=False, loc="upper right")
 
 ax2.axhline(0.0, color="0.4", lw=0.8)
 ax2.plot(t_rel_ms, fit_detail["residual"] * 1e3, lw=0.5)
-ax2.set_xlabel("Time [ms]")
-ax2.set_ylabel("Residual [mV]")
+ax2.set_xlabel("Time (ms)")
+ax2.set_ylabel("Residual (mV)")
 fig.tight_layout()
 plt.show()
 ```
@@ -273,7 +273,7 @@ rows = "\n".join(
     f"{r.penalty_bits:.2f} |"
     for r in sweep.itertuples())
 print(f"""
-| $f_\\mathrm{{gen}}$ [Hz] | Amplitude [V] | $\\sigma_r$ on `t_us` [mV] | ENOB | $\\sigma_r$ on the grid [mV] | ENOB | Penalty [bit] |
+| $f_\\mathrm{{gen}}$ (Hz) | Amplitude (V) | $\\sigma_r$ on `t_us` (mV) | ENOB | $\\sigma_r$ on the grid (mV) | ENOB | Penalty (bit) |
 |---|---|---|---|---|---|---|
 {rows}
 
@@ -362,7 +362,7 @@ ax.plot(sweep["f_gen_Hz"], sweep["enob_nom"], "x", ms=7, label="on the nominal g
 ax.axvline(f_cross, color="0.4", lw=0.8, ls=":")
 ax.set_xscale("log")
 ax.set_ylim(0, enob_noise + 2)
-ax.set_xlabel("Generator frequency [Hz]")
+ax.set_xlabel("Generator frequency (Hz)")
 ax.set_ylabel("Effective number of bits")
 ax.legend(frameon=False, fontsize=8, loc="lower left")
 fig.tight_layout()
@@ -429,7 +429,7 @@ rows = "\n".join(
     f"{r.u_ppm_fit:.3f} | {r.u_ppm_gen:.2f} |"
     for r in sweep.itertuples())
 print(f"""
-| $f_\\mathrm{{gen}}$ [Hz] | $\\hat{{f}}$ [Hz] | $\\delta$ [ppm] | $u(\\hat{{f}})$ [ppm] | $u(f_\\mathrm{{gen}})$ [ppm] |
+| $f_\\mathrm{{gen}}$ (Hz) | $\\hat{{f}}$ (Hz) | $\\delta$ (ppm) | $u(\\hat{{f}})$ (ppm) | $u(f_\\mathrm{{gen}})$ (ppm) |
 |---|---|---|---|---|
 {rows}
 
@@ -451,8 +451,8 @@ ax.fill_between([sweep["f_gen_Hz"].min() * 0.7, sweep["f_gen_Hz"].max() * 1.5],
                 color="0.85", zorder=0,
                 label="generator specification")
 ax.set_xscale("log")
-ax.set_xlabel("Generator frequency [Hz]")
-ax.set_ylabel("Clock error $\\delta$ [ppm]")
+ax.set_xlabel("Generator frequency (Hz)")
+ax.set_ylabel("Clock error $\\delta$ (ppm)")
 ax.legend(frameon=False, fontsize=8)
 fig.tight_layout()
 plt.show()

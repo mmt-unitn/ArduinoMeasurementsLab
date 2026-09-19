@@ -258,8 +258,8 @@ ax.plot(t_un, strain_un - strain_un.mean(), lw=0.4)
 ax.axvline(ID_WINDOW_S, color="0.4", lw=0.9, ls="--")
 ax.text(ID_WINDOW_S, ax.get_ylim()[1] * 0.85,
         f"  modes identified within {ID_WINDOW_S:.0f} s", fontsize=8, color="0.3")
-ax.set_xlabel("Time [s]")
-ax.set_ylabel("Strain channel [V, mean removed]")
+ax.set_xlabel("Time (s)")
+ax.set_ylabel("Strain channel (V, mean removed)")
 fig.tight_layout()
 plt.show()
 ```
@@ -286,7 +286,7 @@ rows = "\n".join(
     f"| {i + 1} | {LAMBDA[i]:.6f} | {f_modes[i]:.3f} | {mag_un[peaks_un[i]] * 1e3:.3f} |"
     for i in range(len(f_modes)))
 print(f"""
-| Mode | $\\lambda_n$ | $f_n$ [Hz] | Peak amplitude [mV] |
+| Mode | $\\lambda_n$ | $f_n$ (Hz) | Peak amplitude (mV) |
 |---|---|---|---|
 {rows}
 
@@ -324,8 +324,8 @@ for i, f in enumerate(f_modes):
 for r in ratios_theory:
     ax.axvline(f_modes[0] * r, color="#b6771a", lw=0.9, ls="--")
 ax.set_xlim(0, min(f_modes[-1] * 1.4, fs_un / 2))
-ax.set_xlabel("Frequency [Hz]")
-ax.set_ylabel("Amplitude [V]")
+ax.set_xlabel("Frequency (Hz)")
+ax.set_ylabel("Amplitude (V)")
 fig.tight_layout()
 plt.show()
 ```
@@ -386,8 +386,8 @@ u_zeta_ld = fit_dec["u_slope"] / (2.0 * np.pi)
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.6, 3.2))
 ax1.plot(t_bp, x_bp, lw=0.4)
 ax1.plot(t_bp[pk], x_bp[pk], "o", ms=2.5)
-ax1.set_xlabel("Time [s]")
-ax1.set_ylabel("Band-passed mode 1 [V]")
+ax1.set_xlabel("Time (s)")
+ax1.set_ylabel("Band-passed mode 1 (V)")
 
 ax2.plot(np.arange(pk.size), np.log(x_bp[pk]), "o", ms=3)
 grid = np.arange(pk.size, dtype=float)
@@ -409,7 +409,7 @@ rows = "\n".join(
     + " |"
     for i in range(len(f_modes)))
 print(f"""
-| Mode | $f_n$ [Hz] | Half-power width [Hz] | $\\zeta$ [10⁻³] |
+| Mode | $f_n$ (Hz) | Half-power width (Hz) | $\\zeta$ (10⁻³) |
 |---|---|---|---|
 {rows}
 
@@ -424,7 +424,7 @@ print(f"""
 n_cycles = pk.size
 ratio_est = zeta_hp[0] / zeta_ld if np.isfinite(zeta_hp[0]) else float("nan")
 print(f"""
-| Estimator | $\\zeta_1$ [10⁻³] | From |
+| Estimator | $\\zeta_1$ (10⁻³) | From |
 |---|---|---|
 | Logarithmic decrement | {zeta_ld * 1e3:.2f} ± {u_zeta_ld * 1e3:.2f} | {n_cycles} peaks of the band-passed mode |
 | Half-power bandwidth | {zeta_hp[0] * 1e3:.2f} | A {bin_hz:.3f} Hz bin over the {ID_WINDOW_S:.0f} s identification window |
@@ -470,7 +470,7 @@ u_loading = loading_ratio * np.hypot(bin_ld / 2 / f_modes_ld[0],
 #| echo: false
 #| output: asis
 print(f"""
-| Configuration | Channel | $f_1$ [Hz] |
+| Configuration | Channel | $f_1$ (Hz) |
 |---|---|---|
 | Accelerometer removed | strain | {f_modes[0]:.3f} |
 | Accelerometer fitted | strain | {f_modes_ld[0]:.3f} |

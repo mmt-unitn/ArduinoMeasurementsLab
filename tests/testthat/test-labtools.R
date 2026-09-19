@@ -300,7 +300,7 @@ test_that("budget_table rejects a type-a component without std", {
 
 test_that("budget_to_markdown carries the totals", {
   text <- budget_to_markdown(budget_table(.components()))
-  expect_true(grepl("$h_i$ [%]", text, fixed = TRUE))
+  expect_true(grepl("$h_i$ (%)", text, fixed = TRUE))
   expect_true(grepl("Combined standard uncertainty", text, fixed = TRUE))
   expect_true(grepl("Expanded uncertainty", text, fixed = TRUE))
 })
