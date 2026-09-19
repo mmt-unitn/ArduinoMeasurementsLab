@@ -19,6 +19,9 @@ makes it possible to teach the whole chain — sensor, conditioning, conversion,
 sampling, estimation, uncertainty — on a bench that costs a fraction of a
 commercial DAQ.
 
+![Arduino Portenta](images/portenta.png){#fig-portenta width=100%}
+
+
 ## Who this is for
 
 ::: {.grid}
