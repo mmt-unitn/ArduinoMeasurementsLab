@@ -29,6 +29,10 @@ $$
 x(t) = x_0 + \dot{x}\,t + A_d\sin\!\left(\frac{2\pi t}{P_d} + \phi_d\right) + \varepsilon(t)
 $$ {#eq-t3-fit}
 
+::: {.content-visible when-format="revealjs"}
+### Separating drift from the diurnal cycle (2)
+:::
+
 with $P_d = 24\ \mathrm{h}$ fixed (not fitted — it is a property of the
 Earth, not of the instrument), $\dot{x}$ the **drift**, reported in mK/h, and
 $\varepsilon(t)$ everything the deterministic model does not explain. Fitting
@@ -47,7 +51,7 @@ sine fit, because the frequency is known rather than estimated.
 :::
 
 ::: {.content-visible when-format="revealjs"}
-### Separating drift from the diurnal cycle (2)
+### Separating drift from the diurnal cycle (3)
 :::
 
 What is left over, $\varepsilon(t)$, is what [@sec-t3-allan]{.content-hidden when-format="revealjs"}[@sec-t3-allan-rj]{.content-visible when-format="revealjs"} characterizes. Fit

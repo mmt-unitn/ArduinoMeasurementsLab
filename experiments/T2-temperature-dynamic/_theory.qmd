@@ -11,7 +11,13 @@ a time set by how fast heat crosses into it. A step is the cheapest possible
 interrogation of that behaviour — one action, no instrumentation beyond what
 T1 already used, and a response that contains the whole first-order dynamics.
 
+::: {.content-hidden when-format="revealjs"}
 ### The first-order model {#sec-t2-first-order}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### The first-order model (1)
+:::
 
 Treat the sensor as a lump of material at a single temperature $T$, exchanging
 heat with a medium at $T_\infty$ through a surface $A$ with convection
@@ -37,6 +43,10 @@ $\mathrm{Bi} = hL_c/k$, with $L_c$ a characteristic length and $k$ the
 sensor's own thermal conductivity: below about $0.1$ the internal gradient is
 negligible and one lump is enough. A bare thermistor bead in air is
 comfortably in that regime; the same bead inside a stainless sheath is not.
+:::
+
+::: {.content-visible when-format="revealjs"}
+### The first-order model (2)
 :::
 
 **$\tau$ is a property of the sensor *and* the medium together**, not of the
@@ -86,7 +96,13 @@ with $\tau$, and shows the linearised fit alongside so the difference is
 visible rather than asserted.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### From $\tau$ to the convection coefficient {#sec-t2-h}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### From $\tau$ to the convection coefficient (1)
+:::
 
 Rearranging the definition in @eq-t2-step,
 
@@ -102,6 +118,10 @@ coefficients,
 $$
 \frac{h_2}{h_1} = \frac{\tau_1}{\tau_2}
 $$ {#eq-t2-h-ratio}
+
+::: {.content-visible when-format="revealjs"}
+### From $\tau$ to the convection coefficient (2)
+:::
 
 needs no probe geometry at all — which is fortunate, because
 $\rho c V/A$ for a real encapsulated sensor is not something a laboratory can

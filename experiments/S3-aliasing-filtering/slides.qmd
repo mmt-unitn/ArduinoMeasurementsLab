@@ -13,6 +13,7 @@ format:
     transition: none
     footer: "[home](index.qmd)"
     link-external-newwindow: true
+    html-math-method: katex
 ---
 
 ## Before the bench {.center}

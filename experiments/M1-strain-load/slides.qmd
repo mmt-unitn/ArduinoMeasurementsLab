@@ -13,6 +13,7 @@ format:
     transition: none
     footer: "[home](index.qmd)"
     link-external-newwindow: true
+    html-math-method: katex
 ---
 
 ## Before the bench {.center}
@@ -50,7 +51,7 @@ reasonable.
 
 ## At the bench {.center}
 
-### What you will build
+### What you will build (1)
 
 Two amplifier stages — one for a standalone load cell, one for gauges bonded
 to [the cantilever beam](../../hardware/beam-rig.qmd) — each verified at its
@@ -65,6 +66,8 @@ quiescent output before a sensor is connected.
 | Beam gauges: quarter, half, full bridge | Sensitivity ratio 1 : 2 : 4 |
 | Quarter vs. half bridge, two temperatures | Temperature compensation |
 :::
+
+### What you will build (2)
 
 ::: {.callout-warning}
 ## What ruins the session

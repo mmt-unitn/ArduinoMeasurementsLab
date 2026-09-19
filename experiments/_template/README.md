@@ -89,6 +89,24 @@ screenshots, because obscura cannot finish Reveal.js's own initialisation —
 its math plugin throws in that engine — so the deck never paints; the script
 imposes the same 1024×768 geometry Reveal would and measures inside it.
 
+**The decks set `html-math-method: katex` for a reason that is not cosmetic.**
+Quarto's default for RevealJS routes MathJax through the same plugin that
+throws, so the equations are never typeset and the checker measures their raw
+TeX source instead of the rendered mathematics. That is not a small
+difference: five slides that measured comfortably under the limit as raw TeX
+were over it once the maths actually rendered. KaTeX runs, so the numbers mean
+something. If you change the math method, re-check every deck — and do not
+trust a green report from a deck whose equations did not render.
+
+A quick way to tell whether a measurement is trustworthy:
+
+```bash
+obscura fetch --allow-private-network --wait 8   --eval "document.querySelectorAll('.katex').length"   http://localhost:8931/experiments/<id>/slides.html
+```
+
+Zero on a deck that contains equations means the maths did not render and the
+heights are meaningless.
+
 **Splitting a long slide must not split the handbook.** `_theory.qmd` is
 included by both, so the extra headings are made revealjs-only and the
 original heading — which carries the `{#sec-...}` anchor every cross-reference

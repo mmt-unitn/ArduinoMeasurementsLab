@@ -9,7 +9,13 @@ read off a spectrum.
 That is the whole appeal of a tap test. No shaker, no swept excitation, no
 force transducer: an impulse and a sensor.
 
+::: {.content-hidden when-format="revealjs"}
 ### Frequencies without dimensions {#sec-m3-frequencies}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Frequencies without dimensions (1)
+:::
 
 For a uniform cantilever of length $L$, cross-section $A = bh$, second moment
 $I = bh^3/12$, density $\rho$ and modulus $E$, Euler–Bernoulli theory gives
@@ -25,6 +31,10 @@ $$
 \lambda_2 \approx 4.6941, \qquad
 \lambda_3 \approx 7.8548
 $$ {#eq-m3-lambda}
+
+::: {.content-visible when-format="revealjs"}
+### Frequencies without dimensions (2)
+:::
 
 ::: {.callout-important}
 ## The ratios are the testable prediction
@@ -92,7 +102,13 @@ exponential, which shows up as curvature in a plot of $\ln x_i$ against $i$
 and is invisible in a single $\delta$ computed from two peaks.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### Mass loading: the sensor changes the answer {#sec-m3-loading}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Mass loading: the sensor changes the answer (1)
+:::
 
 An accelerometer of mass $m$ at the tip lowers the first natural frequency,
 because it adds mass without adding stiffness. Using the first mode's
@@ -105,6 +121,10 @@ $$ {#eq-m3-loading}
 This is a systematic error the experimenter introduces by measuring. It cannot
 be averaged away, and it is not visible in a single recording — a loaded beam
 rings perfectly cleanly at the wrong frequency.
+
+::: {.content-visible when-format="revealjs"}
+### Mass loading: the sensor changes the answer (2)
+:::
 
 **The strain gauge is the way out.** A foil gauge bonded to the surface adds
 no measurable mass, so it reports the beam's true frequency whether or not the
@@ -119,7 +139,13 @@ $$ {#eq-m3-loading-measured}
 
 and needs no knowledge of $m$, $\rho$, $A$ or $L$.
 
+::: {.content-hidden when-format="revealjs"}
 ### What the sampling has to deliver {#sec-m3-sampling}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### What the sampling has to deliver (1)
+:::
 
 This is the first experiment on this site whose measurand is a *frequency*, so
 the quality of the time axis enters directly.
@@ -130,11 +156,20 @@ the quality of the time axis enters directly.
 - **Record length.** Frequency resolution is $1/T$. Resolving a half-power
   bandwidth of $2\zeta f_n$ needs $T \gg 1/(2\zeta f_n)$ — which for a lightly
   damped mode is many cycles.
+
+::: {.content-visible when-format="revealjs"}
+### What the sampling has to deliver (2)
+:::
+
 - **Grid quality.** [S1](../S1-daq-static/index.qmd) measured this platform's
   timing residuals and [S2](../S2-daq-dynamic/index.qmd) turned them into a
   penalty in bits. A frequency estimated against the device's own `t_us` is as
   good as that grid; estimated against a nominal rate, it inherits the clock
   error S2 measured in ppm, which is a *scale factor on every frequency here*.
+
+::: {.content-visible when-format="revealjs"}
+### What the sampling has to deliver (3)
+:::
 
 ::: {.callout-warning}
 ## A decaying signal is not a stationary one

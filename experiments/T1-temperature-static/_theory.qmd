@@ -253,6 +253,10 @@ $$
 \delta = \frac{P_\mathrm{high} - P_\mathrm{low}}{\Delta T_\mathrm{sh,high} - \Delta T_\mathrm{sh,low}}
 $$ {#eq-t1-selfheat-fit}
 
+::: {.content-visible when-format="revealjs"}
+### Self-heating: an error the excitation creates (3)
+:::
+
 Every quantity on the right is something this experiment already has: the two
 powers from the known excitation and the fitted resistance, and the two
 apparent temperatures from applying @eq-t1-sh or @eq-t1-cvd to the two
@@ -262,7 +266,7 @@ fitted curve already absorbed, and the interesting number is the extra shift
 at high excitation, relative to it.
 
 ::: {.content-visible when-format="revealjs"}
-### Self-heating: an error the excitation creates (3)
+### Self-heating: an error the excitation creates (4)
 :::
 
 ::: {.callout-important}
