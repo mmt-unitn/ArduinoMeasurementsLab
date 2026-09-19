@@ -68,3 +68,62 @@ Never Unicode glyphs, in any format.
 
 **No invented numbers.** Anything not yet measured is
 `[TODO (Paolo)]{.todo}`, which renders highlighted.
+
+## Slides that fit the frame
+
+The decks are authored at **1024×768 (4:3)**, the ratio the lecture rooms
+project at, and carry a `footer:` with a link back to the experiment's
+overview. Reveal.js does **not** shrink a slide whose content is too tall: it
+simply overflows the frame, invisibly, off the bottom of the screen.
+
+Check every deck after editing any theory:
+
+```bash
+quarto render experiments/<id>/slides.qmd
+tools/slides/check.sh <id>            # or with no argument, every deck
+```
+
+It reports each slide taller than the usable height (768 less the footer and
+the slide number) and exits non-zero if any is. It measures rather than
+screenshots, because obscura cannot finish Reveal.js's own initialisation —
+its math plugin throws in that engine — so the deck never paints; the script
+imposes the same 1024×768 geometry Reveal would and measures inside it.
+
+**Splitting a long slide must not split the handbook.** `_theory.qmd` is
+included by both, so the extra headings are made revealjs-only and the
+original heading — which carries the `{#sec-...}` anchor every cross-reference
+points at — is hidden from the slides only:
+
+```markdown
+::: {.content-hidden when-format="revealjs"}
+### Quantization {#sec-s1-quantization}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Quantization (1)
+:::
+
+first part
+
+::: {.content-visible when-format="revealjs"}
+### Quantization (2)
+:::
+
+second part
+```
+
+The handbook then renders exactly as before — one section, one anchor, no
+numbering — and the deck gets two slides.
+
+Three things that go wrong:
+
+- **A fenced div needs a blank line before it.** Inserted directly after a
+  bullet or a paragraph line it becomes a lazy continuation of that block, and
+  the literal `:::` is printed into the handbook. Quarto warns
+  (`The following string was found in the document: :::`); do not ignore it.
+- **Never break a table across slides.** A header row on one slide and a
+  conclusion on the next is worse than a small font. Put `{.smaller}` on the
+  revealjs-only heading instead — it is a slide-only attribute, so the
+  handbook is unaffected.
+- **Re-render the handbook too** and confirm it still reports zero warnings
+  and that no `(1)` or `(2)` reached it.

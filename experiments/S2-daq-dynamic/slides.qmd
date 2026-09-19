@@ -7,9 +7,10 @@ format:
     theme: [default, ../../assets/revealjs.scss]
     slide-level: 3
     slide-number: c/t
-    width: 1280
-    height: 760
+    width: 1024
+    height: 768
     transition: none
+    footer: "[home](index.qmd)"
     link-external-newwindow: true
 ---
 

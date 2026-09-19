@@ -1,4 +1,10 @@
+::: {.content-hidden when-format="revealjs"}
 ### What a data acquisition system does to a voltage {#sec-s1-chain}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### What a data acquisition system does to a voltage (1)
+:::
 
 Between the quantity you care about and the number in your file there is a
 chain, and every link adds something of its own. For S1 the chain is short on
@@ -17,6 +23,10 @@ $$
 \underbrace{N}_{\text{code}}
 $$ {#eq-s1-chain}
 
+::: {.content-visible when-format="revealjs"}
+### What a data acquisition system does to a voltage (2)
+:::
+
 The four terms are different in kind, and the whole experiment is about
 telling them apart:
 
@@ -27,13 +37,24 @@ telling them apart:
 - $\mathrm{INL}(V)$, the **integral nonlinearity**, is systematic but not
   described by two numbers. Unless you characterize it point by point it
   remains as a bound: an interval you cannot correct within.
+
+::: {.content-visible when-format="revealjs"}
+### What a data acquisition system does to a voltage (3)
+:::
+
 - $\eta$, the **noise**, is random. It averages down as $1/\sqrt{N}$, which is
   why it is the one term you can trade measurement time against.
 - **Quantization** is deterministic given the input, but over a population of
   inputs it behaves like a bounded random error, and that is how the GUM
   treats it.
 
+::: {.content-hidden when-format="revealjs"}
 ### Quantization {#sec-s1-quantization}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Quantization (1)
+:::
 
 The converter reports an integer code $N$. The driver turns it back into volts
 with full scale $2^n - 1$:
@@ -57,6 +78,10 @@ distribution on an interval of width $q$: $\int_{-q/2}^{q/2} x^2\,\mathrm{d}x/q
 = q^2/12$. It appears again in @eq-s1-enob and again, with $q = 1\,\mu$s, for
 the timestamps in @sec-s1-timing. Whenever you know a bound and nothing about
 what happens inside it, this is the number you use.
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Quantization (2)
 :::
 
 On a board reporting $n = 16$ bits with $V_\mathrm{ref} = 3.3$ V,
@@ -154,7 +179,13 @@ $$
 \frac{\partial \hat V}{\partial b} = -\frac{V_\mathrm{ind} - a}{b^{2}}
 $$ {#eq-s1-sensitivity}
 
+::: {.content-hidden when-format="revealjs"}
 ### Timestamps: is the sampling grid real? {#sec-s1-timing}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Timestamps: is the sampling grid real? (1)
+:::
 
 Every streamed record carries the device's own `micros()` value. Sampling runs
 from `loop()`, not from a timer interrupt, so the grid is *requested*, not
@@ -167,6 +198,10 @@ $$
 \qquad
 r_i = t_i - \left(\hat{t}_0 + i\,\hat{T}\right)
 $$ {#eq-s1-grid}
+
+::: {.content-visible when-format="revealjs"}
+### Timestamps: is the sampling grid real? (2) {.smaller}
+:::
 
 and read the residuals. There are three signatures, and they mean different
 things:
@@ -194,7 +229,13 @@ is $3 \times 10^{-4}$ of the period and you may ignore it; at 30 kHz it is
 about 1 % and you may not.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### Two influence quantities you cannot see in the data {#sec-s1-influence}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Two influence quantities you cannot see in the data (1)
+:::
 
 An **influence quantity** is something that affects the result without being
 the measurand. S1 has two worth naming.
@@ -206,6 +247,10 @@ difference is one conversion time per channel of separation. For a constant
 input this changes nothing. For a signal changing at $\dot{V}$ it is a
 systematic error of $\dot{V}\,\Delta t$ on the later channel, and it is
 invisible in the file, because the timestamps claim simultaneity.
+
+::: {.content-visible when-format="revealjs"}
+### Two influence quantities you cannot see in the data (2)
+:::
 
 **The host operating system.** The board samples on its own, but the host has
 to drain the bulk endpoint. A host that is late makes the device's buffer
