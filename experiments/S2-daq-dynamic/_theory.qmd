@@ -78,7 +78,13 @@ device's clock are two different oscillators, so their ratio is a measurement
 looks like distortion and is not, which would corrupt the ENOB.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### Coherent and non-coherent sampling {#sec-s2-coherent}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Coherent and non-coherent sampling (1)
+:::
 
 If the record contains an exact integer number of signal cycles, and that
 integer shares no factor with the number of samples, then the samples land on
@@ -96,6 +102,10 @@ with $M$ the number of cycles in the record and $n$ the number of samples.
 Choosing $n$ **prime** makes the coprimality automatic for every $M$ between
 $1$ and $n$, which is why the reference data uses $n = 2003$.
 
+::: {.content-visible when-format="revealjs"}
+### Coherent and non-coherent sampling (2)
+:::
+
 ::: {.callout-warning}
 ## Perfect coherence is not available on this platform
 
@@ -110,7 +120,13 @@ residual. A three-parameter fit at the nominal frequency would not survive
 this, and that is worth knowing before trusting one.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### Effective bits, and the two time bases {#sec-s2-enob}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Effective bits, and the two time bases (1)
+:::
 
 Subtract the fitted sinusoid and what is left is everything the model does not
 explain: noise, quantization, distortion, and timing error. Its RMS,
@@ -119,6 +135,10 @@ $\sigma_r$, converts to an effective number of bits exactly as in S1:
 $$
 \mathrm{ENOB} = \log_2\!\left(\frac{\mathrm{FSR}}{\sqrt{12}\,\sigma_r}\right)
 $$ {#eq-s2-enob}
+
+::: {.content-visible when-format="revealjs"}
+### Effective bits, and the two time bases (2)
+:::
 
 The experiment computes this **twice from the same samples**, changing only
 the time base fed to the fit:
@@ -173,7 +193,13 @@ the same ceiling at high frequency. Resolution you cannot time is resolution
 you do not have.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### Clock accuracy {#sec-s2-clock}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Clock accuracy (1)
+:::
 
 The fitted frequency $\hat{f}$ is expressed in the device's own time base,
 because `t_us` is the device's `micros()`. The generator's frequency
@@ -190,6 +216,10 @@ device time, so the sign of $\delta$ tells you which way the board's
 oscillator errs. The measurement is only ever as good as the generator: its
 own frequency uncertainty enters the budget directly, and if the generator is
 the worse of the two oscillators, this measures the generator.
+
+::: {.content-visible when-format="revealjs"}
+### Clock accuracy (2)
+:::
 
 ::: {.callout-important}
 ## The source has to be better than the thing you are measuring

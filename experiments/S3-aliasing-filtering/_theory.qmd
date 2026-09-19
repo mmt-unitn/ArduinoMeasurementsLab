@@ -1,4 +1,10 @@
+::: {.content-hidden when-format="revealjs"}
 ### Getting a bipolar signal onto a unipolar ADC {#sec-s3-conditioning}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Getting a bipolar signal onto a unipolar ADC (1)
+:::
 
 A signal generator's output is bipolar — it swings around 0 V — and an
 Arduino analog input is not: it accepts $0$ to $V_\mathrm{io}$ and clips, or
@@ -9,7 +15,13 @@ $$
 V_\mathrm{adc} = G\,V_\mathrm{in} + V_\mathrm{off}
 $$ {#eq-s3-conditioning}
 
-and the whole design problem is choosing $G$ and $V_\mathrm{off}$. Suppose the
+and the whole design problem is choosing $G$ and $V_\mathrm{off}$.
+
+::: {.content-visible when-format="revealjs"}
+### Getting a bipolar signal onto a unipolar ADC (2)
+:::
+
+Suppose the
 generator is set to a peak (bipolar) amplitude $V_g$, so
 $V_\mathrm{in} \in [-V_g, +V_g]$, and you want that interval to land on
 $[V_\mathrm{lo}, V_\mathrm{hi}]$ at the ADC pin, with
@@ -28,6 +40,10 @@ $$
 \hat{V}_\mathrm{in} = \frac{V_\mathrm{adc} - V_\mathrm{off}}{G}
 $$ {#eq-s3-recover}
 
+::: {.content-visible when-format="revealjs"}
+### Getting a bipolar signal onto a unipolar ADC (3)
+:::
+
 ::: {.callout-important}
 ## Never design for exactly full scale
 
@@ -39,6 +55,10 @@ a design target), and any overshoot on a fast edge. A stage designed for
 $V_\mathrm{hi}$ exactly at $V_\mathrm{io}$ clips the first time any of those
 three pushes the signal a millivolt too far, and a clipped sample is not
 noisy data — it is wrong data that looks like good data.
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Getting a bipolar signal onto a unipolar ADC (4)
 :::
 
 The reference data shipped with this experiment uses
@@ -54,6 +74,10 @@ $V_\mathrm{off} = V_\mathrm{io}/2$ here only because the headroom was chosen
 symmetric; nothing about @eq-s3-gain-offset requires that, and an input stage
 that itself has an offset error would want the two margins unequal so the
 worst case is still inside $[0, V_\mathrm{io}]$.
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Getting a bipolar signal onto a unipolar ADC (5)
 :::
 
 #### Uncertainty of the conditioned reading {#sec-s3-conditioning-uncertainty}
@@ -95,7 +119,13 @@ placeholders in `tools/synth/params/s3.yaml`, marked `TODO (Paolo)`, until a
 real network is characterized.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### Aliasing: what a slow sample rate does to a fast signal {#sec-s3-aliasing}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Aliasing: what a slow sample rate does to a fast signal (1) {#sec-s3-aliasing-deck}
+:::
 
 Sample a sinusoid of frequency $f$ at a rate $f_s < 2f$ and the sequence of
 numbers you get back is indistinguishable from a sinusoid at a lower
@@ -111,6 +141,10 @@ $f_s/2$, $f_a$ retraces $[0, f_s/2]$ — up, down, up, down — which is why
 plotting $f_a$ against $f$ for a sweep of generator frequencies produces a
 triangle wave, the **folding triangle**, with period $f_s$.
 
+::: {.content-visible when-format="revealjs"}
+### Aliasing: what a slow sample rate does to a fast signal (2)
+:::
+
 ::: {.callout-warning}
 ## Aliasing is not a measurement error you can find in the data
 
@@ -124,7 +158,13 @@ in this experiment, and it is the reason the next section exists: the only
 place aliasing can be *prevented* is before the sampler, never after.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### Anti-alias filtering: a design decision, not a fix {#sec-s3-filter}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Anti-alias filtering: a design decision, not a fix (1)
+:::
 
 An anti-alias filter is an analog low-pass filter placed ahead of the ADC so
 that whatever would fold into the band of interest is attenuated before it
@@ -138,7 +178,13 @@ $$ {#eq-s3-filter-mag}
 for an $n$-pole filter with corner (−3 dB) frequency $f_c$ — stated
 explicitly because it is a choice: the exact transfer function of $n$
 cascaded passive RC stages is a different, messier expression once each stage
-loads the one before it, and does not roll off as cleanly. @eq-s3-filter-mag
+loads the one before it, and does not roll off as cleanly.
+
+::: {.content-visible when-format="revealjs"}
+### Anti-alias filtering: a design decision, not a fix (2)
+:::
+
+@eq-s3-filter-mag
 is what you get from $n$ stages each buffered by an op-amp (unity-gain or
 otherwise), so that each stage sees a true voltage source and the stages'
 responses simply multiply; a first-order stage is @eq-s3-filter-mag with
@@ -159,6 +205,10 @@ matters for a folded component is $|H(f)|$ evaluated at the **true**
 frequency $f$, not at the apparent frequency $f_a$ it will fold to — the
 filter has no way to know where a component will end up.
 
+::: {.content-visible when-format="revealjs"}
+### Anti-alias filtering: a design decision, not a fix (3)
+:::
+
 #### Designing $f_c$ and $n$ against a required attenuation {#sec-s3-filter-design}
 
 Suppose signals up to $f_\mathrm{max}$ are of interest, sampled at $f_s$, and
@@ -172,6 +222,10 @@ A = 10\log_{10}\!\left[1 + \left(\frac{f_\mathrm{fold}}{f_c}\right)^{2n}\right]
 \quad\Longrightarrow\quad
 f_c = \frac{f_\mathrm{fold}}{\left(10^{A/10} - 1\right)^{1/(2n)}}
 $$ {#eq-s3-design-fc}
+
+::: {.content-visible when-format="revealjs"}
+### Anti-alias filtering: a design decision, not a fix (4)
+:::
 
 and the price is paid in the passband, where the same expression evaluated at
 $f_\mathrm{max}$ gives the droop,
@@ -203,6 +257,10 @@ frequency and flatness in the passband trade directly against $n$ and against
 how far apart $f_\mathrm{max}$ and $f_\mathrm{fold}$ are allowed to be.
 :::
 
+::: {.content-visible when-format="revealjs"}
+### Anti-alias filtering: a design decision, not a fix (5)
+:::
+
 The [filtered/unfiltered pair shipped with this experiment](index.qmd#sec-s3-index-data)
 instead demonstrates the *effect* of a filter rather than solving this
 trade-off: a 2-pole filter with $f_c = 100$ Hz applied to a 650 Hz tone that
@@ -212,6 +270,10 @@ component survives filtering (the filter cannot know it is about to alias)
 but at roughly 1/42 of its unfiltered amplitude, well down toward, though
 not fully into, the ADC's own noise floor characterized in
 [S1](../S1-daq-static/index.qmd).
+
+::: {.content-visible when-format="revealjs"}
+### Anti-alias filtering: a design decision, not a fix (6)
+:::
 
 ::: {.callout-note}
 ## How the filter is modelled in the generated data
@@ -227,7 +289,13 @@ non-sinusoidal or multi-tone signal, which is why the oversampled run below
 is filtered *digitally*, sample by sample, rather than by scaling.
 :::
 
+::: {.content-hidden when-format="revealjs"}
 ### Digital filtering after the fact {#sec-s3-digital}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Digital filtering after the fact (1)
+:::
 
 A digital low-pass filter, applied to already-sampled data, removes energy
 above its cutoff exactly as an analog filter would — provided nothing has
@@ -237,8 +305,12 @@ clean: the interferer never had the chance to alias, so removing it digitally
 before decimating is equivalent to having filtered it in analog before
 sampling in the first place.
 
+::: {.content-visible when-format="revealjs"}
+### Digital filtering after the fact (2)
+:::
+
 Filter an **undersampled** recording the same way and nothing improves,
-because @sec-s3-aliasing already established the reason: the samples of a
+because [@sec-s3-aliasing]{.content-hidden when-format="revealjs"}[@sec-s3-aliasing-deck]{.content-visible when-format="revealjs"} already established the reason: the samples of a
 folded component and the samples of a real signal at $f_a$ are the same
 numbers. A digital filter with a passband that includes $f_a$ passes the
 alias through exactly as it would pass a genuine signal, because at the level
@@ -252,6 +324,10 @@ $$
 
 : Where a low-pass filter has to sit to do anything about a component above
 $f_s/2$ {#tbl-s3-filter-timing}
+
+::: {.content-visible when-format="revealjs"}
+### Digital filtering after the fact (3) {.smaller}
+:::
 
 #### The filter used here: an explicit windowed-sinc FIR {#sec-s3-fir}
 
@@ -272,6 +348,10 @@ h[n] = \frac{w[n]\,\operatorname{sinc}\!\left(\dfrac{2 f_c}{f_s}(n - M)\right)}
 \qquad M = \frac{L-1}{2}
 $$ {#eq-s3-fir}
 
+::: {.content-visible when-format="revealjs"}
+### Digital filtering after the fact (4)
+:::
+
 with $L$ taps, a Hamming window $w[n] = 0.54 - 0.46\cos(2\pi n/(L-1))$, and
 $\operatorname{sinc}(x) = \sin(\pi x)/(\pi x)$ (and $1$ at $x = 0$); the
 denominator normalizes the passband gain to unity. Filtering is the direct
@@ -286,7 +366,13 @@ convolution), so both languages carry out the same difference equation on the
 same numbers with no filter-design library, and no edge-handling convention,
 left to disagree.
 
+::: {.content-hidden when-format="revealjs"}
 ### Relation to S1 and S2 {#sec-s3-relation}
+:::
+
+::: {.content-visible when-format="revealjs"}
+### Relation to S1 and S2 (1)
+:::
 
 Neither aliasing nor filtering exists in a vacuum on this bench. Two numbers
 from earlier experiments set the terms this experiment's conclusions are
@@ -298,6 +384,11 @@ judged against:
   if it started 60 dB above the noise floor; it is still there at 20 dB above
   it. Attenuation is only ever attenuation *relative to* something, and S1 is
   what supplies that something for every experiment after it.
+
+::: {.content-visible when-format="revealjs"}
+### Relation to S1 and S2 (2)
+:::
+
 - The sampling-grid quality measured in [S2](../S2-daq-dynamic/index.qmd) sets
   how well an apparent frequency can be estimated at all: a grid with
   microsecond-level jitter measures a 150 Hz tone precisely, but the same
