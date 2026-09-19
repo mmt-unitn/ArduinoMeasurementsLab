@@ -72,7 +72,10 @@ $toc-color: $primary !default;
 }
 
 // Equations get a little more room than Bootstrap's default line height.
-.quarto-title-block .description { font-size: 1.05rem; }
+.quarto-title-block .description { 
+  font-size: 0.95rem;
+  font-style: italic; 
+}
 div.callout { margin-top: 1.1rem; margin-bottom: 1.1rem; }
 
 // Tables produced by budget_table(): right-align the numeric columns.

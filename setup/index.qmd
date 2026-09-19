@@ -1,13 +1,13 @@
 ---
 title: "Setting up a bench"
-description: "What a bench needs, and in which order to set it up"
+description: "What a bench needs, and how to set it up"
 toc: true
 ---
 
-A bench is one Arduino board running the `UsbIo` firmware, one host computer
-that can talk to it, and one language binding for writing analysis scripts
-against the recorded data. Nothing about the boards or the host driver is
-AMLab-specific — this section is a guided path through
+A **bench** is one Arduino board running the `UsbIo` firmware, one host computer
+that can talk to it, and one language binding for recording data and for writing
+analysis scripts against the recorded data. Nothing about the boards or the host
+driver is AMLab-specific --- this section is a guided path through
 [ArduinoDriver](https://github.com/pbosetti/ArduinoDriver)'s own setup, in the
 order that avoids backtracking.
 
@@ -25,6 +25,14 @@ order that avoids backtracking.
   writing the analysis templates the experiments use.
 - **For the T\* and M\* experiments**, the conditioning and rig hardware
   described in [Hardware](../hardware/index.qmd).
+
+
+::: {.callout-note}
+
+Here, **T\*** means any of the T1, T2, T3 experiments (those using a thermal sensor); **M\*** means any of the M1, M2, M3 experiments (using mechanical sensors). The S1, S2, S3 experiments do not need any additional hardware beyond the [bench hardware](../hardware/index.qmd). 
+
+:::
+
 
 ## Setup order
 
@@ -56,9 +64,9 @@ and fixes.
 
 @tbl-board-matrix lists every board ArduinoDriver documents as compile-verified,
 with the properties that matter for choosing one for a bench. "Streaming"
-means continuous sampling over a bulk USB endpoint — required by the S1–S3 and
+means continuous, high rate sampling over a bulk USB endpoint — required by the S1–S3 and
 M3 experiments (see [Supported boards](boards.qmd) for the full
-per-experiment breakdown). "Windows" means the board's vendor interface can be
+per-experiment breakdown). Static and quasy static experiments do not need the high rate streaming interface.. "Windows" means the board's vendor interface can be
 bound with WinUSB via Zadig; where it says no, that board cannot be used from
 a Windows host at all with `arduino-io`.
 
@@ -75,21 +83,24 @@ a Windows host at all with `arduino-io`.
 | Nano R4 | no | 14 | 5 V | no | T\*, M1, M2 | [TODO (Paolo)]{.todo} |
 
 : Board recommendation matrix. Data from `QUICKSTART.md` section 2 and the
-README's "Board support" and "Operating-system notes" sections. Only the
-Portenta H7 has been verified on real hardware; the others are
-compile-verified but not yet bench-tested (see [Supported
-boards](boards.qmd)). {#tbl-board-matrix}
+README's "Board support" and "Operating-system notes" sections in
+[ArduinoDriver](https://github.com/pbosetti/ArduinoDriver). Only the Portenta H7
+and Arduino R4 Minima have been verified on real hardware; the others are
+compile-verified but not yet bench-tested (see [Supported boards](boards.qmd)).
+{#tbl-board-matrix}
 
 ::: {.callout-note}
 ## Why S2 and M3 need more than "streaming: yes"
 
-A board only reports *whether* it can stream, not how fast. The sketch takes
-at most one record per `loop()` iteration, so the achieved rate is bounded by
-the board's own loop speed — measured so far only on the Portenta H7 (about
-32 kHz on one channel, 23.5 kHz on two, with the plain example sketch). S2 and
-M3 need a high loop rate as well as streaming support; on any board other than
-the Portenta H7, run the [stream verification](verify.qmd) at the rate the
-experiment needs before committing a bench to it.
+Note that a board only reports *whether* it can stream, not how fast. The sketch
+takes at most one record per `loop()` iteration, so the achieved rate is bounded
+by the board's own loop speed — measured so far only on the Portenta H7 (about
+32 kHz on one channel, 23.5 kHz on two, with the plain example sketch). Reduced
+rates (e.g. 20 kHz on a Portenta H7) are typically very precise in timing
+(within 1 µs). S2 and M3 need a high loop rate as well as streaming support; on
+any board other than the Portenta H7, run the [stream verification](verify.qmd)
+at the rate the experiment needs before committing a bench to it. 
+
 :::
 
 Two further categories exist but are not in the table: boards with a written
@@ -103,13 +114,17 @@ both, and for the reasons.
 ::: {.callout-important}
 ## Linux is the recommended lab host
 
-Sampling is driven by the sketch's `loop()`, not by a hardware timer, so the
-host's own USB scheduling shapes what actually arrives. On Linux the jitter
-observed on the reference bench is typically 1–2 µs; on macOS schedule
-restarts and device overruns are more common. Windows has not been
-characterized the same way for AMLab. One small machine per bench is enough —
-a Raspberry Pi running Linux is sufficient; see [Linux
-host](host-linux.qmd#raspberry-pi).
+The maximum sampling rate is driven by the sketch's `loop()`, not by a hardware
+timer, so the host's own USB scheduling shapes what actually arrives. On Linux
+the jitter observed on the reference bench is typically 1–2 µs; on macOS
+schedule restarts and device overruns are more common. Windows has not been
+characterized the same way for AMLab. One small machine per bench is enough — a
+Raspberry Pi running Linux is sufficient; see [Linux
+host](host-linux.qmd#raspberry-pi). 
+
+Reduced sampling rates use internal MBED OS clock and are typically very precise
+(within µs) if not completely accurate and drift free.
+
 :::
 
 All three host operating systems can run `arduino-io` and the language
@@ -117,6 +132,10 @@ bindings, and all three are documented — macOS is a fine place to *develop*
 analysis code (nothing to install, and the Portenta H7's High-Speed USB
 quirk aside, it just works), but for acquisitions where timing matters, set
 up the bench on Linux.
+
+Considering the OS as a **factor** may prove interesting from an educational
+point of view in all the experiments, where the actual sampling rate matters the
+most.
 
 ## Next
 

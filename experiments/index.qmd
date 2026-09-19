@@ -35,7 +35,7 @@ cell, Hall-effect displacement, and vibration with modal analysis.
 ## Cost tiers
 
 | Tier | Adds | Enables |
-|---|---|---|
+|-|---|---|
 | 1 | Board, USB cable, voltage reference IC, a DMM | S1, and the static parts of T1 |
 | 2 | Signal generator, conditioning board (in-amp, offset and scale) | S2, T1, T2, M1, M2 |
 | 3 | Filter stage, thermal rig, beam rig with gauges and accelerometer | S3, T3, M3 |

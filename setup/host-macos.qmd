@@ -32,26 +32,25 @@ cmake --install build --config Release --prefix ~/.local
 ## Symptom: `LIBUSB_ERROR_IO` on a streaming Portenta H7
 
 The Portenta H7 enumerates at USB High Speed (480 Mbit/s), and its bulk
-streaming endpoint is only as reliable as that link. Plugged straight into a
-Mac's USB-C port (two different cables tried), streams died every few seconds
+streaming endpoint is only as reliable as that link. In some cases, plugged straight into a
+Mac's USB-C port, streams die every few seconds at high stream rates,
 with `bulk IN transfer failed: LIBUSB_ERROR_IO` — logged as `device not
 responding` (`0xe00002ed`) with `LIBUSB_DEBUG=2` — and now and then the board
-stopped answering control requests altogether until it was replugged, while
-the sketch itself kept running. Failures scaled with the number of bytes per
-packet, not with time or firmware activity, pointing at bit errors on the
-link itself rather than a software problem.
+can stop answering control requests altogether until it is replugged.
 
-**Fix:** put a USB hub between the computer and the board. The same board and
-firmware behind a hub ran 10×60 s at 10 kHz without a single failure, both
-with the hub's power adapter connected and without it. A hub receives and
-retransmits every High Speed packet, turning one marginal link into two short
-ones, and still runs at 480 Mbit/s. A USB 3 hub works too, because the board
-attaches to the USB 2.0 hub built into it. Prefer a short cable as well.
+**Fix:** If you experience that behavior,put a USB hub between the computer and
+the board. A hub receives and retransmits every High Speed packet, turning one
+marginal link into two short ones, and still runs at 480 Mbit/s. A USB 3 hub
+works too, because the board attaches to the USB 2.0 hub built into it. Prefer a
+short cable as well. 
+
 :::
 
 This is specific to the Portenta H7's High Speed link on macOS's USB-C ports;
 it is not a general macOS limitation and has not been reported for the
 Full Speed boards.
+
+**On low rate experiments** (static and quasi static ones), reading analog pins in  polling mode up to few hundred Hz, the link is reliable enough to run the experiments without a hub, regardless the board and the operating system.
 
 ::: {.callout-tip}
 ## Fine for analysis, not the acquisition host

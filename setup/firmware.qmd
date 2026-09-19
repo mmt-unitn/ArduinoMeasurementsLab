@@ -1,6 +1,8 @@
 ---
 title: "Flashing the UsbIo firmware"
 description: "Arduino IDE, arduino-cli and CMake routes"
+editor:
+  render-on-save: true
 toc: true
 ---
 
@@ -19,6 +21,24 @@ every `loop()` iteration, drains queued commands from the host and refreshes
 the pin-state shadow that reads answer from. Nothing else needs to be in the
 sketch for the board to work as an AMLab bench — see [Adding your own
 code](#adding-your-own-code) if you want to add something.
+
+
+::: {.callout-tip title="Dual core on Portenta H7"}
+
+The Portenta H7 has two asymmetrical cores: a fast one and a slower one (roughly
+half clock). Since v0.4.1 of the UsbIo library there is a second sketch,
+`UsbDeviceLED`, only suitable for Portenta boards, that runs the main UsbIo
+firmware on the main core, and a simple LED blinking firmware on the second
+core. The latter allows to easily customize the blink pattern and make it easier
+to spot a board that has the UsbIo firmware running. Since the blinking formware
+runs on a separate core, it won't affect in any way the performance of the UsbIo
+firmware, which is running on the main core.
+
+Also see
+[the ArduinoDriver examples folder](https://github.com/pbosetti/ArduinoDriver/tree/main/examples).
+
+:::
+
 
 ## Install the core, once per machine
 
@@ -45,6 +65,8 @@ Install *UsbIo* from the Library Manager (*Tools ▸ Manage Libraries*, search
 "UsbIo"), or clone/symlink the ArduinoDriver repository into your sketchbook's
 `libraries/` folder. Then open *File ▸ Examples ▸ UsbIo ▸ UsbIoDevice*, select
 your board and port, and press Upload.
+
+If you have a dual core portenta, pick *File ▸ Examples ▸ UsbIo ▸ UsbIoDeviceLED*, then program your board twice: first after selecting *Tools ▸ Target core: "Main Core"*, then after selecting *Tools ▸ Target core: "M4 Co-processor"*. This will give you the blinking blue LED.
 
 ### `arduino-cli`, from a clone
 
@@ -154,4 +176,14 @@ void loop() {
   keep the host driver from resetting it.
 - **`Serial` stays yours.** The CDC serial port is untouched by `UsbIo`, so
   `Serial.print()` remains available for your own debugging throughout.
+:::
+
+
+::: callout-tip
+### Remote procedure call
+
+The `UsbIo` library also exposes a remote procedure call mechanism: you can add
+your own function in the sketch and call it from the host. See the
+[ArduioDriver documentation](https://github.com/pbosetti/ArduinoDriver).
+
 :::

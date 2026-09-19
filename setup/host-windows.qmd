@@ -52,7 +52,19 @@ supported route for now.
 ## Building `arduino-io`
 
 Install Visual Studio 2022 with the *Desktop development with C++* workload,
-and CMake 3.24 or newer. The same build as any other platform, choosing any
+and CMake 3.24 or newer. 
+
+
+::: {.callout-tip}
+### Quick install of the building toolchain
+
+use the PowerShell script on <https://gist.github.com/pbosetti/8045b5d18c79295cc8454756bc6b7114> to install the Visual Studio Build Tools and CMake in one go, without the full IDE.
+
+:::
+
+
+
+The same build as any other platform, choosing any
 install prefix:
 
 ```bash

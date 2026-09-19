@@ -98,7 +98,7 @@ Each field means:
 
 | Field | Meaning |
 |---|---|
-| `device overruns` | the board's own ring buffer overflowed because it could not send records fast enough |
+| `device overruns` | the board's own ring buffer overflowed because it could not send records fast enough (host computer busy/slow) |
 | `seq gaps` | records lost before reaching the host, detected as a gap in the device's per-record sequence number (includes device overruns) |
 | `host drops` | decoded records the host had to discard because the consumer was not reading fast enough (the queue filled) |
 | `resyncs` | times the driver lost synchronization on the stream's framing marker and had to resynchronize |

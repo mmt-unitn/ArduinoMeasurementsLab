@@ -1,6 +1,6 @@
 ---
 title: "Linux host"
-description: "udev rule, build, and the Raspberry Pi bench host"
+description: "Building the library, udev rule, and the Raspberry Pi bench host"
 toc: true
 ---
 
@@ -14,14 +14,14 @@ both are the same whether the host is a desktop, a laptop or a Raspberry Pi.
 
 Without it, USB device nodes for the board are only writable by root, so
 `arduino-io` and the driver need `sudo` for every call. The rule grants
-access to the logged-in user instead. From a clone of ArduinoDriver:
+access to the logged-in user instead. From a clone of ArduinoDriver repository:
 
 ```bash
 sudo cp extras/driver/etc/99-arduino-usbio.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-Then unplug and replug the board. The rule file itself:
+Then unplug and replug the board. The rule file itself says:
 
 ```
 SUBSYSTEM=="usb", ATTR{idVendor}=="2341", MODE="0666", TAG+="uaccess"
@@ -42,6 +42,7 @@ without `logind`.
 Without the rule installed, every `arduino-io` invocation (and any program
 linking `arduino_driver`) needs `sudo` to open the board. That is fine for a
 one-off check but not for a lab bench a student runs unattended.
+
 :::
 
 ## Build and install `arduino-io`
@@ -93,14 +94,19 @@ your own bench with the [verification procedure](verify.qmd), not as
 independently confirmed by upstream CI.
 
 The specific Raspberry Pi model to standardize on for AMLab benches is
-[TODO (Paolo)]{.todo}.
+Raspberry Pi 5 (4Gb).
+
 :::
 
 ## Why Linux for AMLab
 
-The board samples from `loop()`, not a hardware timer, so the *host's* own
-USB scheduling is part of what determines the timestamps a stream actually
-records. Linux's USB stack gives the most consistent scheduling of the three
-host operating systems characterized so far, which is why it is the
-recommended host for any acquisition where timing matters — see [Setting up
-a bench](index.qmd#host-operating-system) for the numbers.
+At maximum rate in bulk mode the board samples from `loop()`, not a hardware
+timer, so the *host's* own USB scheduling is part of what determines the
+timestamps a stream actually records. Linux's USB stack gives the most
+consistent scheduling of the three host operating systems characterized so far,
+which is why it is the recommended host for any acquisition where timing matters
+— see [Setting up a bench](index.qmd#host-operating-system) for the numbers.
+
+Reducing the sampling rate below the board's maximum (e.g. 20 kHz on a Portenta
+H7) uses the internal MBED OS clock and is typically very precise (within µs) if
+not completely accurate and drift free.
